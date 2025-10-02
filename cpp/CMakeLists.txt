@@ -39,4 +39,22 @@ target_include_directories(logos_sdk PUBLIC
 # Set output directories for static library
 set_target_properties(logos_sdk PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
+
+# Install the library
+install(TARGETS logos_sdk
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+
+# Install headers
+install(FILES
+    logos_api.h
+    logos_api_client.h
+    logos_api_consumer.h
+    logos_api_provider.h
+    module_proxy.h
+    token_manager.h
+    DESTINATION include
 ) 
