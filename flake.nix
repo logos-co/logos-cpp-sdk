@@ -32,13 +32,53 @@
             
             cmakeFlags = [ "-GNinja" ];
             
-            configurePhase = ''
-              cd cpp
-              cmakeConfigurePhase
+            # Skip default configure phase since we do it in buildPhase
+            dontUseCmakeConfigure = true;
+            
+            # Build both SDK library and generator
+            buildPhase = ''
+              runHook preBuild
+              
+              # Build SDK
+              mkdir -p build-sdk
+              cd build-sdk
+              cmake ../cpp -GNinja $cmakeFlags
+              ninja
+              cd ..
+              
+              # Build generator
+              mkdir -p build-generator
+              cd build-generator
+              cmake ../cpp-generator -GNinja $cmakeFlags
+              ninja
+              cd ..
+              
+              runHook postBuild
+            '';
+            
+            installPhase = ''
+              runHook preInstall
+              
+              # Install SDK library
+              mkdir -p $out/lib $out/include
+              if [ -d build-sdk/lib ]; then
+                cp -r build-sdk/lib/* $out/lib/ || true
+              fi
+              if [ -d cpp/include ]; then
+                cp -r cpp/include/* $out/include/ || true
+              fi
+              
+              # Install generator binary
+              mkdir -p $out/bin
+              if [ -f build-generator/bin/logos-cpp-generator ]; then
+                cp build-generator/bin/logos-cpp-generator $out/bin/
+              fi
+              
+              runHook postInstall
             '';
             
             meta = with pkgs.lib; {
-              description = "Logos C++ SDK Library";
+              description = "Logos C++ SDK Library and Code Generator";
               platforms = platforms.unix;
             };
           };
