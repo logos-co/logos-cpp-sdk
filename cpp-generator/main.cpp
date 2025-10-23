@@ -605,7 +605,7 @@ static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
     return true;
 }
 
-static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, QTextStream& out, QTextStream& err)
+static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, bool moduleOnly, QTextStream& out, QTextStream& err)
 {
     QFileInfo fi(pluginInputPath);
     if (!fi.exists()) {
@@ -620,7 +620,7 @@ static int generateFromPlugin(const QString& pluginInputPath, const QString& out
 
     QString genDirPath = outputDir.isEmpty() ? QDir::current().filePath("logos-cpp-sdk/cpp/generated") : outputDir;
     QDir().mkpath(genDirPath);
-    if (!ensureCoreManagerWrapper(genDirPath, err)) {
+    if (!moduleOnly && !ensureCoreManagerWrapper(genDirPath, err)) {
         return 9;
     }
 
@@ -678,13 +678,15 @@ static int generateFromPlugin(const QString& pluginInputPath, const QString& out
         f.close();
     }
 
-    if (!writeUmbrellaHeader(genDirPath, err)) {
-        loader.unload();
-        return 7;
-    }
-    if (!writeUmbrellaSource(genDirPath, err)) {
-        loader.unload();
-        return 8;
+    if (!moduleOnly) {
+        if (!writeUmbrellaHeader(genDirPath, err)) {
+            loader.unload();
+            return 7;
+        }
+        if (!writeUmbrellaSource(genDirPath, err)) {
+            loader.unload();
+            return 8;
+        }
     }
 
     QJsonDocument doc(methods);
@@ -715,12 +717,15 @@ int main(int argc, char* argv[])
         }
     }
 
+    // Parse --module-only option
+    bool moduleOnly = args.contains("--module-only");
+
     // Support: extract dependencies from a metadata.json file
     {
         const int metaIdx = args.indexOf("--metadata");
         if (metaIdx != -1) {
             if (metaIdx + 1 >= args.size()) {
-                err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output]\n";
+                err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only]\n";
                 return 1;
             }
             QString metaPathArg = args.at(metaIdx + 1);
@@ -756,7 +761,7 @@ int main(int argc, char* argv[])
             const int modDirIdx = args.indexOf("--module-dir");
             if (modDirIdx != -1) {
                 if (modDirIdx + 1 >= args.size()) {
-                    err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /path/to/metadata.json --module-dir /path/to/modules_dir [--output-dir /path/to/output]\n";
+                    err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /path/to/metadata.json --module-dir /path/to/modules_dir [--output-dir /path/to/output] [--module-only]\n";
                     return 1;
                 }
                 QString moduleDirArg = args.at(modDirIdx + 1);
@@ -771,7 +776,7 @@ int main(int argc, char* argv[])
 
                 QString genDirPath = outputDir.isEmpty() ? QDir::current().filePath("logos-cpp-sdk/cpp/generated") : outputDir;
                 QDir().mkpath(genDirPath);
-                if (!ensureCoreManagerWrapper(genDirPath, err)) {
+                if (!moduleOnly && !ensureCoreManagerWrapper(genDirPath, err)) {
                     return 9;
                 }
 
@@ -797,12 +802,12 @@ int main(int argc, char* argv[])
                         continue;
                     }
                     out << "Running generator for dependency plugin: " << pluginPath << "\n";
-                    const int st = generateFromPlugin(pluginPath, outputDir, out, err);
+                    const int st = generateFromPlugin(pluginPath, outputDir, moduleOnly, out, err);
                     if (st != 0) {
                         overallStatus = st; // remember last non-zero
                     }
                 }
-                if (overallStatus == 0) {
+                if (overallStatus == 0 && !moduleOnly) {
                     if (!writeUmbrellaHeader(genDirPath, err)) {
                         overallStatus = 7;
                     } else if (!writeUmbrellaSource(genDirPath, err)) {
@@ -823,11 +828,11 @@ int main(int argc, char* argv[])
     }
 
     if (args.size() < 2) {
-        err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " /absolute/path/to/plugin [--output-dir /path/to/output]\n";
-        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output]\n";
+        err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " /absolute/path/to/plugin [--output-dir /path/to/output] [--module-only]\n";
+        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only]\n";
         return 1;
     }
 
     QString argPath = args.at(1);
-    return generateFromPlugin(argPath, outputDir, out, err);
+    return generateFromPlugin(argPath, outputDir, moduleOnly, out, err);
 }

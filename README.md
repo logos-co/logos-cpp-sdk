@@ -95,6 +95,12 @@ logos-cpp-generator /path/to/plugin.dylib
 
 # Specify custom output directory
 logos-cpp-generator /path/to/plugin.dylib --output-dir /custom/output/path
+
+# Generate only the module files (no core manager or umbrella headers)
+logos-cpp-generator /path/to/plugin.dylib --module-only
+
+# Combine options
+logos-cpp-generator /path/to/plugin.dylib --output-dir /custom/output --module-only
 ```
 
 #### Generate from Metadata
@@ -108,18 +114,35 @@ logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modu
 
 # Generate with custom output directory
 logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules --output-dir /custom/output
+
+# Generate only module files (no core manager or umbrella headers)
+logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules --module-only
+
+# Combine all options
+logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules --output-dir /custom/output --module-only
 ```
 
-#### Output Directory
+#### Options
 
-- **Default:** If `--output-dir` is not specified, generated files are placed in `logos-cpp-sdk/cpp/generated/`
-- **Custom:** Use `--output-dir` to specify any directory for the generated files
+**`--output-dir /path/to/output`**
+- **Default:** If not specified, generated files are placed in `logos-cpp-sdk/cpp/generated/`
+- **Custom:** Specify any directory for the generated files
 - The output directory will be created automatically if it doesn't exist
 
-Generated files include:
+**`--module-only`**
+- When specified, generates only the requested module's `.h` and `.cpp` files
+- Skips generation of `core_manager_api.*` and umbrella headers (`logos_sdk.*`)
+- Useful when you only need wrapper code for specific modules
+
+#### Generated Files
+
+By default (without `--module-only`):
 - `<module>_api.h` and `<module>_api.cpp` - Wrapper code for each module
 - `core_manager_api.h` and `core_manager_api.cpp` - Core manager wrapper
 - `logos_sdk.h` and `logos_sdk.cpp` - Umbrella headers including all modules
+
+With `--module-only`:
+- Only `<module>_api.h` and `<module>_api.cpp` - Wrapper code for the requested module(s)
 
 ### Requirements
 
