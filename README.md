@@ -81,6 +81,46 @@ cd cpp-generator
 
 The generator binary will be available at `build/bin/logos-cpp-generator`.
 
+## Usage
+
+### Code Generator
+
+The `logos-cpp-generator` tool generates C++ wrapper code for Logos plugins.
+
+#### Basic Usage
+
+```bash
+# Generate wrapper for a single plugin (uses default output directory)
+logos-cpp-generator /path/to/plugin.dylib
+
+# Specify custom output directory
+logos-cpp-generator /path/to/plugin.dylib --output-dir /custom/output/path
+```
+
+#### Generate from Metadata
+
+```bash
+# List dependencies from metadata.json
+logos-cpp-generator --metadata /path/to/metadata.json
+
+# Generate wrappers for all dependencies
+logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules
+
+# Generate with custom output directory
+logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules --output-dir /custom/output
+```
+
+#### Output Directory
+
+- **Default:** If `--output-dir` is not specified, generated files are placed in `logos-cpp-sdk/cpp/generated/`
+- **Custom:** Use `--output-dir` to specify any directory for the generated files
+- The output directory will be created automatically if it doesn't exist
+
+Generated files include:
+- `<module>_api.h` and `<module>_api.cpp` - Wrapper code for each module
+- `core_manager_api.h` and `core_manager_api.cpp` - Core manager wrapper
+- `logos_sdk.h` and `logos_sdk.cpp` - Umbrella headers including all modules
+
 ### Requirements
 
 #### Build Tools
