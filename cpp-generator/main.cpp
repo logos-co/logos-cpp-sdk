@@ -582,6 +582,52 @@ static bool writeUmbrellaHeader(const QString& genDirPath, QTextStream& err)
     return true;
 }
 
+static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonArray& deps, QTextStream& err)
+{
+    // Generate logos-cpp-sdk/cpp/generated/logos_sdk.h based on dependencies list
+    QDir genDir(genDirPath);
+    QString content;
+    QTextStream s(&content);
+    s << "#pragma once\n";
+    s << "#include \"logos_api.h\"\n";
+    s << "#include \"logos_api_client.h\"\n\n";
+    // Includes
+    s << "#include \"core_manager_api.h\"\n";
+    for (const QJsonValue& v : deps) {
+        if (!v.isString()) continue;
+        QString depName = v.toString();
+        s << "#include \"" << depName << "_api.h\"\n";
+    }
+    s << "\n";
+    // Convenience aggregator exposing module wrappers
+    s << "struct LogosModules {\n";
+    s << "    explicit LogosModules(LogosAPI* api) : api(api), \n        core_manager(api)";
+    for (const QJsonValue& v : deps) {
+        if (!v.isString()) continue;
+        QString depName = v.toString();
+        s << ", \n        " << depName << "(api)";
+    }
+    s << " {}\n";
+    s << "    LogosAPI* api;\n";
+    s << "    CoreManager core_manager;\n";
+    for (const QJsonValue& v : deps) {
+        if (!v.isString()) continue;
+        QString depName = v.toString();
+        QString className = toPascalCase(depName);
+        s << "    " << className << " " << depName << ";\n";
+    }
+    s << "};\n";
+
+    QFile outFile(genDir.filePath("logos_sdk.h"));
+    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        err << "Failed to write umbrella header: " << outFile.fileName() << "\n";
+        return false;
+    }
+    outFile.write(content.toUtf8());
+    outFile.close();
+    return true;
+}
+
 static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
 {
     // Generate logos-cpp-sdk/cpp/generated/logos_sdk.cpp that includes all *_api.cpp in this dir
@@ -592,6 +638,31 @@ static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
     s << "#include \"logos_sdk.h\"\n\n";
     for (const QString& c : sources) {
         s << "#include \"" << c << "\"\n";
+    }
+    s << "\n";
+
+    QFile outFile(genDir.filePath("logos_sdk.cpp"));
+    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        err << "Failed to write umbrella source: " << outFile.fileName() << "\n";
+        return false;
+    }
+    outFile.write(content.toUtf8());
+    outFile.close();
+    return true;
+}
+
+static bool writeUmbrellaSourceFromDeps(const QString& genDirPath, const QJsonArray& deps, QTextStream& err)
+{
+    // Generate logos-cpp-sdk/cpp/generated/logos_sdk.cpp based on dependencies list
+    QDir genDir(genDirPath);
+    QString content;
+    QTextStream s(&content);
+    s << "#include \"logos_sdk.h\"\n\n";
+    s << "#include \"core_manager_api.cpp\"\n";
+    for (const QJsonValue& v : deps) {
+        if (!v.isString()) continue;
+        QString depName = v.toString();
+        s << "#include \"" << depName << "_api.cpp\"\n";
     }
     s << "\n";
 
@@ -720,12 +791,15 @@ int main(int argc, char* argv[])
     // Parse --module-only option
     bool moduleOnly = args.contains("--module-only");
 
+    // Parse --general-only option
+    bool generalOnly = args.contains("--general-only");
+
     // Support: extract dependencies from a metadata.json file
     {
         const int metaIdx = args.indexOf("--metadata");
         if (metaIdx != -1) {
             if (metaIdx + 1 >= args.size()) {
-                err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only]\n";
+                err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only] [--general-only]\n";
                 return 1;
             }
             QString metaPathArg = args.at(metaIdx + 1);
@@ -757,11 +831,34 @@ int main(int argc, char* argv[])
             const QJsonObject obj = doc.object();
             const QJsonArray deps = obj.value("dependencies").toArray();
 
+            // If --general-only provided, generate only core manager and umbrella files
+            if (generalOnly) {
+                QString genDirPath = outputDir.isEmpty() ? QDir::current().filePath("logos-cpp-sdk/cpp/generated") : outputDir;
+                QDir().mkpath(genDirPath);
+                
+                // Generate core manager wrapper
+                if (!ensureCoreManagerWrapper(genDirPath, err)) {
+                    return 9;
+                }
+                
+                // Generate umbrella headers based on dependencies from metadata
+                if (!writeUmbrellaHeaderFromDeps(genDirPath, deps, err)) {
+                    return 7;
+                }
+                if (!writeUmbrellaSourceFromDeps(genDirPath, deps, err)) {
+                    return 8;
+                }
+                
+                out << "Generated core_manager_api.h, core_manager_api.cpp, logos_sdk.h, and logos_sdk.cpp\n";
+                out.flush();
+                return 0;
+            }
+
             // If --module-dir provided, generate for each dependency; else print deps
             const int modDirIdx = args.indexOf("--module-dir");
             if (modDirIdx != -1) {
                 if (modDirIdx + 1 >= args.size()) {
-                    err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /path/to/metadata.json --module-dir /path/to/modules_dir [--output-dir /path/to/output] [--module-only]\n";
+                    err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /path/to/metadata.json --module-dir /path/to/modules_dir [--output-dir /path/to/output] [--module-only] [--general-only]\n";
                     return 1;
                 }
                 QString moduleDirArg = args.at(modDirIdx + 1);
@@ -829,7 +926,8 @@ int main(int argc, char* argv[])
 
     if (args.size() < 2) {
         err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " /absolute/path/to/plugin [--output-dir /path/to/output] [--module-only]\n";
-        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only]\n";
+        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only] [--general-only]\n";
+        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json --general-only [--output-dir /path/to/output]\n";
         return 1;
     }
 

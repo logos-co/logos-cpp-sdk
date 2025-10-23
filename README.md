@@ -118,8 +118,11 @@ logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modu
 # Generate only module files (no core manager or umbrella headers)
 logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules --module-only
 
-# Combine all options
-logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules --output-dir /custom/output --module-only
+# Generate only core manager and umbrella files (assumes module files already exist)
+logos-cpp-generator --metadata /path/to/metadata.json --general-only
+
+# Generate general files with custom output directory
+logos-cpp-generator --metadata /path/to/metadata.json --general-only --output-dir /custom/output
 ```
 
 #### Options
@@ -134,15 +137,45 @@ logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modu
 - Skips generation of `core_manager_api.*` and umbrella headers (`logos_sdk.*`)
 - Useful when you only need wrapper code for specific modules
 
+**`--general-only`**
+- When specified with `--metadata`, generates only the core manager and umbrella SDK files
+- Assumes module wrapper files already exist in the output directory
+- Generates: `core_manager_api.h`, `core_manager_api.cpp`, `logos_sdk.h`, `logos_sdk.cpp`
+- The umbrella headers will include references to all modules listed in the metadata's `dependencies` array
+- For each dependency (e.g., `"waku_module"`), it will:
+  - Include `waku_module_api.h` in the header
+  - Include `waku_module_api.cpp` in the source
+  - Create a `WakuModule waku_module;` member in the `LogosModules` struct
+- Does not require `--module-dir` since it doesn't process plugins
+
 #### Generated Files
 
-By default (without `--module-only`):
+**By default (without `--module-only` or `--general-only`):**
 - `<module>_api.h` and `<module>_api.cpp` - Wrapper code for each module
 - `core_manager_api.h` and `core_manager_api.cpp` - Core manager wrapper
 - `logos_sdk.h` and `logos_sdk.cpp` - Umbrella headers including all modules
 
-With `--module-only`:
+**With `--module-only`:**
 - Only `<module>_api.h` and `<module>_api.cpp` - Wrapper code for the requested module(s)
+
+**With `--general-only`:**
+- Only `core_manager_api.h` and `core_manager_api.cpp` - Core manager wrapper
+- Only `logos_sdk.h` and `logos_sdk.cpp` - Umbrella headers that reference existing module files
+
+#### Typical Workflow
+
+A common workflow is to generate module wrappers separately, then generate the umbrella SDK:
+
+```bash
+# Step 1: Generate individual module wrappers
+logos-cpp-generator /path/to/plugin1.dylib --module-only --output-dir ./generated
+logos-cpp-generator /path/to/plugin2.dylib --module-only --output-dir ./generated
+
+# Step 2: Generate core manager and umbrella SDK (references modules from step 1)
+logos-cpp-generator --metadata metadata.json --general-only --output-dir ./generated
+```
+
+This approach gives you fine-grained control over which modules to include and allows rebuilding just the umbrella headers without regenerating all module wrappers.
 
 ### Requirements
 
