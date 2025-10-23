@@ -60,13 +60,28 @@
               runHook preInstall
               
               # Install SDK library
-              mkdir -p $out/lib $out/include
+              mkdir -p $out/lib
               if [ -d build-sdk/lib ]; then
                 cp -r build-sdk/lib/* $out/lib/ || true
               fi
-              if [ -d cpp/include ]; then
-                cp -r cpp/include/* $out/include/ || true
+              
+              # Install headers with proper structure
+              mkdir -p $out/include/core
+              mkdir -p $out/include/cpp
+              
+              # Install core headers
+              if [ -f core/interface.h ]; then
+                cp core/interface.h $out/include/core/
               fi
+              
+              # Install cpp headers and sources
+              for file in logos_api.cpp logos_api.h logos_api_client.cpp logos_api_client.h \
+                          logos_api_consumer.cpp logos_api_consumer.h logos_api_provider.cpp logos_api_provider.h \
+                          token_manager.cpp token_manager.h module_proxy.cpp module_proxy.h; do
+                if [ -f cpp/$file ]; then
+                  cp cpp/$file $out/include/cpp/
+                fi
+              done
               
               # Install generator binary
               mkdir -p $out/bin
