@@ -23,6 +23,8 @@ set(SDK_SOURCES
     module_proxy.h
     token_manager.cpp
     token_manager.h
+    logos_mode.h
+    plugin_registry.h
 )
 
 # Create the SDK library as STATIC instead of SHARED
@@ -56,5 +58,7 @@ install(FILES
     logos_api_provider.h
     module_proxy.h
     token_manager.h
+    logos_mode.h
+    plugin_registry.h
     DESTINATION include
 ) 

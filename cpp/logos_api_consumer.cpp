@@ -2,6 +2,8 @@
 #include "module_proxy.h"
 #include "logos_api_client.h"
 #include "token_manager.h"
+#include "logos_mode.h"
+#include "plugin_registry.h"
 #include <QRemoteObjectNode>
 #include <QRemoteObjectReplica>
 #include <QRemoteObjectPendingCall>
@@ -18,8 +20,13 @@ LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to, const QStri
     , m_connected(false)
     , m_token_manager(token_manager)
 {
-    m_node = new QRemoteObjectNode(this);
-    connectToRegistry();
+    if (LogosModeConfig::isLocal()) {
+        qDebug() << "LogosAPIConsumer: Using Local mode - skipping QRemoteObjectNode";
+        m_connected = true;
+    } else {
+        m_node = new QRemoteObjectNode(this);
+        connectToRegistry();
+    }
 }
 
 LogosAPIConsumer::~LogosAPIConsumer()
@@ -37,13 +44,24 @@ LogosAPIConsumer::~LogosAPIConsumer()
 QObject* LogosAPIConsumer::requestObject(const QString& objectName, int timeoutMs)
 {
     qDebug() << "LogosAPIConsumer: Requesting object:" << objectName << "at" << QTime::currentTime().toString("hh:mm:ss.zzz");
-    if (!m_connected) {
-        qWarning() << "LogosAPIConsumer: Not connected to registry. Cannot request object:" << objectName;
-        return nullptr;
-    }
 
     if (objectName.isEmpty()) {
         qWarning() << "LogosAPIConsumer: Object name cannot be empty";
+        return nullptr;
+    }
+
+    if (LogosModeConfig::isLocal()) {
+        QObject* plugin = PluginRegistry::getPlugin<QObject>(objectName);
+        if (!plugin) {
+            qWarning() << "LogosAPIConsumer: Plugin not found in registry:" << objectName;
+            return nullptr;
+        }
+        qDebug() << "LogosAPIConsumer: Successfully found plugin:" << objectName;
+        return plugin;
+    }
+
+    if (!m_connected) {
+        qWarning() << "LogosAPIConsumer: Not connected to registry. Cannot request object:" << objectName;
         return nullptr;
     }
 
@@ -80,6 +98,11 @@ QString LogosAPIConsumer::registryUrl() const
 
 bool LogosAPIConsumer::reconnect()
 {
+    if (LogosModeConfig::isLocal()) {
+        m_connected = true;
+        return true;
+    }
+
     qDebug() << "LogosAPIConsumer: Attempting to reconnect to registry:" << m_registryUrl;
 
     // Disconnect first if already connected
@@ -134,25 +157,30 @@ QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QS
 
     // This method handles both ModuleProxy-wrapped modules (template_module, package_manager) 
     // and direct remote object calls for other modules
-    QObject* replica = requestObject(objectName, timeoutMs);
-    if (!replica) {
-        qWarning() << "LogosAPIConsumer: Failed to acquire replica for object:" << objectName;
+    QObject* plugin = requestObject(objectName, timeoutMs);
+    if (!plugin) {
+        qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object:" << objectName;
         return QVariant();
     }
 
-    // Try to cast to ModuleProxy first (in case the replica is a wrapped module)
-    ModuleProxy* moduleProxy = qobject_cast<ModuleProxy*>(replica);
+    ModuleProxy* moduleProxy = qobject_cast<ModuleProxy*>(plugin);
     if (moduleProxy) {
         QVariant result = moduleProxy->callRemoteMethod(authToken, methodName, args);
-        delete replica;
+        if (!LogosModeConfig::isLocal()) {
+            delete plugin;
+        }
         return result;
     }
 
-    // Fallback: use QMetaObject::invokeMethod directly
-    // Note: Remote objects' callRemoteMethod returns QRemoteObjectPendingCall, not QVariant
+    if (LogosModeConfig::isLocal()) {
+        qWarning() << "LogosAPIConsumer: Local mode requires ModuleProxy-wrapped objects";
+        return QVariant();
+    }
+
+    // Remote mode: callRemoteMethod returns QRemoteObjectPendingCall, not QVariant
     QRemoteObjectPendingCall pendingCall;
     bool success = QMetaObject::invokeMethod(
-        replica,
+        plugin,
         "callRemoteMethod",
         Qt::DirectConnection,
         Q_RETURN_ARG(QRemoteObjectPendingCall, pendingCall),
@@ -163,13 +191,13 @@ QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QS
 
     if (!success) {
         qWarning() << "LogosAPIConsumer: Failed to invoke callRemoteMethod on replica for object:" << objectName;
-        delete replica;
+        delete plugin;
         return QVariant();
     }
 
     // Wait for the result
     pendingCall.waitForFinished(timeoutMs);
-    delete replica;
+    delete plugin;
 
     if (!pendingCall.isFinished() || pendingCall.error() != QRemoteObjectPendingCall::NoError) {
         qWarning() << "LogosAPIConsumer: Remote callRemoteMethod failed or timed out:" << pendingCall.error();
@@ -236,17 +264,30 @@ bool LogosAPIConsumer::informModuleToken(const QString& authToken, const QString
 {
     qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
 
-    // Request the ModuleProxy object
-    QObject* replica = requestObject("capability_module", 20000);
-    if (!replica) {
-        qWarning() << "LogosAPIConsumer: Failed to acquire replica for object:" << "capability_module";
+    QObject* plugin = requestObject("capability_module", 20000);
+    if (!plugin) {
+        qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object: capability_module";
         return false;
     }
 
-    // Use QRemoteObjectPendingCall similar to invokeRemoteMethod
+    ModuleProxy* moduleProxy = qobject_cast<ModuleProxy*>(plugin);
+    if (moduleProxy) {
+        bool result = moduleProxy->informModuleToken(authToken, moduleName, token);
+        qDebug() << "LogosAPIConsumer: informModuleToken completed with result:" << result;
+        if (!LogosModeConfig::isLocal()) {
+            delete plugin;
+        }
+        return result;
+    }
+
+    if (LogosModeConfig::isLocal()) {
+        qWarning() << "LogosAPIConsumer: Local mode requires ModuleProxy-wrapped objects";
+        return false;
+    }
+
     QRemoteObjectPendingCall pendingCall;
     bool success = QMetaObject::invokeMethod(
-        replica,
+        plugin,
         "informModuleToken",
         Qt::DirectConnection,
         Q_RETURN_ARG(QRemoteObjectPendingCall, pendingCall),
@@ -257,13 +298,12 @@ bool LogosAPIConsumer::informModuleToken(const QString& authToken, const QString
 
     if (!success) {
         qWarning() << "LogosAPIConsumer: Failed to invoke informModuleToken on replica";
-        delete replica;
+        delete plugin;
         return false;
     }
 
-    // Wait for the result
     pendingCall.waitForFinished(20000);
-    delete replica;
+    delete plugin;
 
     if (!pendingCall.isFinished() || pendingCall.error() != QRemoteObjectPendingCall::NoError) {
         qWarning() << "LogosAPIConsumer: Remote informModuleToken failed or timed out:" << pendingCall.error();
@@ -280,17 +320,29 @@ bool LogosAPIConsumer::informModuleToken_module(const QString& authToken, const 
 {
     qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
 
-    // Request the ModuleProxy object
-    QObject* replica = requestObject(originModule, 20000);
-    if (!replica) {
-        qWarning() << "LogosAPIConsumer: Failed to acquire replica for object:" << "capability_module";
+    QObject* plugin = requestObject(originModule, 20000);
+    if (!plugin) {
+        qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object:" << originModule;
         return false;
     }
 
-    // Use QRemoteObjectPendingCall similar to invokeRemoteMethod
+    ModuleProxy* moduleProxy = qobject_cast<ModuleProxy*>(plugin);
+    if (moduleProxy) {
+        bool result = moduleProxy->informModuleToken(authToken, moduleName, token);
+        qDebug() << "LogosAPIConsumer: informModuleToken completed with result:" << result;
+        if (!LogosModeConfig::isLocal()) {
+            delete plugin;
+        }
+        return result;
+    }
+
+    if (LogosModeConfig::isLocal()) {
+        qWarning() << "LogosAPIConsumer: Local mode requires ModuleProxy-wrapped objects";
+        return false;
+    }
     QRemoteObjectPendingCall pendingCall;
     bool success = QMetaObject::invokeMethod(
-        replica,
+        plugin,
         "informModuleToken",
         Qt::DirectConnection,
         Q_RETURN_ARG(QRemoteObjectPendingCall, pendingCall),
@@ -301,13 +353,12 @@ bool LogosAPIConsumer::informModuleToken_module(const QString& authToken, const 
 
     if (!success) {
         qWarning() << "LogosAPIConsumer: Failed to invoke informModuleToken on replica";
-        delete replica;
+        delete plugin;
         return false;
     }
 
-    // Wait for the result
     pendingCall.waitForFinished(20000);
-    delete replica;
+    delete plugin;
 
     if (!pendingCall.isFinished() || pendingCall.error() != QRemoteObjectPendingCall::NoError) {
         qWarning() << "LogosAPIConsumer: Remote informModuleToken failed or timed out:" << pendingCall.error();

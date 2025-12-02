@@ -186,6 +186,12 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
         return QVariant();
     }
 
+    // TODO: review this. note this method is part of ModuleProxy
+    if (methodName == "getPluginMethods" && args.isEmpty()) {
+        qDebug() << "ModuleProxy: Handling getPluginMethods() directly";
+        return QVariant(getPluginMethods());
+    }
+
     qDebug() << "ModuleProxy: Auth token received:" << authToken;
     qDebug() << "ModuleProxy: Calling method" << methodName << "on module" << m_module << "with args:" << args;
 
