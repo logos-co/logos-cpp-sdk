@@ -1,6 +1,8 @@
 #include "logos_api_provider.h"
 #include "module_proxy.h"
 #include "logos_api.h"
+#include "logos_mode.h"
+#include "plugin_registry.h"
 #include <QRemoteObjectRegistryHost>
 #include <QDebug>
 #include <QUrl>
@@ -16,6 +18,9 @@ LogosAPIProvider::LogosAPIProvider(const QString& module_name, QObject *parent)
 
 LogosAPIProvider::~LogosAPIProvider()
 {
+    if (LogosModeConfig::isLocal() && !m_registeredObjectName.isEmpty()) {
+        PluginRegistry::unregisterPlugin(m_registeredObjectName);
+    }
     // QRemoteObjectRegistryHost will be deleted automatically as it's a child object
     // ModuleProxy will be deleted automatically as it's a child object
 }
@@ -60,20 +65,29 @@ bool LogosAPIProvider::registerObject(const QString& name, QObject* object)
     m_moduleProxy = new ModuleProxy(object, this);
     object = m_moduleProxy;
 
-    if (!m_registryHost) {
-        m_registryHost = new QRemoteObjectRegistryHost(QUrl(m_registryUrl));
-        if (!m_registryHost) {
-            qCritical() << "LogosAPIProvider: Failed to create registry host";
-            return false;
-        }
-        qDebug() << "LogosAPIProvider: Created registry host with URL:" << m_registryUrl;
-    }
+    bool success = false;
 
-    bool success = m_registryHost->enableRemoting(object, name);
-    if (success) {
+    if (LogosModeConfig::isLocal()) {
+        PluginRegistry::registerPlugin(object, name);
+        m_registeredObjectName = name;
+        success = true;
         qDebug() << "LogosAPIProvider: Successfully registered object with name:" << name;
     } else {
-        qCritical() << "LogosAPIProvider: Failed to register object with name:" << name;
+        if (!m_registryHost) {
+            m_registryHost = new QRemoteObjectRegistryHost(QUrl(m_registryUrl));
+            if (!m_registryHost) {
+                qCritical() << "LogosAPIProvider: Failed to create registry host";
+                return false;
+            }
+            qDebug() << "LogosAPIProvider: Created registry host with URL:" << m_registryUrl;
+        }
+
+        success = m_registryHost->enableRemoting(object, name);
+        if (success) {
+            qDebug() << "LogosAPIProvider: Successfully registered object with name:" << name;
+        } else {
+            qCritical() << "LogosAPIProvider: Failed to register object with name:" << name;
+        }
     }
 
     return success;
