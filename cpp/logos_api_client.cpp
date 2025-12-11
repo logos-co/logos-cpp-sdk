@@ -15,9 +15,9 @@ LogosAPIClient::~LogosAPIClient()
     // m_consumer will be deleted automatically as it's a child object
 }
 
-QObject* LogosAPIClient::requestObject(const QString& objectName, int timeoutMs)
+QObject* LogosAPIClient::requestObject(const QString& objectName, Timeout timeout)
 {
-    return m_consumer->requestObject(objectName, timeoutMs);
+    return m_consumer->requestObject(objectName, timeout);
 }
 
 bool LogosAPIClient::isConnected() const
@@ -36,7 +36,7 @@ bool LogosAPIClient::reconnect()
 }
 
 QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                                   const QVariantList& args, int timeoutMs)
+                                   const QVariantList& args, Timeout timeout)
 {
     qDebug() << "LogosAPIClient: invoking remote method" << objectName << methodName << args;
 
@@ -47,7 +47,7 @@ QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QSt
         qDebug() << "LogosAPIClient: calling requestModule for" << objectName;
         LogosAPIConsumer* packageManagerConsumer = new LogosAPIConsumer("capability_module", m_origin_module, m_token_manager, this);
         QString capabilityToken = getToken("capability_module");
-        QVariant result = packageManagerConsumer->invokeRemoteMethod(capabilityToken, "capability_module", "requestModule", QVariantList() << m_origin_module << objectName, timeoutMs);
+        QVariant result = packageManagerConsumer->invokeRemoteMethod(capabilityToken, "capability_module", "requestModule", QVariantList() << m_origin_module << objectName, timeout);
         qDebug() << "================================================";
         qDebug() << "================================================";
         qDebug() << "================================================";
@@ -64,39 +64,39 @@ QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QSt
         token = result.toString();
     }
 
-    return m_consumer->invokeRemoteMethod(token, objectName, methodName, args, timeoutMs);
+    return m_consumer->invokeRemoteMethod(token, objectName, methodName, args, timeout);
 }
 
 QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                                   const QVariant& arg, int timeoutMs)
+                                   const QVariant& arg, Timeout timeout)
 {
-    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg, timeoutMs);
+    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg, timeout);
 }
 
 QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                                   const QVariant& arg1, const QVariant& arg2, int timeoutMs)
+                                   const QVariant& arg1, const QVariant& arg2, Timeout timeout)
 {
-    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2, timeoutMs);
+    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2, timeout);
 }
 
 QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                                   const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, int timeoutMs)
+                                   const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, Timeout timeout)
 {
-    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2 << arg3, timeoutMs);
-}
-
-QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                                   const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, 
-                                   const QVariant& arg4, int timeoutMs)
-{
-    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2 << arg3 << arg4, timeoutMs);
+    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2 << arg3, timeout);
 }
 
 QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QString& methodName, 
                                    const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, 
-                                   const QVariant& arg4, const QVariant& arg5, int timeoutMs)
+                                   const QVariant& arg4, Timeout timeout)
 {
-    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2 << arg3 << arg4 << arg5, timeoutMs);
+    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2 << arg3 << arg4, timeout);
+}
+
+QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QString& methodName, 
+                                   const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, 
+                                   const QVariant& arg4, const QVariant& arg5, Timeout timeout)
+{
+    return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2 << arg3 << arg4 << arg5, timeout);
 }
 
 void LogosAPIClient::onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)

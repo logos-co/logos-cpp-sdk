@@ -8,6 +8,8 @@
 #include <QMap>
 #include <functional>
 
+#include "logos_mode.h"
+
 class LogosAPIConsumer;
 class TokenManager;
 
@@ -40,10 +42,10 @@ public:
     /**
      * @brief Request a remote object replica by name
      * @param objectName The name of the remote object to acquire
-     * @param timeoutMs Timeout in milliseconds to wait for the replica to be ready
+     * @param timeout Timeout to wait for the replica to be ready (default 20000ms)
      * @return QObject* pointer to the replica, or nullptr if failed
      */
-    QObject* requestObject(const QString& objectName, int timeoutMs = 20000);
+    QObject* requestObject(const QString& objectName, Timeout timeout = Timeout());
 
     /**
      * @brief Check if the client is connected to the registry
@@ -68,22 +70,22 @@ public:
      * @param objectName The name of the remote object
      * @param methodName The name of the method to call
      * @param args Arguments to pass to the method
-     * @param timeoutMs Timeout in milliseconds to wait for the result
+     * @param timeout Timeout to wait for the result (default 20000ms)
      * @return QVariant containing the result, or invalid QVariant if failed
      */
     QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                             const QVariantList& args = QVariantList(), int timeoutMs = 20000);
+                             const QVariantList& args = QVariantList(), Timeout timeout = Timeout());
 
     /**
      * @brief Invoke a remote method on a remote object with a single argument
      * @param objectName The name of the remote object
      * @param methodName The name of the method to call
      * @param arg Argument to pass to the method
-     * @param timeoutMs Timeout in milliseconds to wait for the result
+     * @param timeout Timeout to wait for the result (default 20000ms)
      * @return QVariant containing the result, or invalid QVariant if failed
      */
     QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                             const QVariant& arg, int timeoutMs = 20000);
+                             const QVariant& arg, Timeout timeout = Timeout());
 
     /**
      * @brief Invoke a remote method on a remote object with two arguments
@@ -91,11 +93,11 @@ public:
      * @param methodName The name of the method to call
      * @param arg1 First argument to pass to the method
      * @param arg2 Second argument to pass to the method
-     * @param timeoutMs Timeout in milliseconds to wait for the result
+     * @param timeout Timeout to wait for the result (default 20000ms)
      * @return QVariant containing the result, or invalid QVariant if failed
      */
     QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                             const QVariant& arg1, const QVariant& arg2, int timeoutMs = 20000);
+                             const QVariant& arg1, const QVariant& arg2, Timeout timeout = Timeout());
 
     /**
      * @brief Invoke a remote method on a remote object with three arguments
@@ -104,11 +106,11 @@ public:
      * @param arg1 First argument to pass to the method
      * @param arg2 Second argument to pass to the method
      * @param arg3 Third argument to pass to the method
-     * @param timeoutMs Timeout in milliseconds to wait for the result
+     * @param timeout Timeout to wait for the result (default 20000ms)
      * @return QVariant containing the result, or invalid QVariant if failed
      */
     QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, int timeoutMs = 20000);
+                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, Timeout timeout = Timeout());
 
     /**
      * @brief Invoke a remote method on a remote object with four arguments
@@ -118,12 +120,12 @@ public:
      * @param arg2 Second argument to pass to the method
      * @param arg3 Third argument to pass to the method
      * @param arg4 Fourth argument to pass to the method
-     * @param timeoutMs Timeout in milliseconds to wait for the result
+     * @param timeout Timeout to wait for the result (default 20000ms)
      * @return QVariant containing the result, or invalid QVariant if failed
      */
     QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, 
                              const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, 
-                             const QVariant& arg4, int timeoutMs = 20000);
+                             const QVariant& arg4, Timeout timeout = Timeout());
 
     /**
      * @brief Invoke a remote method on a remote object with five arguments
@@ -134,12 +136,12 @@ public:
      * @param arg3 Third argument to pass to the method
      * @param arg4 Fourth argument to pass to the method
      * @param arg5 Fifth argument to pass to the method
-     * @param timeoutMs Timeout in milliseconds to wait for the result
+     * @param timeout Timeout to wait for the result (default 20000ms)
      * @return QVariant containing the result, or invalid QVariant if failed
      */
     QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, 
                              const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, 
-                             const QVariant& arg4, const QVariant& arg5, int timeoutMs = 20000);
+                             const QVariant& arg4, const QVariant& arg5, Timeout timeout = Timeout());
 
     /**
      * @brief Register an event listener for the specified event name

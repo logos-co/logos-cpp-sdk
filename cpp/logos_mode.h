@@ -15,6 +15,20 @@ enum class LogosMode {
 };
 
 /**
+ * @brief Timeout provides a strongly-typed wrapper for timeout values
+ * 
+ * This prevents implicit conversion from int, avoiding ambiguity with
+ * QVariant parameters in method overloads.
+ * 
+ * Example usage:
+ *   invokeRemoteMethod("module", "method", arg1, arg2, Timeout(5000));
+ */
+struct Timeout {
+    int ms;
+    explicit Timeout(int milliseconds = 20000) : ms(milliseconds) {}
+};
+
+/**
  * @brief LogosModeConfig provides global mode configuration
  * 
  * Set the mode once at application startup before creating any LogosAPI instances.
