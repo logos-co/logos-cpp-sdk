@@ -45,10 +45,10 @@ public:
     /**
      * @brief Request a remote object replica by name
      * @param objectName The name of the remote object to acquire
-     * @param timeoutMs Timeout in milliseconds to wait for the replica to be ready
+     * @param timeout Timeout to wait for the replica to be ready (default 20000ms)
      * @return QObject* pointer to the replica, or nullptr if failed
      */
-    QObject* requestObject(const QString& objectName, int timeoutMs = 20000);
+    QObject* requestObject(const QString& objectName, Timeout timeout = Timeout());
 
     /**
      * @brief Check if the consumer is connected to the registry
@@ -74,11 +74,11 @@ public:
      * @param objectName The name of the remote object
      * @param methodName The name of the method to call
      * @param args Arguments to pass to the method
-     * @param timeoutMs Timeout in milliseconds to wait for the result
+     * @param timeout Timeout to wait for the result (default 20000ms)
      * @return QVariant containing the result, or invalid QVariant if failed
      */
     QVariant invokeRemoteMethod(const QString& authToken, const QString& objectName, const QString& methodName, 
-                             const QVariantList& args = QVariantList(), int timeoutMs = 20000);
+                             const QVariantList& args = QVariantList(), Timeout timeout = Timeout());
 
     /**
      * @brief Register an event listener for the specified event name

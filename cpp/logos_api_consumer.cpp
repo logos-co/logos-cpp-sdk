@@ -41,7 +41,7 @@ LogosAPIConsumer::~LogosAPIConsumer()
     // QRemoteObjectNode will be deleted automatically as it's a child object
 }
 
-QObject* LogosAPIConsumer::requestObject(const QString& objectName, int timeoutMs)
+QObject* LogosAPIConsumer::requestObject(const QString& objectName, Timeout timeout)
 {
     qDebug() << "LogosAPIConsumer: Requesting object:" << objectName << "at" << QTime::currentTime().toString("hh:mm:ss.zzz");
 
@@ -75,7 +75,7 @@ QObject* LogosAPIConsumer::requestObject(const QString& objectName, int timeoutM
     }
 
     // Wait for the replica to be initialized
-    if (!replica->waitForSource(timeoutMs)) {
+    if (!replica->waitForSource(timeout.ms)) {
         qWarning() << "LogosAPIConsumer: Timeout waiting for object replica to be ready:" << objectName;
         delete replica;
         return nullptr;
@@ -151,13 +151,13 @@ bool LogosAPIConsumer::connectToRegistry()
 
 
 QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QString& objectName, const QString& methodName, 
-                                   const QVariantList& args, int timeoutMs)
+                                   const QVariantList& args, Timeout timeout)
 {
-    qDebug() << "LogosAPIConsumer: Calling invokeRemoteMethod with params:" << authToken << objectName << methodName << args << timeoutMs;
+    qDebug() << "LogosAPIConsumer: Calling invokeRemoteMethod with params:" << authToken << objectName << methodName << args << timeout.ms;
 
     // This method handles both ModuleProxy-wrapped modules (template_module, package_manager) 
     // and direct remote object calls for other modules
-    QObject* plugin = requestObject(objectName, timeoutMs);
+    QObject* plugin = requestObject(objectName, timeout);
     if (!plugin) {
         qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object:" << objectName;
         return QVariant();
@@ -196,7 +196,7 @@ QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QS
     }
 
     // Wait for the result
-    pendingCall.waitForFinished(timeoutMs);
+    pendingCall.waitForFinished(timeout.ms);
     delete plugin;
 
     if (!pendingCall.isFinished() || pendingCall.error() != QRemoteObjectPendingCall::NoError) {
@@ -264,7 +264,7 @@ bool LogosAPIConsumer::informModuleToken(const QString& authToken, const QString
 {
     qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
 
-    QObject* plugin = requestObject("capability_module", 20000);
+    QObject* plugin = requestObject("capability_module", Timeout(20000));
     if (!plugin) {
         qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object: capability_module";
         return false;
@@ -320,7 +320,7 @@ bool LogosAPIConsumer::informModuleToken_module(const QString& authToken, const 
 {
     qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
 
-    QObject* plugin = requestObject(originModule, 20000);
+    QObject* plugin = requestObject(originModule, Timeout(20000));
     if (!plugin) {
         qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object:" << originModule;
         return false;
