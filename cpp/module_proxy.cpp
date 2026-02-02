@@ -74,6 +74,16 @@ namespace {
                     );
                     break;
                 }
+                case QMetaType::QStringList: {
+                    auto value = new QStringList{arg.toStringList()};
+                    scopedArgs.emplace_back(
+                        Q_ARG(QStringList, *value),
+                        [](const void* data) {
+                            delete static_cast<const QStringList*>(data);
+                        }
+                    );
+                    break;
+                }
                 case QMetaType::QString:
                 default: {
                     auto value = new QString{arg.toString()};
