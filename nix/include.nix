@@ -18,6 +18,8 @@ pkgs.stdenv.mkDerivation {
     # Install headers with proper structure
     mkdir -p $out/include/core
     mkdir -p $out/include/logos-cpp-sdk
+    mkdir -p $out/include/logos-cpp-sdk/client
+    mkdir -p $out/include/logos-cpp-sdk/provider
     mkdir -p $out/include/logos-transport
     
     # Install core headers
@@ -25,11 +27,24 @@ pkgs.stdenv.mkDerivation {
       cp src/core/interface.h $out/include/core/
     fi
     
-    # Install logos-cpp-sdk headers and sources
-    for file in logos_api.cpp logos_api.h logos_api_client.cpp logos_api_client.h \
-                token_manager.cpp token_manager.h module_proxy.cpp module_proxy.h; do
+    # Install logos-cpp-sdk root headers and sources
+    for file in logos_api.cpp logos_api.h token_manager.cpp token_manager.h; do
       if [ -f src/logos-cpp-sdk/$file ]; then
         cp src/logos-cpp-sdk/$file $out/include/logos-cpp-sdk/
+      fi
+    done
+    
+    # Install logos-cpp-sdk client headers and sources
+    for file in logos_api_client.cpp logos_api_client.h; do
+      if [ -f src/logos-cpp-sdk/client/$file ]; then
+        cp src/logos-cpp-sdk/client/$file $out/include/logos-cpp-sdk/client/
+      fi
+    done
+    
+    # Install logos-cpp-sdk provider headers and sources
+    for file in module_proxy.cpp module_proxy.h; do
+      if [ -f src/logos-cpp-sdk/provider/$file ]; then
+        cp src/logos-cpp-sdk/provider/$file $out/include/logos-cpp-sdk/provider/
       fi
     done
     

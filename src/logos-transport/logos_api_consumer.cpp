@@ -1,6 +1,6 @@
 #include "logos_api_consumer.h"
-#include "../logos-cpp-sdk/module_proxy.h"
-#include "../logos-cpp-sdk/logos_api_client.h"
+#include "../logos-cpp-sdk/provider/module_proxy.h"
+#include "../logos-cpp-sdk/client/logos_api_client.h"
 #include "../logos-cpp-sdk/token_manager.h"
 #include "logos_mode.h"
 #include "plugin_registry.h"

@@ -46,7 +46,7 @@ else
 fi
 
 # Add local include paths for the new directory structure
-LOCAL_INCLUDES="-I. -Ilogos-cpp-sdk -Ilogos-transport -Icore"
+LOCAL_INCLUDES="-I. -Ilogos-cpp-sdk -Ilogos-cpp-sdk/client -Ilogos-cpp-sdk/provider -Ilogos-transport -Icore"
 
 echo "Using Qt includes: $QT_INCLUDES"
 echo "Using local includes: $LOCAL_INCLUDES"
@@ -57,12 +57,20 @@ CXXFLAGS="-std=c++17 -fPIC"
 # Generate MOC files for headers with Q_OBJECT
 echo "Generating MOC files..."
 
-# SDK headers that need MOC processing
-SDK_MOC_HEADERS=(
+# SDK root headers that need MOC processing
+SDK_ROOT_MOC_HEADERS=(
     "logos-cpp-sdk/logos_api.h"
-    "logos-cpp-sdk/logos_api_client.h"
-    "logos-cpp-sdk/module_proxy.h"
     "logos-cpp-sdk/token_manager.h"
+)
+
+# SDK client headers that need MOC processing
+SDK_CLIENT_MOC_HEADERS=(
+    "logos-cpp-sdk/client/logos_api_client.h"
+)
+
+# SDK provider headers that need MOC processing
+SDK_PROVIDER_MOC_HEADERS=(
+    "logos-cpp-sdk/provider/module_proxy.h"
 )
 
 # Transport headers that need MOC processing
@@ -71,7 +79,9 @@ TRANSPORT_MOC_HEADERS=(
     "logos-transport/logos_api_consumer.h"
 )
 
-for header in "${SDK_MOC_HEADERS[@]}" "${TRANSPORT_MOC_HEADERS[@]}"; do
+ALL_MOC_HEADERS=("${SDK_ROOT_MOC_HEADERS[@]}" "${SDK_CLIENT_MOC_HEADERS[@]}" "${SDK_PROVIDER_MOC_HEADERS[@]}" "${TRANSPORT_MOC_HEADERS[@]}")
+
+for header in "${ALL_MOC_HEADERS[@]}"; do
     if [ -f "$header" ]; then
         basename=$(basename "$header" .h)
         echo "Generating MOC for $header..."
@@ -86,7 +96,7 @@ done
 # Try to compile the headers (syntax check)
 echo "Checking header syntax..."
 
-# SDK headers
+# SDK root headers
 g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/logos_api.h -o /tmp/logos_api.h.gch
 if [ $? -eq 0 ]; then
     echo "✅ LogosAPI header syntax OK"
@@ -96,7 +106,17 @@ else
     exit 1
 fi
 
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/logos_api_client.h -o /tmp/logos_api_client.h.gch
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/token_manager.h -o /tmp/token_manager.h.gch
+if [ $? -eq 0 ]; then
+    echo "✅ Token manager header syntax OK"
+    rm -f /tmp/token_manager.h.gch
+else
+    echo "❌ Token manager header has syntax errors"
+    exit 1
+fi
+
+# SDK client headers
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/client/logos_api_client.h -o /tmp/logos_api_client.h.gch
 if [ $? -eq 0 ]; then
     echo "✅ Client header syntax OK"
     rm -f /tmp/logos_api_client.h.gch
@@ -105,21 +125,13 @@ else
     exit 1
 fi
 
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/module_proxy.h -o /tmp/module_proxy.h.gch
+# SDK provider headers
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/provider/module_proxy.h -o /tmp/module_proxy.h.gch
 if [ $? -eq 0 ]; then
     echo "✅ Module proxy header syntax OK"
     rm -f /tmp/module_proxy.h.gch
 else
     echo "❌ Module proxy header has syntax errors"
-    exit 1
-fi
-
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/token_manager.h -o /tmp/token_manager.h.gch
-if [ $? -eq 0 ]; then
-    echo "✅ Token manager header syntax OK"
-    rm -f /tmp/token_manager.h.gch
-else
-    echo "❌ Token manager header has syntax errors"
     exit 1
 fi
 
@@ -145,7 +157,7 @@ fi
 # Try to compile the implementations (without linking)
 echo "Checking implementation syntax..."
 
-# SDK implementations
+# SDK root implementations
 g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/logos_api.cpp -o /tmp/logos_api.o
 if [ $? -eq 0 ]; then
     echo "✅ LogosAPI implementation compiles OK"
@@ -155,7 +167,17 @@ else
     exit 1
 fi
 
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/logos_api_client.cpp -o /tmp/logos_api_client.o
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/token_manager.cpp -o /tmp/token_manager.o
+if [ $? -eq 0 ]; then
+    echo "✅ Token manager implementation compiles OK"
+    rm -f /tmp/token_manager.o
+else
+    echo "❌ Token manager implementation has compilation errors"
+    exit 1
+fi
+
+# SDK client implementations
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/client/logos_api_client.cpp -o /tmp/logos_api_client.o
 if [ $? -eq 0 ]; then
     echo "✅ Client implementation compiles OK"
     rm -f /tmp/logos_api_client.o
@@ -164,21 +186,13 @@ else
     exit 1
 fi
 
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/module_proxy.cpp -o /tmp/module_proxy.o
+# SDK provider implementations
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/provider/module_proxy.cpp -o /tmp/module_proxy.o
 if [ $? -eq 0 ]; then
     echo "✅ Module proxy implementation compiles OK"
     rm -f /tmp/module_proxy.o
 else
     echo "❌ Module proxy implementation has compilation errors"
-    exit 1
-fi
-
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/token_manager.cpp -o /tmp/token_manager.o
-if [ $? -eq 0 ]; then
-    echo "✅ Token manager implementation compiles OK"
-    rm -f /tmp/token_manager.o
-else
-    echo "❌ Token manager implementation has compilation errors"
     exit 1
 fi
 
@@ -203,7 +217,7 @@ fi
 
 # Clean up generated MOC files
 echo "Cleaning up generated MOC files..."
-for header in "${SDK_MOC_HEADERS[@]}" "${TRANSPORT_MOC_HEADERS[@]}"; do
+for header in "${ALL_MOC_HEADERS[@]}"; do
     basename=$(basename "$header" .h)
     moc_file="moc_${basename}.cpp"
     if [ -f "$moc_file" ]; then

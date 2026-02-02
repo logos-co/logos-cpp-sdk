@@ -1,6 +1,6 @@
 #include "logos_api_client.h"
-#include "../logos-transport/logos_api_consumer.h"
-#include "token_manager.h"
+#include "../../logos-transport/logos_api_consumer.h"
+#include "../token_manager.h"
 
 LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
     : QObject(parent)

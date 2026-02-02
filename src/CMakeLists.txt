@@ -13,12 +13,12 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core RemoteObjects)
 set(SDK_SOURCES
     logos-cpp-sdk/logos_api.cpp
     logos-cpp-sdk/logos_api.h
-    logos-cpp-sdk/logos_api_client.cpp
-    logos-cpp-sdk/logos_api_client.h
-    logos-cpp-sdk/module_proxy.cpp
-    logos-cpp-sdk/module_proxy.h
     logos-cpp-sdk/token_manager.cpp
     logos-cpp-sdk/token_manager.h
+    logos-cpp-sdk/client/logos_api_client.cpp
+    logos-cpp-sdk/client/logos_api_client.h
+    logos-cpp-sdk/provider/module_proxy.cpp
+    logos-cpp-sdk/provider/module_proxy.h
 )
 
 # Transport sources (Qt RemoteObjects layer)
@@ -41,6 +41,8 @@ target_link_libraries(logos_sdk PUBLIC Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSIO
 target_include_directories(logos_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/logos-cpp-sdk
+    ${CMAKE_CURRENT_SOURCE_DIR}/logos-cpp-sdk/client
+    ${CMAKE_CURRENT_SOURCE_DIR}/logos-cpp-sdk/provider
     ${CMAKE_CURRENT_SOURCE_DIR}/logos-transport
     ${CMAKE_CURRENT_SOURCE_DIR}/core
 )
@@ -57,13 +59,23 @@ install(TARGETS logos_sdk
     RUNTIME DESTINATION bin
 )
 
-# Install SDK headers
+# Install SDK root headers
 install(FILES
     logos-cpp-sdk/logos_api.h
-    logos-cpp-sdk/logos_api_client.h
-    logos-cpp-sdk/module_proxy.h
     logos-cpp-sdk/token_manager.h
     DESTINATION include/logos-cpp-sdk
+)
+
+# Install SDK client headers
+install(FILES
+    logos-cpp-sdk/client/logos_api_client.h
+    DESTINATION include/logos-cpp-sdk/client
+)
+
+# Install SDK provider headers
+install(FILES
+    logos-cpp-sdk/provider/module_proxy.h
+    DESTINATION include/logos-cpp-sdk/provider
 )
 
 # Install transport headers

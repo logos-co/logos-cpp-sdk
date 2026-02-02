@@ -1,5 +1,5 @@
 #include "logos_api.h"
-#include "logos_api_client.h"
+#include "client/logos_api_client.h"
 #include "../logos-transport/logos_api_provider.h"
 #include "token_manager.h"
 
