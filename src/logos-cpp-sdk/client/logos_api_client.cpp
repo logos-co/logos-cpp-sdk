@@ -4,7 +4,7 @@
 
 LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
     : QObject(parent)
-    , m_consumer(new LogosAPIConsumer(module_to_talk_to, origin_module, token_manager, this))
+    , m_consumer(new LogosAPIConsumer(module_to_talk_to, origin_module, this))
     , m_token_manager(token_manager)
     , m_origin_module(origin_module)
 {
@@ -45,7 +45,7 @@ QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QSt
 
     if (token.isEmpty() && objectName != "capability_module") {
         qDebug() << "LogosAPIClient: calling requestModule for" << objectName;
-        LogosAPIConsumer* packageManagerConsumer = new LogosAPIConsumer("capability_module", m_origin_module, m_token_manager, this);
+        LogosAPIConsumer* packageManagerConsumer = new LogosAPIConsumer("capability_module", m_origin_module, this);
         QString capabilityToken = getToken("capability_module");
         QVariant result = packageManagerConsumer->invokeRemoteMethod(capabilityToken, "capability_module", "requestModule", QVariantList() << m_origin_module << objectName, timeout);
         qDebug() << "================================================";

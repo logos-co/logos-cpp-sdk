@@ -1,7 +1,6 @@
 #include "logos_api_consumer.h"
 #include "../logos-cpp-sdk/provider/module_proxy.h"
 #include "../logos-cpp-sdk/client/logos_api_client.h"
-#include "../logos-cpp-sdk/token_manager.h"
 #include "logos_mode.h"
 #include "plugin_registry.h"
 #include <QRemoteObjectNode>
@@ -13,12 +12,11 @@
 #include <QTime>
 #include <string>
 
-LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
+LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to, const QString& origin_module, QObject *parent)
     : QObject(parent)
     , m_node(nullptr)
     , m_registryUrl(QString("local:logos_%1").arg(module_to_talk_to))
     , m_connected(false)
-    , m_token_manager(token_manager)
 {
     if (LogosModeConfig::isLocal()) {
         qDebug() << "LogosAPIConsumer: Using Local mode - skipping QRemoteObjectNode";
