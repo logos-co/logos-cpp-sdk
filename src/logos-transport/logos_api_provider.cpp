@@ -1,6 +1,6 @@
 #include "logos_api_provider.h"
-#include "module_proxy.h"
-#include "logos_api.h"
+#include "../logos-cpp-sdk/module_proxy.h"
+#include "../logos-cpp-sdk/logos_api.h"
 #include "logos_mode.h"
 #include "plugin_registry.h"
 #include <QRemoteObjectRegistryHost>

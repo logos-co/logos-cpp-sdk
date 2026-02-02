@@ -8,7 +8,7 @@
 #include <QMap>
 #include <functional>
 
-#include "logos_mode.h"
+#include "../logos-transport/logos_mode.h"
 
 class LogosAPIConsumer;
 class TokenManager;

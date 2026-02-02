@@ -1,7 +1,7 @@
 #include "logos_api_consumer.h"
-#include "module_proxy.h"
-#include "logos_api_client.h"
-#include "token_manager.h"
+#include "../logos-cpp-sdk/module_proxy.h"
+#include "../logos-cpp-sdk/logos_api_client.h"
+#include "../logos-cpp-sdk/token_manager.h"
 #include "logos_mode.h"
 #include "plugin_registry.h"
 #include <QRemoteObjectNode>

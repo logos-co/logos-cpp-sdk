@@ -17,7 +17,7 @@ pkgs.stdenv.mkDerivation {
     # Build SDK library
     mkdir -p build-sdk
     cd build-sdk
-    cmake ../cpp -GNinja $cmakeFlags
+    cmake ../src -GNinja $cmakeFlags
     ninja
     cd ..
     
