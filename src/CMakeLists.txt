@@ -61,31 +61,33 @@ install(TARGETS logos_sdk
     RUNTIME DESTINATION bin
 )
 
-# Install root headers
+# BACKWARD COMPATIBILITY:
+# The installed include structure uses cpp/ and core/ directories to remain
+# compatible with logos-module-builder and other downstream projects that
+# expect the original layout. The internal source is organized differently
+# (client/, provider/) but the installed output maintains the old paths.
+
+# Install all SDK headers into include/cpp/
 install(FILES
     logos_api.h
     token_manager.h
     logos_mode.h
     plugin_registry.h
-    DESTINATION include
-)
-
-# Install client headers
-install(FILES
     client/logos_api_client.h
     client/logos_api_consumer.h
-    DESTINATION include/client
-)
-
-# Install provider headers
-install(FILES
     provider/logos_api_provider.h
     provider/module_proxy.h
-    DESTINATION include/provider
+    DESTINATION include/cpp
 )
 
 # Install core headers
 install(FILES
     provider/core/interface.h
-    DESTINATION include/provider/core
+    DESTINATION include/core
+)
+
+# Also copy logos_mode.h to root include for backward compatibility
+install(FILES
+    logos_mode.h
+    DESTINATION include
 )
