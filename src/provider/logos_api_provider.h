@@ -10,7 +10,7 @@
 class QRemoteObjectRegistryHost;
 class ModuleProxy;
 
-#include "logos_mode.h"
+#include "../logos_mode.h"
 
 /**
  * @brief LogosAPIProvider handles registering objects for remote access

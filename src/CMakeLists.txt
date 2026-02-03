@@ -9,30 +9,34 @@ set(CMAKE_AUTOMOC ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core RemoteObjects)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core RemoteObjects)
 
-# SDK sources (high-level API)
-set(SDK_SOURCES
-    logos-cpp-sdk/logos_api.cpp
-    logos-cpp-sdk/logos_api.h
-    logos-cpp-sdk/token_manager.cpp
-    logos-cpp-sdk/token_manager.h
-    logos-cpp-sdk/client/logos_api_client.cpp
-    logos-cpp-sdk/client/logos_api_client.h
-    logos-cpp-sdk/provider/module_proxy.cpp
-    logos-cpp-sdk/provider/module_proxy.h
+# Root sources (shared/common)
+set(ROOT_SOURCES
+    logos_api.cpp
+    logos_api.h
+    token_manager.cpp
+    token_manager.h
+    logos_mode.h
+    plugin_registry.h
 )
 
-# Transport sources (Qt RemoteObjects layer)
-set(TRANSPORT_SOURCES
-    logos-transport/logos_api_consumer.cpp
-    logos-transport/logos_api_consumer.h
-    logos-transport/logos_api_provider.cpp
-    logos-transport/logos_api_provider.h
-    logos-transport/logos_mode.h
-    logos-transport/plugin_registry.h
+# Client sources
+set(CLIENT_SOURCES
+    client/logos_api_client.cpp
+    client/logos_api_client.h
+    client/logos_api_consumer.cpp
+    client/logos_api_consumer.h
+)
+
+# Provider sources
+set(PROVIDER_SOURCES
+    provider/logos_api_provider.cpp
+    provider/logos_api_provider.h
+    provider/module_proxy.cpp
+    provider/module_proxy.h
 )
 
 # Create the SDK library as STATIC instead of SHARED
-add_library(logos_sdk STATIC ${SDK_SOURCES} ${TRANSPORT_SOURCES})
+add_library(logos_sdk STATIC ${ROOT_SOURCES} ${CLIENT_SOURCES} ${PROVIDER_SOURCES})
 
 # Link Qt libraries
 target_link_libraries(logos_sdk PUBLIC Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::RemoteObjects)
@@ -40,11 +44,9 @@ target_link_libraries(logos_sdk PUBLIC Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSIO
 # Include directories
 target_include_directories(logos_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/logos-cpp-sdk
-    ${CMAKE_CURRENT_SOURCE_DIR}/logos-cpp-sdk/client
-    ${CMAKE_CURRENT_SOURCE_DIR}/logos-cpp-sdk/provider
-    ${CMAKE_CURRENT_SOURCE_DIR}/logos-transport
-    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/client
+    ${CMAKE_CURRENT_SOURCE_DIR}/provider
+    ${CMAKE_CURRENT_SOURCE_DIR}/provider/core
 )
 
 # Set output directories for static library
@@ -59,36 +61,31 @@ install(TARGETS logos_sdk
     RUNTIME DESTINATION bin
 )
 
-# Install SDK root headers
+# Install root headers
 install(FILES
-    logos-cpp-sdk/logos_api.h
-    logos-cpp-sdk/token_manager.h
-    DESTINATION include/logos-cpp-sdk
+    logos_api.h
+    token_manager.h
+    logos_mode.h
+    plugin_registry.h
+    DESTINATION include
 )
 
-# Install SDK client headers
+# Install client headers
 install(FILES
-    logos-cpp-sdk/client/logos_api_client.h
-    DESTINATION include/logos-cpp-sdk/client
+    client/logos_api_client.h
+    client/logos_api_consumer.h
+    DESTINATION include/client
 )
 
-# Install SDK provider headers
+# Install provider headers
 install(FILES
-    logos-cpp-sdk/provider/module_proxy.h
-    DESTINATION include/logos-cpp-sdk/provider
-)
-
-# Install transport headers
-install(FILES
-    logos-transport/logos_api_consumer.h
-    logos-transport/logos_api_provider.h
-    logos-transport/logos_mode.h
-    logos-transport/plugin_registry.h
-    DESTINATION include/logos-transport
+    provider/logos_api_provider.h
+    provider/module_proxy.h
+    DESTINATION include/provider
 )
 
 # Install core headers
 install(FILES
-    core/interface.h
-    DESTINATION include/core
+    provider/core/interface.h
+    DESTINATION include/provider/core
 )

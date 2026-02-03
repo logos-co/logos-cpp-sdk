@@ -9,7 +9,7 @@
 #include <QMap>
 #include <functional>
 
-#include "logos_mode.h"
+#include "../logos_mode.h"
 
 class QRemoteObjectNode;
 

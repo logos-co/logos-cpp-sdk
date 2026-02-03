@@ -1,6 +1,6 @@
 #include "logos_api.h"
 #include "client/logos_api_client.h"
-#include "../logos-transport/logos_api_provider.h"
+#include "provider/logos_api_provider.h"
 #include "token_manager.h"
 
 LogosAPI::LogosAPI(const QString& module_name, QObject *parent)

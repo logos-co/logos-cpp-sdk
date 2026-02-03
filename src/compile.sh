@@ -46,7 +46,7 @@ else
 fi
 
 # Add local include paths for the new directory structure
-LOCAL_INCLUDES="-I. -Ilogos-cpp-sdk -Ilogos-cpp-sdk/client -Ilogos-cpp-sdk/provider -Ilogos-transport -Icore"
+LOCAL_INCLUDES="-I. -Iclient -Iprovider -Iprovider/core"
 
 echo "Using Qt includes: $QT_INCLUDES"
 echo "Using local includes: $LOCAL_INCLUDES"
@@ -57,29 +57,25 @@ CXXFLAGS="-std=c++17 -fPIC"
 # Generate MOC files for headers with Q_OBJECT
 echo "Generating MOC files..."
 
-# SDK root headers that need MOC processing
-SDK_ROOT_MOC_HEADERS=(
-    "logos-cpp-sdk/logos_api.h"
-    "logos-cpp-sdk/token_manager.h"
+# Root headers that need MOC processing
+ROOT_MOC_HEADERS=(
+    "logos_api.h"
+    "token_manager.h"
 )
 
-# SDK client headers that need MOC processing
-SDK_CLIENT_MOC_HEADERS=(
-    "logos-cpp-sdk/client/logos_api_client.h"
+# Client headers that need MOC processing
+CLIENT_MOC_HEADERS=(
+    "client/logos_api_client.h"
+    "client/logos_api_consumer.h"
 )
 
-# SDK provider headers that need MOC processing
-SDK_PROVIDER_MOC_HEADERS=(
-    "logos-cpp-sdk/provider/module_proxy.h"
+# Provider headers that need MOC processing
+PROVIDER_MOC_HEADERS=(
+    "provider/logos_api_provider.h"
+    "provider/module_proxy.h"
 )
 
-# Transport headers that need MOC processing
-TRANSPORT_MOC_HEADERS=(
-    "logos-transport/logos_api_provider.h"
-    "logos-transport/logos_api_consumer.h"
-)
-
-ALL_MOC_HEADERS=("${SDK_ROOT_MOC_HEADERS[@]}" "${SDK_CLIENT_MOC_HEADERS[@]}" "${SDK_PROVIDER_MOC_HEADERS[@]}" "${TRANSPORT_MOC_HEADERS[@]}")
+ALL_MOC_HEADERS=("${ROOT_MOC_HEADERS[@]}" "${CLIENT_MOC_HEADERS[@]}" "${PROVIDER_MOC_HEADERS[@]}")
 
 for header in "${ALL_MOC_HEADERS[@]}"; do
     if [ -f "$header" ]; then
@@ -96,8 +92,8 @@ done
 # Try to compile the headers (syntax check)
 echo "Checking header syntax..."
 
-# SDK root headers
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/logos_api.h -o /tmp/logos_api.h.gch
+# Root headers
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos_api.h -o /tmp/logos_api.h.gch
 if [ $? -eq 0 ]; then
     echo "✅ LogosAPI header syntax OK"
     rm -f /tmp/logos_api.h.gch
@@ -106,7 +102,7 @@ else
     exit 1
 fi
 
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/token_manager.h -o /tmp/token_manager.h.gch
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header token_manager.h -o /tmp/token_manager.h.gch
 if [ $? -eq 0 ]; then
     echo "✅ Token manager header syntax OK"
     rm -f /tmp/token_manager.h.gch
@@ -115,8 +111,8 @@ else
     exit 1
 fi
 
-# SDK client headers
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/client/logos_api_client.h -o /tmp/logos_api_client.h.gch
+# Client headers
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header client/logos_api_client.h -o /tmp/logos_api_client.h.gch
 if [ $? -eq 0 ]; then
     echo "✅ Client header syntax OK"
     rm -f /tmp/logos_api_client.h.gch
@@ -125,27 +121,7 @@ else
     exit 1
 fi
 
-# SDK provider headers
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-cpp-sdk/provider/module_proxy.h -o /tmp/module_proxy.h.gch
-if [ $? -eq 0 ]; then
-    echo "✅ Module proxy header syntax OK"
-    rm -f /tmp/module_proxy.h.gch
-else
-    echo "❌ Module proxy header has syntax errors"
-    exit 1
-fi
-
-# Transport headers
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-transport/logos_api_provider.h -o /tmp/logos_api_provider.h.gch
-if [ $? -eq 0 ]; then
-    echo "✅ Provider header syntax OK"
-    rm -f /tmp/logos_api_provider.h.gch
-else
-    echo "❌ Provider header has syntax errors"
-    exit 1
-fi
-
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header logos-transport/logos_api_consumer.h -o /tmp/logos_api_consumer.h.gch
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header client/logos_api_consumer.h -o /tmp/logos_api_consumer.h.gch
 if [ $? -eq 0 ]; then
     echo "✅ Consumer header syntax OK"
     rm -f /tmp/logos_api_consumer.h.gch
@@ -154,11 +130,30 @@ else
     exit 1
 fi
 
+# Provider headers
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header provider/logos_api_provider.h -o /tmp/logos_api_provider.h.gch
+if [ $? -eq 0 ]; then
+    echo "✅ Provider header syntax OK"
+    rm -f /tmp/logos_api_provider.h.gch
+else
+    echo "❌ Provider header has syntax errors"
+    exit 1
+fi
+
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c -x c++-header provider/module_proxy.h -o /tmp/module_proxy.h.gch
+if [ $? -eq 0 ]; then
+    echo "✅ Module proxy header syntax OK"
+    rm -f /tmp/module_proxy.h.gch
+else
+    echo "❌ Module proxy header has syntax errors"
+    exit 1
+fi
+
 # Try to compile the implementations (without linking)
 echo "Checking implementation syntax..."
 
-# SDK root implementations
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/logos_api.cpp -o /tmp/logos_api.o
+# Root implementations
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos_api.cpp -o /tmp/logos_api.o
 if [ $? -eq 0 ]; then
     echo "✅ LogosAPI implementation compiles OK"
     rm -f /tmp/logos_api.o
@@ -167,7 +162,7 @@ else
     exit 1
 fi
 
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/token_manager.cpp -o /tmp/token_manager.o
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c token_manager.cpp -o /tmp/token_manager.o
 if [ $? -eq 0 ]; then
     echo "✅ Token manager implementation compiles OK"
     rm -f /tmp/token_manager.o
@@ -176,8 +171,8 @@ else
     exit 1
 fi
 
-# SDK client implementations
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/client/logos_api_client.cpp -o /tmp/logos_api_client.o
+# Client implementations
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c client/logos_api_client.cpp -o /tmp/logos_api_client.o
 if [ $? -eq 0 ]; then
     echo "✅ Client implementation compiles OK"
     rm -f /tmp/logos_api_client.o
@@ -186,18 +181,17 @@ else
     exit 1
 fi
 
-# SDK provider implementations
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-cpp-sdk/provider/module_proxy.cpp -o /tmp/module_proxy.o
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c client/logos_api_consumer.cpp -o /tmp/logos_api_consumer.o
 if [ $? -eq 0 ]; then
-    echo "✅ Module proxy implementation compiles OK"
-    rm -f /tmp/module_proxy.o
+    echo "✅ Consumer implementation compiles OK"
+    rm -f /tmp/logos_api_consumer.o
 else
-    echo "❌ Module proxy implementation has compilation errors"
+    echo "❌ Consumer implementation has compilation errors"
     exit 1
 fi
 
-# Transport implementations
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-transport/logos_api_provider.cpp -o /tmp/logos_api_provider.o
+# Provider implementations
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c provider/logos_api_provider.cpp -o /tmp/logos_api_provider.o
 if [ $? -eq 0 ]; then
     echo "✅ Provider implementation compiles OK"
     rm -f /tmp/logos_api_provider.o
@@ -206,12 +200,12 @@ else
     exit 1
 fi
 
-g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c logos-transport/logos_api_consumer.cpp -o /tmp/logos_api_consumer.o
+g++ $CXXFLAGS $QT_INCLUDES $LOCAL_INCLUDES -c provider/module_proxy.cpp -o /tmp/module_proxy.o
 if [ $? -eq 0 ]; then
-    echo "✅ Consumer implementation compiles OK"
-    rm -f /tmp/logos_api_consumer.o
+    echo "✅ Module proxy implementation compiles OK"
+    rm -f /tmp/module_proxy.o
 else
-    echo "❌ Consumer implementation has compilation errors"
+    echo "❌ Module proxy implementation has compilation errors"
     exit 1
 fi
 
