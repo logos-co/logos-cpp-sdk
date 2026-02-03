@@ -94,6 +94,16 @@ namespace {
                     );
                     break;
                 }
+                  case QMetaType::QUrl: {
+                    auto value = new QUrl{arg.toUrl()};
+                    scopedArgs.emplace_back(
+                        Q_ARG(QUrl, *value),
+                        [](const void* data) {
+                            delete static_cast<const QUrl*>(data);
+                        }
+                    );
+                    break;
+                }
                 case QMetaType::QString:
                 default: {
                     auto value = new QString{arg.toString()};
