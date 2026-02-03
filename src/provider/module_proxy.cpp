@@ -6,7 +6,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QStringList>
-#include "../core/interface.h"
+#include "core/interface.h"
 #include "logos_api.h"
 #include "token_manager.h"
 
