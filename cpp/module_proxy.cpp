@@ -74,6 +74,36 @@ namespace {
                     );
                     break;
                 }
+                case QMetaType::QStringList: {
+                    auto value = new QStringList{arg.toStringList()};
+                    scopedArgs.emplace_back(
+                        Q_ARG(QStringList, *value),
+                        [](const void* data) {
+                            delete static_cast<const QStringList*>(data);
+                        }
+                    );
+                    break;
+                }
+                case QMetaType::QByteArray: {
+                    auto value = new QByteArray{arg.toByteArray()};
+                    scopedArgs.emplace_back(
+                        Q_ARG(QByteArray, *value),
+                        [](const void* data) {
+                            delete static_cast<const QByteArray*>(data);
+                        }
+                    );
+                    break;
+                }
+                  case QMetaType::QUrl: {
+                    auto value = new QUrl{arg.toUrl()};
+                    scopedArgs.emplace_back(
+                        Q_ARG(QUrl, *value),
+                        [](const void* data) {
+                            delete static_cast<const QUrl*>(data);
+                        }
+                    );
+                    break;
+                }
                 case QMetaType::QString:
                 default: {
                     auto value = new QString{arg.toString()};
