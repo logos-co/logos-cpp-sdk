@@ -196,6 +196,70 @@ if (result.success) {
 }
 ```
 
+#### Complex objects
+
+Let's say you need to return a complex object. In the SDK, you have to you primitive so you can use QVariantMap:
+
+```cpp
+// Received JSON: {"cid": "QmXyz...", "filename": "photo.jpg", "size": 2048576, "mimetype": "image/jpeg"}
+
+QVariantMap manifest;
+manifest["cid"] = "QmXyz...";
+manifest["filename"] = "photo.jpg";
+manifest["size"] = 2048576;
+manifest["mimetype"] = "image/jpeg";
+return {true, manifest};
+```
+
+And then to consume it:
+
+```cpp
+LogosResult result = m_logos->my_plugin.someMethod(cid);
+if (result.success) {
+    QVariantMap manifest = result.getValue<QVariantMap>();
+    QString cid = manifest["cid"].toString();
+    QString filename = manifest["filename"].toString();
+    qint64 size = manifest["size"].toLongLong();
+    QString mimetype = manifest["mimetype"].toString();
+}
+```
+
+Same thing for a list, you can use `QVariantList`:
+
+```cpp
+QVariantList manifests;
+
+QVariantMap m1;
+m1["cid"] = "QmAbc...";
+m1["filename"] = "document.pdf";
+m1["size"] = 1024000;
+manifests.append(m1);
+
+QVariantMap m2;
+m2["cid"] = "QmDef...";
+m2["filename"] = "image.png";
+m2["size"] = 512000;
+manifests.append(m2);
+
+return {true, manifests};
+```
+
+To consume it:
+
+```cpp
+LogosResult result = m_logos->my_plugin.someMethod();
+if (result.success) {
+    QVariantList list = result.getValue<QVariantList>();
+    for (const QVariant& item : list) {
+        QVariantMap manifest = item.toMap();
+        QString cid = manifest["cid"].toString();
+        QString filename = manifest["filename"].toString();
+        qint64 size = manifest["size"].toLongLong();
+        qDebug() << filename << "-" << cid << "(" << size << "bytes)";
+    }
+}
+```
+
 ### Requirements
 
 #### Build Tools
