@@ -26,6 +26,27 @@ struct LogosResult {
     T getValue() const {
         return value.value<T>();
     }
+
+    template<typename T>
+    T getValue(const QString& key, T defaultValue = T()) const {
+        const QVariantMap &map = value.value<QVariantMap>();
+        if (!map.contains(key)) {
+            return defaultValue;
+        }
+        return qvariant_cast<T>(map.value(key));
+    }
+
+    template<typename T>
+    T getValue(int index, const QString& key, T defaultValue = T()) const {
+        const QVariantList &list = value.value<QVariantList>();
+
+        if (index < 0 || index >= list.size()) {
+            return defaultValue;
+        }
+
+        return qvariant_cast<T>(list[index].toMap().value(key, defaultValue));
+    }
+
 };
 
 // Provide (de)serialisation for being use as Remote Object

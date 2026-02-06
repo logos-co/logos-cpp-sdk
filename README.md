@@ -198,7 +198,7 @@ if (result.success) {
 
 #### Complex objects
 
-Let's say you need to return a complex object. In the SDK, you have to you primitive so you can use QVariantMap:
+Let's say you need to return a complex object. In the SDK, you have to build your type with primitive like QVariantMap:
 
 ```cpp
 // Received JSON: {"cid": "QmXyz...", "filename": "photo.jpg", "size": 2048576, "mimetype": "image/jpeg"}
@@ -211,16 +211,24 @@ manifest["mimetype"] = "image/jpeg";
 return {true, manifest};
 ```
 
-And then to consume it:
+And then to consume by using the shorthand function:
+
+```cpp
+LogosResult result = m_logos->my_plugin.someMethod(cid);
+if (result.success) {
+  QString cid = result.getValue<QString>("cid");
+  // You can define a default value as well
+  QString cid = result.getValue<QString>("cid", "unknown");
+}
+```
+
+Or you can use the value directly:
 
 ```cpp
 LogosResult result = m_logos->my_plugin.someMethod(cid);
 if (result.success) {
     QVariantMap manifest = result.getValue<QVariantMap>();
     QString cid = manifest["cid"].toString();
-    QString filename = manifest["filename"].toString();
-    qint64 size = manifest["size"].toLongLong();
-    QString mimetype = manifest["mimetype"].toString();
 }
 ```
 
@@ -244,7 +252,20 @@ manifests.append(m2);
 return {true, manifests};
 ```
 
-To consume it:
+To consume it using the shorthand function:
+
+```cpp
+LogosResult result = m_logos->my_plugin.someMethod();
+if (result.success) {
+    for (int i = 0; i < list.size(); ++i) {
+        QString cid = result.getValue<QString>(i, "cid");
+        // You can define a default value as well
+        QString cid = result.getValue<QString>(0, "cid", "unknown");
+    }
+}
+```
+
+Or you can use the value directly:
 
 ```cpp
 LogosResult result = m_logos->my_plugin.someMethod();
@@ -253,9 +274,6 @@ if (result.success) {
     for (const QVariant& item : list) {
         QVariantMap manifest = item.toMap();
         QString cid = manifest["cid"].toString();
-        QString filename = manifest["filename"].toString();
-        qint64 size = manifest["size"].toLongLong();
-        qDebug() << filename << "-" << cid << "(" << size << "bytes)";
     }
 }
 ```
