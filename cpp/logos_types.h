@@ -21,10 +21,16 @@ struct LogosResult {
     //     QString error = result.value.value<string>();
     // }
     QVariant value;
+
+    template<typename T>
+    T getValue() const {
+        return value.value<T>();
+    }
 };
 
 // Provide (de)serialisation for being use as Remote Object
 QDataStream& operator<<(QDataStream& out, const LogosResult& result);
 QDataStream& operator>>(QDataStream& in, LogosResult& result);
+
 
 #endif
