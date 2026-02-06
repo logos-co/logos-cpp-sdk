@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QHash>
+#include "logos_types.h"
 
 class LogosAPIClient;
 class LogosAPIProvider;
@@ -57,4 +58,4 @@ private:
     TokenManager* m_token_manager;
 };
 
-#endif // LOGOS_API_H 
+#endif // LOGOS_API_H
