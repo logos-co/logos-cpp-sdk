@@ -177,6 +177,25 @@ logos-cpp-generator --metadata metadata.json --general-only --output-dir ./gener
 
 This approach gives you fine-grained control over which modules to include and allows rebuilding just the umbrella headers without regenerating all module wrappers.
 
+### API
+
+#### LogosResult
+
+`LogosResult` provides a structured way to return either a value or an error from synchronous method calls.
+
+If the `success` attribute is `true`, you can retrieve the value using a cast. Otherwise, retrieve the error which should be a string (though not enforced).
+
+### Example
+
+```cpp
+LogosResult result = m_logos->my_module.someMethod();
+if (result.success) {
+    QString value = result.value.value<QString>();
+} else {
+    QString error = result.value.value<QString>();
+}
+```
+
 ### Requirements
 
 #### Build Tools

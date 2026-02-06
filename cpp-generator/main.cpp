@@ -100,7 +100,7 @@ static QString mapReturnType(const QString& qtType)
     const QString base = normalizeType(qtType);
     if (base.isEmpty() || base == "void") return QString("void");
     static const QSet<QString> known = {
-        "bool","int","double","float","QString","QStringList","QJsonArray","QVariant"
+        "bool","int","double","float","QString","QStringList","QJsonArray","QVariant","LogosResult"
     };
     if (known.contains(base)) return base;
     return QString("QVariant");
@@ -119,6 +119,7 @@ static QString makeHeader(const QString& moduleName, const QString& className, c
     s << "#include <QPointer>\n";
     s << "#include <functional>\n";
     s << "#include <utility>\n";
+    s << "#include \"logos_types.h\"\n";
     s << "#include \"logos_api.h\"\n";
     s << "#include \"logos_api_client.h\"\n\n";
     s << "class " << className << " {\n";
@@ -325,6 +326,8 @@ static QString makeSource(const QString& moduleName, const QString& className, c
             s << "    return _result.toStringList();\n";
         } else if (ret == "QJsonArray") {
             s << "    return qvariant_cast<QJsonArray>(_result);\n";
+        }else if (ret == "LogosResult") {
+            s << "    return _result.value<LogosResult>();\n";
         } else { // QVariant
             s << "    return _result;\n";
         }
