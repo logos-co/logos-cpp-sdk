@@ -13,8 +13,66 @@
 #include <QFile>
 #include <QSet>
 #include <QtGlobal>
+#include <QRegularExpression>
 
-static QJsonArray enumerateMethods(QObject* moduleInstance)
+static QMap<QString, QString> parseInterfaceComments(const QString& interfaceFilePath)
+{
+    QMap<QString, QString> methodDocs;
+
+    // Make sure that he file _inteface.h exists.
+    QFile file(interfaceFilePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return methodDocs;
+    }
+
+    // Read all and split into lines.
+    QStringList lines = QString::fromUtf8(file.readAll()).split('\n');
+    file.close();
+
+    // Store the comments.
+    // It will contains the comments for one fuction until we encounter a non-comment line,
+    //  at which point we will try to associate it with a Q_INVOKABLE method declaration.
+    QStringList accumulatedComments;
+
+    for (const QString& line : lines) {
+        // Just clean it up.
+        QString trimmed = line.trimmed();
+
+        // This is totally opinionated but easier.
+        // Comments considered are //, so one per line.
+        if (trimmed.startsWith("//")) {
+            accumulatedComments.append(trimmed.mid(2).trimmed());
+            continue;
+        }
+
+        // Find the name of the method being declared with Q_INVOKABLE
+        // and associate the accumulated comments with it, then clear the accumulator.
+        if (trimmed.startsWith("Q_INVOKABLE")) {
+            // Catch the first "word" followed by "(" as the method name.
+            QRegularExpression rx(R"(\s+(\w+)\s*\()");
+            QRegularExpressionMatch match = rx.match(trimmed);
+
+            // If we found a method name and we have accumulated comments, associate them.
+            if (match.hasMatch() && !accumulatedComments.isEmpty()) {
+                methodDocs[match.captured(1)] = accumulatedComments.join('\n');
+            }
+
+            // Clear the accumulated comments after processing a Q_INVOKABLE method.
+            accumulatedComments.clear();
+            continue;
+        }
+
+        // If we encounter a non-comment line that is not a Q_INVOKABLE declaration,
+        // we should clear the accumulated comments
+        if (!trimmed.isEmpty()) {
+            accumulatedComments.clear();
+        }
+    }
+
+    return methodDocs;
+}
+
+static QJsonArray enumerateMethods(QObject* moduleInstance, const QMap<QString, QString>& interfaceDocs)
 {
     QJsonArray methodsArray;
 
@@ -37,6 +95,12 @@ static QJsonArray enumerateMethods(QObject* moduleInstance)
         methodObj["returnType"] = QString::fromUtf8(method.typeName());
         bool isInvokable = method.isValid() && (method.methodType() == QMetaMethod::Method || method.methodType() == QMetaMethod::Slot);
         methodObj["isInvokable"] = isInvokable;
+
+        // If the documentation exists for this method, add it to the object.
+        QString methodName = QString::fromUtf8(method.name());
+        if (interfaceDocs.contains(methodName)) {
+            methodObj["doc"] = interfaceDocs[methodName];
+        }
 
         if (method.parameterCount() > 0) {
             QJsonArray params;
@@ -148,8 +212,22 @@ static QString makeHeader(const QString& moduleName, const QString& className, c
         if (!invokable) continue;
         const QString name = o.value("name").toString();
         const QString ret = mapReturnType(o.value("returnType").toString());
-        s << "    " << ret << " " << name << "(";
         QJsonArray params = o.value("parameters").toArray();
+
+        // If the documentation exists for this method,
+        // add it as a comment.
+        QString methodDoc = o.value("doc").toString();
+
+        if (!methodDoc.isEmpty()) {
+            QStringList docLines = methodDoc.split('\n');
+            s << "    /**\n";
+            for (const QString& line : docLines) {
+                s << "     * " << line << "\n";
+            }
+            s << "     */\n";
+        }
+
+        s << "    " << ret << " " << name << "(";
         for (int i = 0; i < params.size(); ++i) {
             QJsonObject p = params.at(i).toObject();
             QString pt = mapParamType(p.value("type").toString());
@@ -676,7 +754,7 @@ static bool writeUmbrellaSourceFromDeps(const QString& genDirPath, const QJsonAr
     return true;
 }
 
-static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, bool moduleOnly, QTextStream& out, QTextStream& err)
+static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, bool moduleOnly, const QString& interfaceFilePath, QTextStream& out, QTextStream& err)
 {
     QFileInfo fi(pluginInputPath);
     if (!fi.exists()) {
@@ -717,7 +795,17 @@ static int generateFromPlugin(const QString& pluginInputPath, const QString& out
         }
     }
 
-    QJsonArray methods = enumerateMethods(instance);
+    // Add comment parsing if interface file provided.
+    // Note that the interface file is expected to end with "_interface.h".
+    QMap<QString, QString> interfaceDocs;
+    if (!interfaceFilePath.isEmpty()) {
+        interfaceDocs = parseInterfaceComments(interfaceFilePath);
+        if (!interfaceDocs.isEmpty()) {
+            out << "Extracted documentation for " << interfaceDocs.size() << " methods\n";
+        }
+    }
+
+    QJsonArray methods = enumerateMethods(instance, interfaceDocs);
 
     QString className = toPascalCase(moduleName);
     QString headerRel = QString("%1_api.h").arg(moduleName);
@@ -777,7 +865,7 @@ int main(int argc, char* argv[])
     QTextStream out(stdout);
 
     const QStringList args = app.arguments();
-    
+
     // Parse --output-dir option
     QString outputDir;
     const int outDirIdx = args.indexOf("--output-dir");
@@ -793,6 +881,16 @@ int main(int argc, char* argv[])
 
     // Parse --general-only option
     bool generalOnly = args.contains("--general-only");
+
+    // Parse --interface option
+    QString interfaceFile;
+    const int interfaceIdx = args.indexOf("--interface");
+    if (interfaceIdx != -1 && interfaceIdx + 1 < args.size()) {
+        interfaceFile = args.at(interfaceIdx + 1);
+        if (interfaceFile.startsWith('@')) {
+            interfaceFile.remove(0, 1);
+        }
+    }
 
     // Support: extract dependencies from a metadata.json file
     {
@@ -898,8 +996,9 @@ int main(int argc, char* argv[])
                         err << "Skipping: plugin not found for dependency '" << depName << "' at " << pluginPath << "\n";
                         continue;
                     }
+
                     out << "Running generator for dependency plugin: " << pluginPath << "\n";
-                    const int st = generateFromPlugin(pluginPath, outputDir, moduleOnly, out, err);
+                    const int st = generateFromPlugin(pluginPath, outputDir, moduleOnly, interfaceFile, out, err);
                     if (st != 0) {
                         overallStatus = st; // remember last non-zero
                     }
@@ -932,5 +1031,5 @@ int main(int argc, char* argv[])
     }
 
     QString argPath = args.at(1);
-    return generateFromPlugin(argPath, outputDir, moduleOnly, out, err);
+    return generateFromPlugin(argPath, outputDir, moduleOnly, interfaceFile, out, err);
 }
