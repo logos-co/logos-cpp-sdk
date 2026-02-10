@@ -7,10 +7,13 @@
 #include <QRemoteObjectNode>
 #include <QRemoteObjectReplica>
 #include <QRemoteObjectPendingCall>
+#include <QRemoteObjectPendingCallWatcher>
 #include <QDebug>
 #include <QUrl>
 #include <QMetaObject>
 #include <QTime>
+#include <QEventLoop>
+#include <QTimer>
 #include <string>
 
 LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
@@ -74,11 +77,36 @@ QObject* LogosAPIConsumer::requestObject(const QString& objectName, Timeout time
         return nullptr;
     }
 
-    // Wait for the replica to be initialized
-    if (!replica->waitForSource(timeout.ms)) {
-        qWarning() << "LogosAPIConsumer: Timeout waiting for object replica to be ready:" << objectName;
-        delete replica;
-        return nullptr;
+    // Wait for the replica to be initialized using QEventLoop to keep UI responsive
+    if (!replica->isInitialized()) {
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        bool timedOut = false;
+
+        // Connect timeout
+        timeoutTimer.setSingleShot(true);
+        QObject::connect(&timeoutTimer, &QTimer::timeout, [&]() {
+            timedOut = true;
+            loop.quit();
+        });
+
+        // Connect when replica is initialized
+        QObject::connect(replica, &QRemoteObjectReplica::initialized, [&]() {
+            if (!timedOut) {
+                timeoutTimer.stop();
+                loop.quit();
+            }
+        });
+
+        // Start timeout timer and event loop
+        timeoutTimer.start(timeout.ms);
+        loop.exec();
+
+        if (timedOut) {
+            qWarning() << "LogosAPIConsumer: Timeout waiting for object replica to be ready:" << objectName;
+            delete replica;
+            return nullptr;
+        }
     }
 
     qDebug() << "LogosAPIConsumer: Successfully acquired replica for object:" << objectName;
@@ -195,12 +223,44 @@ QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QS
         return QVariant();
     }
 
-    // Wait for the result
-    pendingCall.waitForFinished(timeout.ms);
+    // Wait for the result using QEventLoop to keep UI responsive
+    // This processes events while waiting, preventing UI freeze
+    QEventLoop loop;
+    QTimer timeoutTimer;
+    bool timedOut = false;
+
+    // Create a watcher for the pending call (Qt Remote Objects requires this for signals)
+    QRemoteObjectPendingCallWatcher* watcher = new QRemoteObjectPendingCallWatcher(pendingCall);
+
+    // Connect timeout
+    timeoutTimer.setSingleShot(true);
+    QObject::connect(&timeoutTimer, &QTimer::timeout, [&]() {
+        timedOut = true;
+        loop.quit();
+    });
+
+    // Connect when the call finishes
+    QObject::connect(watcher, &QRemoteObjectPendingCallWatcher::finished, [&]() {
+        if (!timedOut) {
+            timeoutTimer.stop();
+            loop.quit();
+        }
+    });
+
+    // Start timeout timer and event loop
+    timeoutTimer.start(timeout.ms);
+    loop.exec();
+
     delete plugin;
+    delete watcher;
+
+    if (timedOut) {
+        qWarning() << "LogosAPIConsumer: Remote callRemoteMethod timed out after" << timeout.ms << "ms for" << objectName << methodName;
+        return QVariant();
+    }
 
     if (!pendingCall.isFinished() || pendingCall.error() != QRemoteObjectPendingCall::NoError) {
-        qWarning() << "LogosAPIConsumer: Remote callRemoteMethod failed or timed out:" << pendingCall.error();
+        qWarning() << "LogosAPIConsumer: Remote callRemoteMethod failed:" << pendingCall.error();
         return QVariant();
     }
 
