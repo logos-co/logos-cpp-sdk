@@ -94,12 +94,22 @@ namespace {
                     );
                     break;
                 }
-                  case QMetaType::QUrl: {
+                case QMetaType::QUrl: {
                     auto value = new QUrl{arg.toUrl()};
                     scopedArgs.emplace_back(
                         Q_ARG(QUrl, *value),
                         [](const void* data) {
                             delete static_cast<const QUrl*>(data);
+                        }
+                    );
+                    break;
+                }
+                case QMetaType::Bool: {
+                    auto value = new bool{arg.toBool()};
+                    scopedArgs.emplace_back(
+                        Q_ARG(bool, *value),
+                        [](const void* data) {
+                            delete static_cast<const bool*>(data);
                         }
                     );
                     break;
