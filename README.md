@@ -190,8 +190,20 @@ If the `success` attribute is `true`, you can retrieve the value using a cast. O
 ```cpp
 LogosResult result = m_logos->my_module.someMethod();
 if (result.success) {
+    // Use shorthand
+    QString value = result.getString();
+    // Or
+    QString value = result.getValue<QString>();
+    // Or
     QString value = result.value.value<QString>();
 } else {
+    // Use shorthand
+    QString error = result.error();
+    // Or
+    QString error = result.getString();
+    // Or
+    QString error = result.getValue<QString>();
+    // Or
     QString error = result.value.value<QString>();
 }
 ```
@@ -216,9 +228,9 @@ And then to consume by using the shorthand function:
 ```cpp
 LogosResult result = m_logos->my_plugin.someMethod(cid);
 if (result.success) {
-  QString cid = result.getValue<QString>("cid");
+  QString cid = result.getString("cid");
   // You can define a default value as well
-  QString cid = result.getValue<QString>("cid", "unknown");
+  QString cid = result.getString("cid", "unknown");
 }
 ```
 
@@ -227,7 +239,7 @@ Or you can use the value directly:
 ```cpp
 LogosResult result = m_logos->my_plugin.someMethod(cid);
 if (result.success) {
-    QVariantMap manifest = result.getValue<QVariantMap>();
+    QVariantMap manifest = result.getMap();
     QString cid = manifest["cid"].toString();
 }
 ```
@@ -258,9 +270,9 @@ To consume it using the shorthand function:
 LogosResult result = m_logos->my_plugin.someMethod();
 if (result.success) {
     for (int i = 0; i < list.size(); ++i) {
-        QString cid = result.getValue<QString>(i, "cid");
+        QString cid = result.getString(i, "cid");
         // You can define a default value as well
-        QString cid = result.getValue<QString>(0, "cid", "unknown");
+        QString cid = result.getString(0, "cid", "unknown");
     }
 }
 ```
@@ -270,7 +282,7 @@ Or you can use the value directly:
 ```cpp
 LogosResult result = m_logos->my_plugin.someMethod();
 if (result.success) {
-    QVariantList list = result.getValue<QVariantList>();
+    QVariantList list = result.getList();
     for (const QVariant& item : list) {
         QVariantMap manifest = item.toMap();
         QString cid = manifest["cid"].toString();
