@@ -55,6 +55,7 @@ echo "Generating MOC files..."
 
 # List of headers that need MOC processing (contain Q_OBJECT)
 MOC_HEADERS=(
+    "logos_types.h"
     "logos_api.h"
     "logos_api_client.h"
     "logos_api_provider.h" 
