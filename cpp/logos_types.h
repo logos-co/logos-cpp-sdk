@@ -3,6 +3,13 @@
 
 #include <QDataStream>
 #include <QVariant>
+#include <stdexcept>
+
+class LogosResultException : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
 
 struct LogosResult
 {
@@ -12,27 +19,41 @@ struct LogosResult
     //
     // LogosResult result = someMethod();
     // if (result.success) {
-    //     QString someValue = result.value.value<QString>();
-    // }
-    //
-    // Or:
-    //
-    // LogosResult result = someMethod();
-    // if (!result.success) {
-    //     QString error = result.value.value<QString>();
+    //     QString someValue = result.getValue<QString>();
+    //     // OR
+    //     QString someValue = result.getString();
     // }
     QVariant value;
+
+    // LogosResult result = someMethod();
+    // if (!result.success) {
+    //     QString error = result.getError();
+    // }
+    QVariant error;
+
+    template<typename T = QString>
+    T getError() const
+    {
+        if (success) {
+            throw LogosResultException("Attempted to get error from a successful LogosResult");
+        }
+        return error.value<T>();
+    }
 
     template<typename T>
     T getValue() const
     {
+        if (!success) {
+            throw LogosResultException("Attempted to get value from a failed LogosResult: "
+                                       + error.toString().toStdString());
+        }
         return value.value<T>();
     }
 
     template<typename T>
     T getValue(const QString &key, T defaultValue = T()) const
     {
-        const QVariantMap &map = value.value<QVariantMap>();
+        const QVariantMap &map = getValue<QVariantMap>();
         if (!map.contains(key)) {
             return defaultValue;
         }
@@ -42,22 +63,13 @@ struct LogosResult
     template<typename T>
     T getValue(int index, const QString &key, T defaultValue = T()) const
     {
-        const QVariantList &list = value.value<QVariantList>();
+        const QVariantList &list = getValue<QVariantList>();
 
         if (index < 0 || index >= list.size()) {
             return defaultValue;
         }
 
         return qvariant_cast<T>(list[index].toMap().value(key, defaultValue));
-    }
-
-    QString error() const
-    {
-        if (!success) {
-            return getString();
-        }
-
-        return "";
     }
 
     QString getString() const { return getValue<QString>(); }

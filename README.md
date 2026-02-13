@@ -185,6 +185,8 @@ This approach gives you fine-grained control over which modules to include and a
 
 If the `success` attribute is `true`, you can retrieve the value using a cast. Otherwise, retrieve the error which should be a string (though not enforced).
 
+The `success` attribute should ALWAYS be asserted. Accessing the value of an errored `LogosResult` or the error of a valid `LogosResult` will result in a `LogosResultException` being thrown.
+
 ### Example
 
 ```cpp
@@ -194,17 +196,11 @@ if (result.success) {
     QString value = result.getString();
     // Or
     QString value = result.getValue<QString>();
-    // Or
-    QString value = result.value.value<QString>();
 } else {
     // Use shorthand
-    QString error = result.error();
+    QString error = result.getError();
     // Or
-    QString error = result.getString();
-    // Or
-    QString error = result.getValue<QString>();
-    // Or
-    QString error = result.value.value<QString>();
+    QString error = result.Error<QString>();
 }
 ```
 
