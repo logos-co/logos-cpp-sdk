@@ -200,7 +200,7 @@ if (result.success) {
     // Use shorthand
     QString error = result.getError();
     // Or
-    QString error = result.Error<QString>();
+    QString error = result.getError<QString>();
 }
 ```
 
