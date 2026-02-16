@@ -177,6 +177,115 @@ logos-cpp-generator --metadata metadata.json --general-only --output-dir ./gener
 
 This approach gives you fine-grained control over which modules to include and allows rebuilding just the umbrella headers without regenerating all module wrappers.
 
+### API
+
+#### LogosResult
+
+`LogosResult` provides a structured way to return either a value or an error from synchronous method calls.
+
+If the `success` attribute is `true`, you can retrieve the value using a cast. Otherwise, retrieve the error which should be a string (though not enforced).
+
+The `success` attribute should ALWAYS be asserted. Accessing the value of an errored `LogosResult` or the error of a valid `LogosResult` will result in a `LogosResultException` being thrown.
+
+### Example
+
+```cpp
+LogosResult result = m_logos->my_module.someMethod();
+if (result.success) {
+    // Use shorthand
+    QString value = result.getString();
+    // Or
+    QString value = result.getValue<QString>();
+} else {
+    // Use shorthand
+    QString error = result.getError();
+    // Or
+    QString error = result.getError<QString>();
+}
+```
+
+#### Complex objects
+
+Let's say you need to return a complex object. In the SDK, you have to build your type with primitive like QVariantMap:
+
+```cpp
+// Received JSON: {"cid": "QmXyz...", "filename": "photo.jpg", "size": 2048576, "mimetype": "image/jpeg"}
+
+QVariantMap manifest;
+manifest["cid"] = "QmXyz...";
+manifest["filename"] = "photo.jpg";
+manifest["size"] = 2048576;
+manifest["mimetype"] = "image/jpeg";
+return {true, manifest};
+```
+
+And then to consume by using the shorthand function:
+
+```cpp
+LogosResult result = m_logos->my_plugin.someMethod(cid);
+if (result.success) {
+  QString cid = result.getString("cid");
+  // You can define a default value as well
+  QString cid = result.getString("cid", "unknown");
+}
+```
+
+Or you can use the value directly:
+
+```cpp
+LogosResult result = m_logos->my_plugin.someMethod(cid);
+if (result.success) {
+    QVariantMap manifest = result.getMap();
+    QString cid = manifest["cid"].toString();
+}
+```
+
+Same thing for a list, you can use `QVariantList`:
+
+```cpp
+QVariantList manifests;
+
+QVariantMap m1;
+m1["cid"] = "QmAbc...";
+m1["filename"] = "document.pdf";
+m1["size"] = 1024000;
+manifests.append(m1);
+
+QVariantMap m2;
+m2["cid"] = "QmDef...";
+m2["filename"] = "image.png";
+m2["size"] = 512000;
+manifests.append(m2);
+
+return {true, manifests};
+```
+
+To consume it using the shorthand function:
+
+```cpp
+LogosResult result = m_logos->my_plugin.someMethod();
+if (result.success) {
+    for (int i = 0; i < list.size(); ++i) {
+        QString cid = result.getString(i, "cid");
+        // You can define a default value as well
+        QString cid = result.getString(0, "cid", "unknown");
+    }
+}
+```
+
+Or you can use the value directly:
+
+```cpp
+LogosResult result = m_logos->my_plugin.someMethod();
+if (result.success) {
+    QVariantList list = result.getList();
+    for (const QVariant& item : list) {
+        QVariantMap manifest = item.toMap();
+        QString cid = manifest["cid"].toString();
+    }
+}
+```
+
 ### Requirements
 
 #### Build Tools

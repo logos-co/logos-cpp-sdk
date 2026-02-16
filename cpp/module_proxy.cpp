@@ -94,12 +94,22 @@ namespace {
                     );
                     break;
                 }
-                  case QMetaType::QUrl: {
+                case QMetaType::QUrl: {
                     auto value = new QUrl{arg.toUrl()};
                     scopedArgs.emplace_back(
                         Q_ARG(QUrl, *value),
                         [](const void* data) {
                             delete static_cast<const QUrl*>(data);
+                        }
+                    );
+                    break;
+                }
+                case QMetaType::Bool: {
+                    auto value = new bool{arg.toBool()};
+                    scopedArgs.emplace_back(
+                        Q_ARG(bool, *value),
+                        [](const void* data) {
+                            delete static_cast<const bool*>(data);
                         }
                     );
                     break;
@@ -155,6 +165,8 @@ namespace {
             INVOKE_METHOD_WITH_RETURN(int, int);
         } else if (strcmp(returnTypeName, "QString") == 0) {
             INVOKE_METHOD_WITH_RETURN(QString, QString);
+        } else if (strcmp(returnTypeName, "LogosResult") == 0) {
+            INVOKE_METHOD_WITH_RETURN(LogosResult, LogosResult);
         } else if (strcmp(returnTypeName, "QVariant") == 0) {
             INVOKE_METHOD_WITH_RETURN(QVariant, QVariant);
         } else if (strcmp(returnTypeName, "QJsonArray") == 0) {
@@ -344,7 +356,16 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
         if (success) {
             result = QVariant(stringResult);
         }
-    } else if (returnType == QMetaType::fromType<QVariant>()) {
+    }
+    else if (returnType == QMetaType::fromType<LogosResult>()) {
+       // LogosResult return type
+        LogosResult logosResult;
+        success = invokeMethodByArgCount(m_module, methodName, args, &logosResult, "LogosResult");
+         if (success) {
+             result = QVariant::fromValue(logosResult);
+        }
+    }
+    else if (returnType == QMetaType::fromType<QVariant>()) {
         // QVariant return type
         QVariant variantResult;
         success = invokeMethodByArgCount(m_module, methodName, args, &variantResult, "QVariant");
