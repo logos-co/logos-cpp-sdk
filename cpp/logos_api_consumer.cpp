@@ -150,12 +150,12 @@ bool LogosAPIConsumer::connectToRegistry()
 
 
 
-QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QString& objectName, const QString& methodName, 
+QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QString& objectName, const QString& methodName,
                                    const QVariantList& args, Timeout timeout)
 {
-    qDebug() << "LogosAPIConsumer: Calling invokeRemoteMethod with params:" << authToken << objectName << methodName << args << timeout.ms;
+    qDebug() << "LogosAPIConsumer: Calling invokeRemoteMethod:" << objectName << methodName << "args_count:" << args.size() << "timeout:" << timeout.ms;
 
-    // This method handles both ModuleProxy-wrapped modules (template_module, package_manager) 
+    // This method handles both ModuleProxy-wrapped modules (template_module, package_manager)
     // and direct remote object calls for other modules
     QObject* plugin = requestObject(objectName, timeout);
     if (!plugin) {
@@ -217,7 +217,7 @@ void LogosAPIConsumer::onEvent(QObject* originObject, QObject* destinationObject
     // Check if we already have a connection for this origin object
     if (!m_connections.contains(originObject)) {
         // Create new connection only if it doesn't exist
-        auto connection = QObject::connect(originObject, SIGNAL(eventResponse(QString, QVariantList)), 
+        auto connection = QObject::connect(originObject, SIGNAL(eventResponse(QString, QVariantList)),
                                           this, SLOT(invokeCallback(QString, QVariantList)));
 
         if (connection) {
@@ -256,7 +256,7 @@ void LogosAPIConsumer::onEvent(QObject* originObject, QObject* destinationObject
     qDebug() << "LogosAPIConsumer: Registering event listener for event:" << eventName << "(connecting to destination slot)";
 
     // connect to the eventResponse signal of the destinationObject's slot
-    QObject::connect(originObject, SIGNAL(eventResponse(QString, QVariantList)), 
+    QObject::connect(originObject, SIGNAL(eventResponse(QString, QVariantList)),
                     destinationObject, SLOT(onEventResponse(QString, QVariantList)), Qt::AutoConnection);
 }
 
