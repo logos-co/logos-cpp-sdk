@@ -14,12 +14,17 @@ LogosAPI::LogosAPI(const QString& module_name, QObject *parent)
     
     // Get token manager instance
     m_token_manager = &TokenManager::instance();
+
+    // Register LogosResult as QVariant type
+    qRegisterMetaType<LogosResult>("LogosResult");
 }
 
 LogosAPI::~LogosAPI()
 {
     // Provider and client will be automatically deleted as child objects
     // Token manager is a singleton, so we don't delete it
+
+
 }
 
 LogosAPIProvider* LogosAPI::getProvider() const
