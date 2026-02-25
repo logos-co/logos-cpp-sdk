@@ -199,7 +199,7 @@ bool ModuleProxy::saveToken(const QString& from_module_name, const QString& toke
 
     qDebug() << "ModuleProxy: Saving token for module:" << from_module_name;
     m_tokens[from_module_name] = token;
-    
+
     qDebug() << "ModuleProxy: Token saved successfully. Total tokens stored:" << m_tokens.size();
     return true;
 }
@@ -252,7 +252,7 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
     // print keys vand values for debug purposes
     QList<QString> keys = tokenManager->getTokenKeys();
     for (const QString& key : keys) {
-       qDebug() << "ModuleProxy: Token key:" << key << "value:" << tokenManager->getToken(key);
+       qDebug() << "ModuleProxy: Token key:" << key;
     }
 
     // check if authToken is valid
