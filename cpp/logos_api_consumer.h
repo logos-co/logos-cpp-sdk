@@ -80,6 +80,23 @@ public:
     QVariant invokeRemoteMethod(const QString& authToken, const QString& objectName, const QString& methodName, 
                              const QVariantList& args = QVariantList(), Timeout timeout = Timeout());
 
+    /** Callback type for async remote method results. Receives the result QVariant (invalid on error/timeout). */
+    using AsyncResultCallback = std::function<void(QVariant)>;
+
+    /**
+     * @brief Invoke a remote method asynchronously; result or error is delivered via callback
+     * @param authToken Authentication token for the operation
+     * @param objectName The name of the remote object
+     * @param methodName The name of the method to call
+     * @param args Arguments to pass to the method
+     * @param callback Called when the call completes (on the same thread as this consumer, typically main)
+     * @param timeout Timeout for replica acquisition and for the remote call (default 20000ms)
+     */
+    void invokeRemoteMethodAsync(const QString& authToken, const QString& objectName, const QString& methodName,
+                                 const QVariantList& args,
+                                 AsyncResultCallback callback,
+                                 Timeout timeout = Timeout());
+
     /**
      * @brief Register an event listener for the specified event name
      * @param originObject The object that will emit the event
