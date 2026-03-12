@@ -162,6 +162,22 @@ static QString makeHeader(const QString& moduleName, const QString& className, c
             if (i + 1 < params.size()) s << ", ";
         }
         s << ");\n";
+        // Async overload: same params + callback + optional Timeout
+        QString asyncCallbackType = (ret == "void") ? QString("std::function<void()>") : QString("std::function<void(") + ret + ")>";
+        s << "    void " << name << "Async(";
+        for (int i = 0; i < params.size(); ++i) {
+            QJsonObject p = params.at(i).toObject();
+            QString pt = mapParamType(p.value("type").toString());
+            QString pn = p.value("name").toString();
+            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray") {
+                s << "const " << pt << "& " << pn;
+            } else {
+                s << pt << " " << pn;
+            }
+            if (i + 1 < params.size()) s << ", ";
+        }
+        if (params.size() > 0) s << ", ";
+        s << asyncCallbackType << " callback, Timeout timeout = Timeout());\n";
     }
     s << "\nprivate:\n";
     s << "    QObject* ensureReplica();\n";
@@ -328,6 +344,54 @@ static QString makeSource(const QString& moduleName, const QString& className, c
         } else { // QVariant
             s << "    return _result;\n";
         }
+        s << "}\n\n";
+        // Async implementation
+        s << "void " << className << "::" << name << "Async(";
+        for (int i = 0; i < params.size(); ++i) {
+            QJsonObject p = params.at(i).toObject();
+            QString pt = mapParamType(p.value("type").toString());
+            QString pn = p.value("name").toString();
+            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray") {
+                s << "const " << pt << "& " << pn;
+            } else {
+                s << pt << " " << pn;
+            }
+            if (i + 1 < params.size()) s << ", ";
+        }
+        if (params.size() > 0) s << ", ";
+        s << "std::function<void(" << (ret == "void" ? "void" : ret) << ")> callback, Timeout timeout) {\n";
+        s << "    if (!callback) return;\n";
+        s << "    m_client->invokeRemoteMethodAsync(\"" << moduleName << "\", \"" << name << "\", ";
+        if (params.size() == 0) {
+            s << "QVariantList()";
+        } else if (params.size() == 1) {
+            s << "QVariantList() << " << params.at(0).toObject().value("name").toString();
+        } else {
+            s << "QVariantList{";
+            for (int i = 0; i < params.size(); ++i) {
+                s << params.at(i).toObject().value("name").toString();
+                if (i + 1 < params.size()) s << ", ";
+            }
+            s << "}";
+        }
+        s << ", [callback](QVariant v) {\n";
+        if (ret == "void") {
+            s << "        callback();\n";
+        } else {
+            QString defaultVal;
+            if (ret == "bool") defaultVal = "false";
+            else if (ret == "int" || ret == "double" || ret == "float") defaultVal = "0";
+            else if (ret == "QString") defaultVal = "QString()";
+            else if (ret == "QStringList") defaultVal = "QStringList()";
+            else if (ret == "QJsonArray") defaultVal = "QJsonArray()";
+            else defaultVal = "QVariant()";
+            if (ret == "QVariant") {
+                s << "        callback(v);\n";
+            } else {
+                s << "        callback(v.isValid() ? qvariant_cast<" << ret << ">(v) : " << defaultVal << ");\n";
+            }
+        }
+        s << "    }, timeout);\n";
         s << "}\n\n";
     }
     return c;
