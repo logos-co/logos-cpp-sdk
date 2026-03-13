@@ -8,20 +8,21 @@
 #include <QHash>
 #include <QMap>
 #include <functional>
+#include <memory>
 
 #include "logos_mode.h"
 
-class QRemoteObjectNode;
+class LogosTransportConnection;
 class TokenManager;
 
 /**
- * @brief LogosAPIConsumer handles connecting to remote objects and invoking their methods
+ * @brief LogosAPIConsumer handles connecting to module objects and invoking their methods
  * 
  * This class is responsible for the consumer/client side functionality:
- * - Connecting to remote object registries
- * - Requesting remote object replicas
- * - Invoking methods on remote objects
- * - Handling events from remote objects
+ * - Connecting to module registries via the transport layer
+ * - Requesting object handles
+ * - Invoking methods on objects
+ * - Handling events from objects
  */
 class LogosAPIConsumer : public QObject
 {
@@ -43,10 +44,10 @@ public:
     ~LogosAPIConsumer();
 
     /**
-     * @brief Request a remote object replica by name
-     * @param objectName The name of the remote object to acquire
-     * @param timeout Timeout to wait for the replica to be ready (default 20000ms)
-     * @return QObject* pointer to the replica, or nullptr if failed
+     * @brief Request an object handle by name
+     * @param objectName The name of the object to acquire
+     * @param timeout Timeout to wait for the object to be ready (default 20000ms)
+     * @return QObject* pointer to the object, or nullptr if failed
      */
     QObject* requestObject(const QString& objectName, Timeout timeout = Timeout());
 
@@ -69,9 +70,9 @@ public:
     bool reconnect();
 
     /**
-     * @brief Invoke a remote method on a remote object
+     * @brief Invoke a method on a module object
      * @param authToken Authentication token for the operation
-     * @param objectName The name of the remote object
+     * @param objectName The name of the object
      * @param methodName The name of the method to call
      * @param args Arguments to pass to the method
      * @param timeout Timeout to wait for the result (default 20000ms)
@@ -118,25 +119,13 @@ public slots:
     bool informModuleToken_module(const QString& authToken, const QString& originModule, const QString& moduleName, const QString& token);
 
 private:
-    QRemoteObjectNode* m_node;
+    std::unique_ptr<LogosTransportConnection> m_transport;
     QString m_registryUrl;
-    bool m_connected;
     QMap<QString, QString> m_tokens;
     TokenManager* m_token_manager;
 
-    // Store callbacks by event name
     QHash<QString, QList<std::function<void(const QString&, const QVariantList&)>>> m_eventCallbacks;
-    
-    // Track existing connections by origin object to avoid duplicates
     QHash<QObject*, QMetaObject::Connection> m_connections;
-
-    /**
-     * @brief Internal method to establish connection to the registry
-     * @return true if connection successful, false otherwise
-     */
-    bool connectToRegistry();
-
-
 };
 
-#endif // LOGOS_API_CONSUMER_H 
+#endif // LOGOS_API_CONSUMER_H

@@ -27,6 +27,13 @@ set(SDK_SOURCES
     token_manager.h
     logos_mode.h
     plugin_registry.h
+    logos_transport.h
+    logos_transport_factory.cpp
+    logos_transport_factory.h
+    implementations/qt_local/local_transport.cpp
+    implementations/qt_local/local_transport.h
+    implementations/qt_remote/remote_transport.cpp
+    implementations/qt_remote/remote_transport.h
 )
 
 # Create the SDK library as STATIC instead of SHARED
@@ -38,6 +45,8 @@ target_link_libraries(logos_sdk PUBLIC Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSIO
 # Include directories
 target_include_directories(logos_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_local
+    ${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_remote
 )
 
 # Set output directories for static library
@@ -63,5 +72,17 @@ install(FILES
     token_manager.h
     logos_mode.h
     plugin_registry.h
+    logos_transport.h
+    logos_transport_factory.h
     DESTINATION include
-) 
+)
+
+install(FILES
+    implementations/qt_local/local_transport.h
+    DESTINATION include/implementations/qt_local
+)
+
+install(FILES
+    implementations/qt_remote/remote_transport.h
+    DESTINATION include/implementations/qt_remote
+)
