@@ -6,18 +6,17 @@
 #include <QVariant>
 #include <QVariantList>
 #include <QMap>
+#include <memory>
 
-class QRemoteObjectRegistryHost;
+class LogosTransportHost;
 class ModuleProxy;
 
-#include "logos_mode.h"
-
 /**
- * @brief LogosAPIProvider handles registering objects for remote access
+ * @brief LogosAPIProvider handles registering objects for access by consumers
  * 
  * This class is responsible for the provider/server side functionality:
- * - Creating registry hosts
- * - Registering objects for remote access
+ * - Wrapping module objects with ModuleProxy
+ * - Publishing them via the transport layer
  * - Handling event responses
  */
 class LogosAPIProvider : public QObject
@@ -33,15 +32,14 @@ public:
     explicit LogosAPIProvider(const QString& module_name, QObject *parent = nullptr);
     
     /**
-     * @brief Destructor - cleans up registry host
+     * @brief Destructor - unpublishes registered objects
      */
     ~LogosAPIProvider();
 
     /**
-     * @brief Register an object to be available for remote access
+     * @brief Register an object to be available for access by consumers
      * @param name The name to register the object under
      * @param object The object to register
-     * @param authToken Authentication token for the object
      * @return true if registration successful, false otherwise
      */
     bool registerObject(const QString& name, QObject* object);
@@ -70,13 +68,11 @@ public slots:
     void onEventResponse(QObject* replica, const QString& eventName, const QVariantList& data);
 
 private:
-    QRemoteObjectRegistryHost* m_registryHost;
+    std::unique_ptr<LogosTransportHost> m_transport;
     QString m_registryUrl;
     QMap<QString, QString> m_tokens;
     ModuleProxy* m_moduleProxy;
     QString m_registeredObjectName;
-
-
 };
 
-#endif // LOGOS_API_PROVIDER_H 
+#endif // LOGOS_API_PROVIDER_H
