@@ -2,16 +2,18 @@
 #include "module_proxy.h"
 #include "logos_api.h"
 #include "logos_mode.h"
+#include "logos_instance.h"
 #include "plugin_registry.h"
 #include <QRemoteObjectRegistryHost>
 #include <QDebug>
 #include <QUrl>
 #include <QMetaObject>
+#include <QString>
 
 LogosAPIProvider::LogosAPIProvider(const QString& module_name, QObject *parent)
     : QObject(parent)
     , m_registryHost(nullptr)
-    , m_registryUrl(QString("local:logos_%1").arg(module_name))
+    , m_registryUrl(LogosInstance::id(module_name))
     , m_moduleProxy(nullptr)
 {
 }

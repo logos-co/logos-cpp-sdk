@@ -3,6 +3,7 @@
 #include "logos_api_client.h"
 #include "token_manager.h"
 #include "logos_mode.h"
+#include "logos_instance.h"
 #include "plugin_registry.h"
 #include <QRemoteObjectNode>
 #include <QRemoteObjectReplica>
@@ -11,12 +12,11 @@
 #include <QUrl>
 #include <QMetaObject>
 #include <QTime>
-#include <string>
 
 LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
     : QObject(parent)
     , m_node(nullptr)
-    , m_registryUrl(QString("local:logos_%1").arg(module_to_talk_to))
+    , m_registryUrl(LogosInstance::id(module_to_talk_to))
     , m_connected(false)
     , m_token_manager(token_manager)
 {
