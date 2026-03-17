@@ -2,6 +2,7 @@
 #include "logos_registry.h"
 #include "logos_mode.h"
 #include "implementations/qt_remote/qt_remote_registry.h"
+#include "implementations/mock/mock_registry.h"
 
 namespace {
 
@@ -24,6 +25,9 @@ std::unique_ptr<LogosRegistry> create(const QString& url)
 {
     if (LogosModeConfig::isLocal()) {
         return std::make_unique<NullRegistry>();
+    }
+    if (LogosModeConfig::isMock()) {
+        return std::make_unique<MockRegistry>();
     }
     return std::make_unique<QtRemoteRegistry>(url);
 }

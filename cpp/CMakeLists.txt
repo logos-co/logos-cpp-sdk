@@ -40,6 +40,12 @@ set(SDK_SOURCES
     implementations/qt_remote/remote_transport.h
     implementations/qt_remote/qt_remote_registry.h
     implementations/qt_remote/qt_remote_registry.cpp
+    implementations/mock/mock_store.cpp
+    implementations/mock/mock_store.h
+    implementations/mock/mock_transport.cpp
+    implementations/mock/mock_transport.h
+    implementations/mock/mock_registry.h
+    implementations/mock/logos_mock.h
 )
 
 # Create the SDK library as STATIC instead of SHARED
@@ -53,6 +59,7 @@ target_include_directories(logos_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_local
     ${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_remote
+    ${CMAKE_CURRENT_SOURCE_DIR}/implementations/mock
 )
 
 # Set output directories for static library
@@ -95,4 +102,12 @@ install(FILES
     implementations/qt_remote/remote_transport.h
     implementations/qt_remote/qt_remote_registry.h
     DESTINATION include/implementations/qt_remote
+)
+
+install(FILES
+    implementations/mock/mock_store.h
+    implementations/mock/mock_transport.h
+    implementations/mock/mock_registry.h
+    implementations/mock/logos_mock.h
+    DESTINATION include/implementations/mock
 )
