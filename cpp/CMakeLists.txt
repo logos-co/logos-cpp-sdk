@@ -31,10 +31,15 @@ set(SDK_SOURCES
     logos_transport.h
     logos_transport_factory.cpp
     logos_transport_factory.h
+    logos_registry.h
+    logos_registry_factory.h
+    logos_registry_factory.cpp
     implementations/qt_local/local_transport.cpp
     implementations/qt_local/local_transport.h
     implementations/qt_remote/remote_transport.cpp
     implementations/qt_remote/remote_transport.h
+    implementations/qt_remote/qt_remote_registry.h
+    implementations/qt_remote/qt_remote_registry.cpp
 )
 
 # Create the SDK library as STATIC instead of SHARED
@@ -76,6 +81,8 @@ install(FILES
     plugin_registry.h
     logos_transport.h
     logos_transport_factory.h
+    logos_registry.h
+    logos_registry_factory.h
     DESTINATION include
 )
 
@@ -86,5 +93,6 @@ install(FILES
 
 install(FILES
     implementations/qt_remote/remote_transport.h
+    implementations/qt_remote/qt_remote_registry.h
     DESTINATION include/implementations/qt_remote
 )
