@@ -28,6 +28,7 @@ set(SDK_SOURCES
     logos_mode.h
     logos_instance.h
     plugin_registry.h
+    logos_object.h
     logos_transport.h
     logos_transport_factory.cpp
     logos_transport_factory.h
@@ -86,6 +87,7 @@ install(FILES
     logos_mode.h
     logos_instance.h
     plugin_registry.h
+    logos_object.h
     logos_transport.h
     logos_transport_factory.h
     logos_registry.h

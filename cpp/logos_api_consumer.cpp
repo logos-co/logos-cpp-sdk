@@ -1,4 +1,5 @@
 #include "logos_api_consumer.h"
+#include "logos_object.h"
 #include "module_proxy.h"
 #include "logos_api_client.h"
 #include "token_manager.h"
@@ -22,14 +23,9 @@ LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to, const QStri
 
 LogosAPIConsumer::~LogosAPIConsumer()
 {
-    for (auto it = m_connections.begin(); it != m_connections.end(); ++it) {
-        QObject::disconnect(it.value());
-    }
-    m_eventCallbacks.clear();
-    m_connections.clear();
 }
 
-QObject* LogosAPIConsumer::requestObject(const QString& objectName, Timeout timeout)
+LogosObject* LogosAPIConsumer::requestObject(const QString& objectName, Timeout timeout)
 {
     qDebug() << "LogosAPIConsumer: Requesting object:" << objectName << "at" << QTime::currentTime().toString("hh:mm:ss.zzz");
 
@@ -43,9 +39,9 @@ QObject* LogosAPIConsumer::requestObject(const QString& objectName, Timeout time
         return nullptr;
     }
 
-    QObject* object = m_transport->requestObject(objectName, timeout.ms);
+    LogosObject* object = m_transport->requestObject(objectName, timeout.ms);
     if (object) {
-        qDebug() << "LogosAPIConsumer: Successfully acquired object:" << objectName;
+        qDebug() << "[LogosObject] LogosAPIConsumer: acquired LogosObject for:" << objectName << "(id:" << object->id() << ")";
     }
     return object;
 }
@@ -71,72 +67,46 @@ QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QS
 {
     qDebug() << "LogosAPIConsumer: Calling invokeRemoteMethod:" << objectName << methodName << "args_count:" << args.size() << "timeout:" << timeout.ms;
 
-    QObject* plugin = m_transport->requestObject(objectName, timeout.ms);
+    LogosObject* plugin = m_transport->requestObject(objectName, timeout.ms);
     if (!plugin) {
         qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object:" << objectName;
         return QVariant();
     }
 
-    QVariant result = m_transport->callRemoteMethod(plugin, authToken, methodName, args, timeout.ms);
-    m_transport->releaseObject(plugin);
+    qDebug() << "[LogosObject] LogosAPIConsumer: calling via LogosObject::callMethod" << methodName;
+    QVariant result = plugin->callMethod(authToken, methodName, args, timeout.ms);
+    plugin->release();
     return result;
 }
 
-void LogosAPIConsumer::onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)
+void LogosAPIConsumer::onEvent(LogosObject* originObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)
 {
-    qDebug() << "LogosAPIConsumer: Registering event listener for event:" << eventName;
+    qDebug() << "[LogosObject] LogosAPIConsumer::onEvent registering for:" << eventName << "on LogosObject id:" << originObject;
 
-    m_eventCallbacks[eventName].append(callback);
-
-    if (!m_connections.contains(originObject)) {
-        auto connection = QObject::connect(originObject, SIGNAL(eventResponse(QString, QVariantList)),
-                                          this, SLOT(invokeCallback(QString, QVariantList)));
-
-        if (connection) {
-            m_connections[originObject] = connection;
-            qDebug() << "LogosAPIConsumer: Created new connection for origin object";
-        } else {
-            qWarning() << "LogosAPIConsumer: Failed to create connection for event:" << eventName;
-        }
-    } else {
-        qDebug() << "LogosAPIConsumer: Reusing existing connection for origin object";
+    if (!originObject) {
+        qWarning() << "LogosAPIConsumer: Cannot register event on null object";
+        return;
     }
 
-    qDebug() << "LogosAPIConsumer: Registered callback for event:" << eventName;
-}
+    originObject->onEvent(eventName, std::move(callback));
 
-void LogosAPIConsumer::invokeCallback(const QString& eventName, const QVariantList& data)
-{
-    for (const auto& callback : m_eventCallbacks[eventName]) {
-        try {
-            callback(eventName, data);
-        } catch (...) {
-            qWarning() << "LogosAPIConsumer: Exception in callback for event:" << eventName;
-        }
-    }
-}
-
-void LogosAPIConsumer::onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName)
-{
-    qDebug() << "LogosAPIConsumer: Registering event listener for event:" << eventName << "(connecting to destination slot)";
-
-    QObject::connect(originObject, SIGNAL(eventResponse(QString, QVariantList)),
-                    destinationObject, SLOT(onEventResponse(QString, QVariantList)), Qt::AutoConnection);
+    qDebug() << "[LogosObject] LogosAPIConsumer: event callback registered for:" << eventName;
 }
 
 bool LogosAPIConsumer::informModuleToken(const QString& authToken, const QString& moduleName, const QString& token)
 {
     qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
 
-    QObject* plugin = m_transport->requestObject("capability_module", 20000);
+    LogosObject* plugin = m_transport->requestObject("capability_module", 20000);
     if (!plugin) {
         qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object: capability_module";
         return false;
     }
 
-    bool result = m_transport->callInformModuleToken(plugin, authToken, moduleName, token, 20000);
+    qDebug() << "[LogosObject] LogosAPIConsumer: calling LogosObject::informModuleToken for" << moduleName;
+    bool result = plugin->informModuleToken(authToken, moduleName, token, 20000);
     qDebug() << "LogosAPIConsumer: informModuleToken completed with result:" << result;
-    m_transport->releaseObject(plugin);
+    plugin->release();
     return result;
 }
 
@@ -144,14 +114,15 @@ bool LogosAPIConsumer::informModuleToken_module(const QString& authToken, const 
 {
     qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
 
-    QObject* plugin = m_transport->requestObject(originModule, 20000);
+    LogosObject* plugin = m_transport->requestObject(originModule, 20000);
     if (!plugin) {
         qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object:" << originModule;
         return false;
     }
 
-    bool result = m_transport->callInformModuleToken(plugin, authToken, moduleName, token, 20000);
+    qDebug() << "[LogosObject] LogosAPIConsumer: calling LogosObject::informModuleToken for" << moduleName << "on" << originModule;
+    bool result = plugin->informModuleToken(authToken, moduleName, token, 20000);
     qDebug() << "LogosAPIConsumer: informModuleToken completed with result:" << result;
-    m_transport->releaseObject(plugin);
+    plugin->release();
     return result;
 }

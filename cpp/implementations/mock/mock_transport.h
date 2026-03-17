@@ -2,22 +2,50 @@
 #define MOCK_TRANSPORT_H
 
 #include "../../logos_transport.h"
-#include <QObject>
+#include "../../logos_object.h"
+#include "mock_store.h"
 #include <QString>
+#include <QList>
 
 /**
- * @brief Lightweight QObject that carries the module name through the transport pipeline.
+ * @brief LogosObject implementation for mock mode.
  *
- * MockTransportConnection::requestObject() returns one of these so that
- * callRemoteMethod() can look up which module is being called.
+ * Stores the module name and delegates callMethod to MockStore.
+ * Event operations are no-ops in mock mode.
  */
-class MockObject : public QObject {
-    Q_OBJECT
+class MockLogosObject : public LogosObject {
 public:
-    explicit MockObject(const QString& moduleName, QObject* parent = nullptr)
-        : QObject(parent), m_moduleName(moduleName) {}
+    explicit MockLogosObject(const QString& moduleName)
+        : m_moduleName(moduleName) {}
 
     const QString& moduleName() const { return m_moduleName; }
+
+    QVariant callMethod(const QString& /*authToken*/,
+                        const QString& methodName,
+                        const QVariantList& args,
+                        int /*timeoutMs*/) override
+    {
+        return MockStore::instance().recordAndReturn(m_moduleName, methodName, args);
+    }
+
+    bool informModuleToken(const QString& /*authToken*/,
+                           const QString& moduleName,
+                           const QString& /*token*/,
+                           int /*timeoutMs*/) override
+    {
+        Q_UNUSED(moduleName)
+        return true;
+    }
+
+    void onEvent(const QString& /*eventName*/, EventCallback /*callback*/) override {}
+    void disconnectEvents() override {}
+    void emitEvent(const QString& /*eventName*/, const QVariantList& /*data*/) override {}
+
+    QJsonArray getMethods() override { return QJsonArray(); }
+
+    void release() override { delete this; }
+
+    quintptr id() const override { return reinterpret_cast<quintptr>(this); }
 
 private:
     QString m_moduleName;
@@ -38,23 +66,14 @@ public:
 /**
  * @brief Consumer-side transport for mock mode.
  *
- * requestObject returns a MockObject tagged with the module name.
- * callRemoteMethod records the call in MockStore and returns the
- * configured return value.
+ * requestObject returns a MockLogosObject tagged with the module name.
  */
 class MockTransportConnection : public LogosTransportConnection {
 public:
     bool connectToHost() override;
     bool isConnected() const override;
     bool reconnect() override;
-    QObject* requestObject(const QString& objectName, int timeoutMs) override;
-    void releaseObject(QObject* object) override;
-    QVariant callRemoteMethod(QObject* object, const QString& authToken,
-                               const QString& methodName, const QVariantList& args,
-                               int timeoutMs) override;
-    bool callInformModuleToken(QObject* object, const QString& authToken,
-                                const QString& moduleName, const QString& token,
-                                int timeoutMs) override;
+    LogosObject* requestObject(const QString& objectName, int timeoutMs) override;
 };
 
 #endif // MOCK_TRANSPORT_H

@@ -2,6 +2,7 @@
 #define REMOTE_TRANSPORT_H
 
 #include "../../logos_transport.h"
+#include "../../logos_object.h"
 #include <QString>
 
 class QRemoteObjectRegistryHost;
@@ -28,14 +29,7 @@ public:
     bool connectToHost() override;
     bool isConnected() const override;
     bool reconnect() override;
-    QObject* requestObject(const QString& objectName, int timeoutMs) override;
-    void releaseObject(QObject* object) override;
-    QVariant callRemoteMethod(QObject* object, const QString& authToken,
-                               const QString& methodName, const QVariantList& args,
-                               int timeoutMs) override;
-    bool callInformModuleToken(QObject* object, const QString& authToken,
-                                const QString& moduleName, const QString& token,
-                                int timeoutMs) override;
+    LogosObject* requestObject(const QString& objectName, int timeoutMs) override;
 
 private:
     bool connectToRegistry();

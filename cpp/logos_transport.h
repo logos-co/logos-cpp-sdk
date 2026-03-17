@@ -6,6 +6,7 @@
 #include <QVariantList>
 
 class QObject;
+class LogosObject;
 
 /**
  * @brief Abstract interface for the provider/server side of module transport.
@@ -20,7 +21,7 @@ public:
     /**
      * @brief Publish an object so consumers can discover and invoke it
      * @param name The name to publish the object under
-     * @param object The QObject to publish
+     * @param object The QObject to publish (provider side remains Qt-based)
      * @return true if publishing succeeded
      */
     virtual bool publishObject(const QString& name, QObject* object) = 0;
@@ -35,8 +36,9 @@ public:
 /**
  * @brief Abstract interface for the consumer/client side of module transport.
  *
- * Implementations handle how a consumer connects to a host, acquires object
- * handles, and invokes methods on them.
+ * Implementations handle how a consumer connects to a host and acquires
+ * LogosObject handles.  Method invocation, event subscription, and lifecycle
+ * management are handled by LogosObject itself.
  */
 class LogosTransportConnection {
 public:
@@ -60,44 +62,16 @@ public:
     virtual bool reconnect() = 0;
 
     /**
-     * @brief Acquire a handle to a named object from the host
+     * @brief Acquire a LogosObject handle to a named object from the host.
+     *
+     * The returned LogosObject encapsulates method invocation, event
+     * handling and lifecycle.  Call LogosObject::release() when done.
+     *
      * @param objectName The published name of the object
      * @param timeoutMs Maximum time to wait for the object to become available
-     * @return QObject* handle, or nullptr on failure. Caller must use releaseObject() when done.
+     * @return LogosObject* handle, or nullptr on failure.
      */
-    virtual QObject* requestObject(const QString& objectName, int timeoutMs) = 0;
-
-    /**
-     * @brief Release a previously acquired object handle
-     * @param object The handle returned by requestObject()
-     */
-    virtual void releaseObject(QObject* object) = 0;
-
-    /**
-     * @brief Invoke callRemoteMethod on the given object handle
-     * @param object Handle from requestObject()
-     * @param authToken Authentication token
-     * @param methodName Method to call on the underlying module
-     * @param args Arguments for the method
-     * @param timeoutMs Maximum time to wait for the result
-     * @return The method result, or an invalid QVariant on failure
-     */
-    virtual QVariant callRemoteMethod(QObject* object, const QString& authToken,
-                                       const QString& methodName, const QVariantList& args,
-                                       int timeoutMs) = 0;
-
-    /**
-     * @brief Invoke informModuleToken on the given object handle
-     * @param object Handle from requestObject()
-     * @param authToken Authentication token
-     * @param moduleName Target module name
-     * @param token The token to deliver
-     * @param timeoutMs Maximum time to wait for the result
-     * @return true if the token was delivered successfully
-     */
-    virtual bool callInformModuleToken(QObject* object, const QString& authToken,
-                                        const QString& moduleName, const QString& token,
-                                        int timeoutMs) = 0;
+    virtual LogosObject* requestObject(const QString& objectName, int timeoutMs) = 0;
 };
 
 #endif // LOGOS_TRANSPORT_H
