@@ -1,4 +1,5 @@
 #include "logos_api_provider.h"
+#include "logos_object.h"
 #include "module_proxy.h"
 #include "logos_api.h"
 #include "logos_instance.h"
@@ -87,16 +88,19 @@ bool LogosAPIProvider::saveToken(const QString& from_module_name, const QString&
     return m_moduleProxy->saveToken(from_module_name, token);
 }
 
-void LogosAPIProvider::onEventResponse(QObject* replica, const QString& eventName, const QVariantList& data)
+void LogosAPIProvider::onEventResponse(LogosObject* object, const QString& eventName, const QVariantList& data)
 {
-    qDebug() << "LogosAPIProvider: Received event:" << eventName;
+    qDebug() << "[LogosObject] LogosAPIProvider::onEventResponse" << eventName << "-> LogosObject::emitEvent";
 
     if (eventName.isEmpty()) {
         qWarning() << "LogosAPIProvider: Event name cannot be empty";
         return;
     }
 
-    qDebug() << "LogosAPIProvider: Emitting event:" << eventName;
+    if (!object) {
+        qWarning() << "LogosAPIProvider: Cannot emit event on null object";
+        return;
+    }
 
-    QMetaObject::invokeMethod(replica, "eventResponse", Qt::QueuedConnection, Q_ARG(QString, eventName), Q_ARG(QVariantList, data));
+    object->emitEvent(eventName, data);
 }

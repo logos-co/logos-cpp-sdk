@@ -7,8 +7,177 @@
 #include <QUrl>
 #include <QMetaObject>
 #include <QTime>
+#include <QJsonArray>
 
-// --- RemoteTransportHost ---
+// ── RemoteLogosObject ────────────────────────────────────────────────────────
+
+namespace {
+
+class RemoteEventHelper : public QObject {
+    Q_OBJECT
+public:
+    explicit RemoteEventHelper(QObject* parent = nullptr) : QObject(parent) {}
+
+    void addCallback(const QString& eventName, LogosObject::EventCallback cb) {
+        m_callbacks[eventName].append(std::move(cb));
+    }
+
+public slots:
+    void onEventResponse(const QString& eventName, const QVariantList& data) {
+        auto cbs = m_callbacks.value(eventName);
+        if (!cbs.isEmpty()) {
+            qDebug() << "[LogosObject] Remote EventHelper: dispatching event" << eventName << "to" << cbs.size() << "callback(s) (via IPC)";
+        }
+        for (const auto& cb : cbs) {
+            try { cb(eventName, data); } catch (...) {}
+        }
+    }
+
+private:
+    QHash<QString, QList<LogosObject::EventCallback>> m_callbacks;
+};
+
+} // anonymous namespace
+
+class RemoteLogosObject : public LogosObject {
+public:
+    explicit RemoteLogosObject(QObject* replica)
+        : m_replica(replica), m_helper(nullptr)
+    {
+        qDebug() << "[LogosObject] Created RemoteLogosObject wrapping QRemoteObjectReplica" << reinterpret_cast<quintptr>(replica);
+    }
+
+    ~RemoteLogosObject() override {
+        qDebug() << "[LogosObject] Destroying RemoteLogosObject" << reinterpret_cast<quintptr>(m_replica);
+        delete m_helper;
+    }
+
+    QVariant callMethod(const QString& authToken,
+                        const QString& methodName,
+                        const QVariantList& args,
+                        int timeoutMs) override
+    {
+        if (!m_replica) {
+            qWarning() << "RemoteLogosObject: Cannot call method on null replica";
+            return QVariant();
+        }
+        qDebug() << "[LogosObject] RemoteLogosObject::callMethod" << methodName << "args:" << args.size();
+
+        QRemoteObjectPendingCall pendingCall;
+        bool success = QMetaObject::invokeMethod(
+            m_replica,
+            "callRemoteMethod",
+            Qt::DirectConnection,
+            Q_RETURN_ARG(QRemoteObjectPendingCall, pendingCall),
+            Q_ARG(QString, authToken),
+            Q_ARG(QString, methodName),
+            Q_ARG(QVariantList, args)
+        );
+
+        if (!success) {
+            qWarning() << "RemoteLogosObject: Failed to invoke callRemoteMethod on replica";
+            return QVariant();
+        }
+
+        pendingCall.waitForFinished(timeoutMs);
+
+        if (!pendingCall.isFinished() || pendingCall.error() != QRemoteObjectPendingCall::NoError) {
+            qWarning() << "RemoteLogosObject: callRemoteMethod failed or timed out:" << pendingCall.error();
+            return QVariant();
+        }
+
+        return pendingCall.returnValue();
+    }
+
+    bool informModuleToken(const QString& authToken,
+                           const QString& moduleName,
+                           const QString& token,
+                           int timeoutMs) override
+    {
+        if (!m_replica) {
+            qWarning() << "RemoteLogosObject: Cannot call informModuleToken on null replica";
+            return false;
+        }
+
+        QRemoteObjectPendingCall pendingCall;
+        bool success = QMetaObject::invokeMethod(
+            m_replica,
+            "informModuleToken",
+            Qt::DirectConnection,
+            Q_RETURN_ARG(QRemoteObjectPendingCall, pendingCall),
+            Q_ARG(QString, authToken),
+            Q_ARG(QString, moduleName),
+            Q_ARG(QString, token)
+        );
+
+        if (!success) {
+            qWarning() << "RemoteLogosObject: Failed to invoke informModuleToken on replica";
+            return false;
+        }
+
+        pendingCall.waitForFinished(timeoutMs);
+
+        if (!pendingCall.isFinished() || pendingCall.error() != QRemoteObjectPendingCall::NoError) {
+            qWarning() << "RemoteLogosObject: informModuleToken failed or timed out:" << pendingCall.error();
+            return false;
+        }
+
+        return pendingCall.returnValue().toBool();
+    }
+
+    void onEvent(const QString& eventName, EventCallback callback) override
+    {
+        if (!m_replica) return;
+
+        qDebug() << "[LogosObject] RemoteLogosObject::onEvent subscribing to event:" << eventName;
+        if (!m_helper) {
+            m_helper = new RemoteEventHelper();
+            QObject::connect(m_replica, SIGNAL(eventResponse(QString,QVariantList)),
+                             m_helper, SLOT(onEventResponse(QString,QVariantList)));
+            qDebug() << "[LogosObject] RemoteLogosObject: connected EventHelper to QRemoteObjectReplica signals (IPC)";
+        }
+        m_helper->addCallback(eventName, std::move(callback));
+    }
+
+    void disconnectEvents() override
+    {
+        delete m_helper;
+        m_helper = nullptr;
+    }
+
+    void emitEvent(const QString& eventName, const QVariantList& data) override
+    {
+        if (!m_replica) return;
+        qDebug() << "[LogosObject] RemoteLogosObject::emitEvent" << eventName << "data:" << data.size() << "items (via IPC)";
+        QMetaObject::invokeMethod(m_replica, "eventResponse",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(QString, eventName),
+                                  Q_ARG(QVariantList, data));
+    }
+
+    QJsonArray getMethods() override
+    {
+        // Remote introspection not implemented — callers should use
+        // the local module inspection tools (lm) instead.
+        return QJsonArray();
+    }
+
+    void release() override
+    {
+        disconnectEvents();
+        delete m_replica;
+        m_replica = nullptr;
+        delete this;
+    }
+
+    quintptr id() const override { return reinterpret_cast<quintptr>(m_replica); }
+
+private:
+    QObject* m_replica;
+    RemoteEventHelper* m_helper;
+};
+
+// ── RemoteTransportHost ──────────────────────────────────────────────────────
 
 RemoteTransportHost::RemoteTransportHost(const QString& registryUrl)
     : m_registryHost(nullptr)
@@ -43,11 +212,9 @@ bool RemoteTransportHost::publishObject(const QString& name, QObject* object)
 
 void RemoteTransportHost::unpublishObject(const QString& /*name*/)
 {
-    // Qt Remote Objects doesn't require explicit unregistration;
-    // the host cleanup handles it on destruction.
 }
 
-// --- RemoteTransportConnection ---
+// ── RemoteTransportConnection ────────────────────────────────────────────────
 
 RemoteTransportConnection::RemoteTransportConnection(const QString& registryUrl)
     : m_node(new QRemoteObjectNode())
@@ -115,7 +282,7 @@ bool RemoteTransportConnection::connectToRegistry()
     return m_connected;
 }
 
-QObject* RemoteTransportConnection::requestObject(const QString& objectName, int timeoutMs)
+LogosObject* RemoteTransportConnection::requestObject(const QString& objectName, int timeoutMs)
 {
     if (!m_connected) {
         qWarning() << "RemoteTransportConnection: Not connected. Cannot request object:" << objectName;
@@ -137,82 +304,8 @@ QObject* RemoteTransportConnection::requestObject(const QString& objectName, int
         return nullptr;
     }
 
-    qDebug() << "RemoteTransportConnection: Acquired replica for:" << objectName
-             << "at" << QTime::currentTime().toString("hh:mm:ss.zzz");
-    return replica;
+    qDebug() << "[LogosObject] RemoteTransportConnection: returning RemoteLogosObject for:" << objectName;
+    return new RemoteLogosObject(replica);
 }
 
-void RemoteTransportConnection::releaseObject(QObject* object)
-{
-    delete object;
-}
-
-QVariant RemoteTransportConnection::callRemoteMethod(QObject* object, const QString& authToken,
-                                                      const QString& methodName, const QVariantList& args,
-                                                      int timeoutMs)
-{
-    if (!object) {
-        qWarning() << "RemoteTransportConnection: Cannot call method on null object";
-        return QVariant();
-    }
-
-    QRemoteObjectPendingCall pendingCall;
-    bool success = QMetaObject::invokeMethod(
-        object,
-        "callRemoteMethod",
-        Qt::DirectConnection,
-        Q_RETURN_ARG(QRemoteObjectPendingCall, pendingCall),
-        Q_ARG(QString, authToken),
-        Q_ARG(QString, methodName),
-        Q_ARG(QVariantList, args)
-    );
-
-    if (!success) {
-        qWarning() << "RemoteTransportConnection: Failed to invoke callRemoteMethod on replica";
-        return QVariant();
-    }
-
-    pendingCall.waitForFinished(timeoutMs);
-
-    if (!pendingCall.isFinished() || pendingCall.error() != QRemoteObjectPendingCall::NoError) {
-        qWarning() << "RemoteTransportConnection: callRemoteMethod failed or timed out:" << pendingCall.error();
-        return QVariant();
-    }
-
-    return pendingCall.returnValue();
-}
-
-bool RemoteTransportConnection::callInformModuleToken(QObject* object, const QString& authToken,
-                                                       const QString& moduleName, const QString& token,
-                                                       int timeoutMs)
-{
-    if (!object) {
-        qWarning() << "RemoteTransportConnection: Cannot call informModuleToken on null object";
-        return false;
-    }
-
-    QRemoteObjectPendingCall pendingCall;
-    bool success = QMetaObject::invokeMethod(
-        object,
-        "informModuleToken",
-        Qt::DirectConnection,
-        Q_RETURN_ARG(QRemoteObjectPendingCall, pendingCall),
-        Q_ARG(QString, authToken),
-        Q_ARG(QString, moduleName),
-        Q_ARG(QString, token)
-    );
-
-    if (!success) {
-        qWarning() << "RemoteTransportConnection: Failed to invoke informModuleToken on replica";
-        return false;
-    }
-
-    pendingCall.waitForFinished(timeoutMs);
-
-    if (!pendingCall.isFinished() || pendingCall.error() != QRemoteObjectPendingCall::NoError) {
-        qWarning() << "RemoteTransportConnection: informModuleToken failed or timed out:" << pendingCall.error();
-        return false;
-    }
-
-    return pendingCall.returnValue().toBool();
-}
+#include "remote_transport.moc"

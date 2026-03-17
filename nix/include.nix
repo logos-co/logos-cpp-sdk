@@ -31,7 +31,7 @@ pkgs.stdenv.mkDerivation {
     for file in logos_types.cpp logos_types.h logos_api.cpp logos_api.h logos_api_client.cpp logos_api_client.h \
                 logos_api_consumer.cpp logos_api_consumer.h logos_api_provider.cpp logos_api_provider.h \
                 token_manager.cpp token_manager.h module_proxy.cpp module_proxy.h logos_mode.h \
-                logos_instance.h \
+                logos_instance.h logos_object.h \
                 logos_transport.h logos_transport_factory.h logos_transport_factory.cpp \
                 logos_registry.h logos_registry_factory.h logos_registry_factory.cpp \
                 plugin_registry.h; do
