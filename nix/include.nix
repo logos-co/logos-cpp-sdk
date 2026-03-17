@@ -32,6 +32,7 @@ pkgs.stdenv.mkDerivation {
                 token_manager.cpp token_manager.h module_proxy.cpp module_proxy.h logos_mode.h \
                 logos_instance.h \
                 logos_transport.h logos_transport_factory.h logos_transport_factory.cpp \
+                logos_registry.h logos_registry_factory.h logos_registry_factory.cpp \
                 plugin_registry.h; do
       if [ -f cpp/$file ]; then
         cp cpp/$file $out/include/cpp/
@@ -45,7 +46,7 @@ pkgs.stdenv.mkDerivation {
       fi
     done
 
-    for file in remote_transport.h remote_transport.cpp; do
+    for file in remote_transport.h remote_transport.cpp qt_remote_registry.h qt_remote_registry.cpp; do
       if [ -f cpp/implementations/qt_remote/$file ]; then
         cp cpp/implementations/qt_remote/$file $out/include/cpp/implementations/qt_remote/
       fi
