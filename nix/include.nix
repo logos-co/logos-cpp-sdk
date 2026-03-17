@@ -20,6 +20,7 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $out/include/cpp
     mkdir -p $out/include/cpp/implementations/qt_local
     mkdir -p $out/include/cpp/implementations/qt_remote
+    mkdir -p $out/include/cpp/implementations/mock
     
     # Install core headers
     if [ -f core/interface.h ]; then
@@ -49,6 +50,12 @@ pkgs.stdenv.mkDerivation {
     for file in remote_transport.h remote_transport.cpp qt_remote_registry.h qt_remote_registry.cpp; do
       if [ -f cpp/implementations/qt_remote/$file ]; then
         cp cpp/implementations/qt_remote/$file $out/include/cpp/implementations/qt_remote/
+      fi
+    done
+
+    for file in mock_store.h mock_store.cpp mock_transport.h mock_transport.cpp mock_registry.h logos_mock.h; do
+      if [ -f cpp/implementations/mock/$file ]; then
+        cp cpp/implementations/mock/$file $out/include/cpp/implementations/mock/
       fi
     done
     
