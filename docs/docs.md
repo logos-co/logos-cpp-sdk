@@ -295,7 +295,7 @@ Triggering an event:
 QVariantList data;
 data << timestamp << nick << message;
 
-logosAPI->getClient("chat")->onEventResponse(this, "chatMessage", data);
+emit eventResponse("chatMessage", data);
 ```
 
 Triggering an event with the generated helpers:

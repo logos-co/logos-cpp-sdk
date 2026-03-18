@@ -12,7 +12,9 @@
 #include <QByteArrayList>
 #include <QFile>
 #include <QSet>
+#include <QRegularExpression>
 #include <QtGlobal>
+#include "logos_provider_object.h"
 
 static QJsonArray enumerateMethods(QObject* moduleInstance)
 {
@@ -115,13 +117,12 @@ static QString makeHeader(const QString& moduleName, const QString& className, c
     s << "#include <QVariant>\n";
     s << "#include <QStringList>\n";
     s << "#include <QJsonArray>\n";
-    s << "#include <QObject>\n";
-    s << "#include <QPointer>\n";
     s << "#include <functional>\n";
     s << "#include <utility>\n";
     s << "#include \"logos_types.h\"\n";
     s << "#include \"logos_api.h\"\n";
-    s << "#include \"logos_api_client.h\"\n\n";
+    s << "#include \"logos_api_client.h\"\n";
+    s << "#include \"logos_object.h\"\n\n";
     s << "class " << className << " {\n";
     s << "public:\n";
     s << "    explicit " << className << "(LogosAPI* api);\n\n";
@@ -129,17 +130,17 @@ static QString makeHeader(const QString& moduleName, const QString& className, c
     s << "    using EventCallback = std::function<void(const QVariantList&)>;\n\n";
     s << "    bool on(const QString& eventName, RawEventCallback callback);\n";
     s << "    bool on(const QString& eventName, EventCallback callback);\n";
-    s << "    void setEventSource(QObject* source);\n";
-    s << "    QObject* eventSource() const;\n";
+    s << "    void setEventSource(LogosObject* source);\n";
+    s << "    LogosObject* eventSource() const;\n";
     s << "    void trigger(const QString& eventName);\n";
     s << "    void trigger(const QString& eventName, const QVariantList& data);\n";
     s << "    template<typename... Args>\n";
     s << "    void trigger(const QString& eventName, Args&&... args) {\n";
     s << "        trigger(eventName, packVariantList(std::forward<Args>(args)...));\n";
     s << "    }\n";
-    s << "    void trigger(const QString& eventName, QObject* source, const QVariantList& data);\n";
+    s << "    void trigger(const QString& eventName, LogosObject* source, const QVariantList& data);\n";
     s << "    template<typename... Args>\n";
-    s << "    void trigger(const QString& eventName, QObject* source, Args&&... args) {\n";
+    s << "    void trigger(const QString& eventName, LogosObject* source, Args&&... args) {\n";
     s << "        trigger(eventName, source, packVariantList(std::forward<Args>(args)...));\n";
     s << "    }\n\n";
     // Methods
@@ -165,7 +166,7 @@ static QString makeHeader(const QString& moduleName, const QString& className, c
         s << ");\n";
     }
     s << "\nprivate:\n";
-    s << "    QObject* ensureReplica();\n";
+    s << "    LogosObject* ensureReplica();\n";
     s << "    template<typename... Args>\n";
     s << "    static QVariantList packVariantList(Args&&... args) {\n";
     s << "        QVariantList list;\n";
@@ -177,8 +178,8 @@ static QString makeHeader(const QString& moduleName, const QString& className, c
     s << "    LogosAPI* m_api;\n";
     s << "    LogosAPIClient* m_client;\n";
     s << "    QString m_moduleName;\n";
-    s << "    QPointer<QObject> m_eventReplica;\n";
-    s << "    QPointer<QObject> m_eventSource;\n";
+    s << "    LogosObject* m_eventReplica = nullptr;\n";
+    s << "    LogosObject* m_eventSource = nullptr;\n";
     s << "};\n";
     return h;
 }
@@ -190,27 +191,27 @@ static QString makeSource(const QString& moduleName, const QString& className, c
     s << "#include \"" << headerBaseName << "\"\n\n";
     s << "#include <QDebug>\n\n";
     s << className << "::" << className << "(LogosAPI* api) : m_api(api), m_client(api->getClient(\"" << moduleName << "\")), m_moduleName(QStringLiteral(\"" << moduleName << "\")) {}\n\n";
-    s << "QObject* " << className << "::ensureReplica() {\n";
+    s << "LogosObject* " << className << "::ensureReplica() {\n";
     s << "    if (!m_eventReplica) {\n";
-    s << "        QObject* replica = m_client->requestObject(m_moduleName);\n";
+    s << "        LogosObject* replica = m_client->requestObject(m_moduleName);\n";
     s << "        if (!replica) {\n";
     s << "            qWarning() << \"" << className << ": failed to acquire remote object for events on\" << m_moduleName;\n";
     s << "            return nullptr;\n";
     s << "        }\n";
     s << "        m_eventReplica = replica;\n";
     s << "    }\n";
-    s << "    return m_eventReplica.data();\n";
+    s << "    return m_eventReplica;\n";
     s << "}\n\n";
     s << "bool " << className << "::on(const QString& eventName, RawEventCallback callback) {\n";
     s << "    if (!callback) {\n";
     s << "        qWarning() << \"" << className << ": ignoring empty event callback for\" << eventName;\n";
     s << "        return false;\n";
     s << "    }\n";
-    s << "    QObject* origin = ensureReplica();\n";
+    s << "    LogosObject* origin = ensureReplica();\n";
     s << "    if (!origin) {\n";
     s << "        return false;\n";
     s << "    }\n";
-    s << "    m_client->onEvent(origin, nullptr, eventName, callback);\n";
+    s << "    m_client->onEvent(origin, eventName, callback);\n";
     s << "    return true;\n";
     s << "}\n\n";
     s << "bool " << className << "::on(const QString& eventName, EventCallback callback) {\n";
@@ -222,11 +223,11 @@ static QString makeSource(const QString& moduleName, const QString& className, c
     s << "        callback(data);\n";
     s << "    });\n";
     s << "}\n\n";
-    s << "void " << className << "::setEventSource(QObject* source) {\n";
+    s << "void " << className << "::setEventSource(LogosObject* source) {\n";
     s << "    m_eventSource = source;\n";
     s << "}\n\n";
-    s << "QObject* " << className << "::eventSource() const {\n";
-    s << "    return m_eventSource.data();\n";
+    s << "LogosObject* " << className << "::eventSource() const {\n";
+    s << "    return m_eventSource;\n";
     s << "}\n\n";
     s << "void " << className << "::trigger(const QString& eventName) {\n";
     s << "    trigger(eventName, QVariantList{});\n";
@@ -236,9 +237,9 @@ static QString makeSource(const QString& moduleName, const QString& className, c
     s << "        qWarning() << \"" << className << ": no event source set for trigger\" << eventName;\n";
     s << "        return;\n";
     s << "    }\n";
-    s << "    m_client->onEventResponse(m_eventSource.data(), eventName, data);\n";
+    s << "    m_client->onEventResponse(m_eventSource, eventName, data);\n";
     s << "}\n\n";
-    s << "void " << className << "::trigger(const QString& eventName, QObject* source, const QVariantList& data) {\n";
+    s << "void " << className << "::trigger(const QString& eventName, LogosObject* source, const QVariantList& data) {\n";
     s << "    if (!source) {\n";
     s << "        qWarning() << \"" << className << ": cannot trigger\" << eventName << \"with null source\";\n";
     s << "        return;\n";
@@ -345,12 +346,11 @@ static QString makeCoreManagerHeader()
     s << "#include <QVariant>\n";
     s << "#include <QStringList>\n";
     s << "#include <QJsonArray>\n";
-    s << "#include <QObject>\n";
-    s << "#include <QPointer>\n";
     s << "#include <functional>\n";
     s << "#include <utility>\n";
     s << "#include \"logos_api.h\"\n";
-    s << "#include \"logos_api_client.h\"\n\n";
+    s << "#include \"logos_api_client.h\"\n";
+    s << "#include \"logos_object.h\"\n\n";
     s << "class CoreManager {\n";
     s << "public:\n";
     s << "    explicit CoreManager(LogosAPI* api);\n\n";
@@ -358,17 +358,17 @@ static QString makeCoreManagerHeader()
     s << "    using EventCallback = std::function<void(const QVariantList&)>;\n\n";
     s << "    bool on(const QString& eventName, RawEventCallback callback);\n";
     s << "    bool on(const QString& eventName, EventCallback callback);\n";
-    s << "    void setEventSource(QObject* source);\n";
-    s << "    QObject* eventSource() const;\n";
+    s << "    void setEventSource(LogosObject* source);\n";
+    s << "    LogosObject* eventSource() const;\n";
     s << "    void trigger(const QString& eventName);\n";
     s << "    void trigger(const QString& eventName, const QVariantList& data);\n";
     s << "    template<typename... Args>\n";
     s << "    void trigger(const QString& eventName, Args&&... args) {\n";
     s << "        trigger(eventName, packVariantList(std::forward<Args>(args)...));\n";
     s << "    }\n";
-    s << "    void trigger(const QString& eventName, QObject* source, const QVariantList& data);\n";
+    s << "    void trigger(const QString& eventName, LogosObject* source, const QVariantList& data);\n";
     s << "    template<typename... Args>\n";
-    s << "    void trigger(const QString& eventName, QObject* source, Args&&... args) {\n";
+    s << "    void trigger(const QString& eventName, LogosObject* source, Args&&... args) {\n";
     s << "        trigger(eventName, source, packVariantList(std::forward<Args>(args)...));\n";
     s << "    }\n\n";
     s << "    void initialize(int argc, char* argv[]);\n";
@@ -383,7 +383,7 @@ static QString makeCoreManagerHeader()
     s << "    bool unloadPlugin(const QString& pluginName);\n";
     s << "    QString processPlugin(const QString& filePath);\n\n";
     s << "private:\n";
-    s << "    QObject* ensureReplica();\n";
+    s << "    LogosObject* ensureReplica();\n";
     s << "    template<typename... Args>\n";
     s << "    static QVariantList packVariantList(Args&&... args) {\n";
     s << "        QVariantList list;\n";
@@ -395,8 +395,8 @@ static QString makeCoreManagerHeader()
     s << "    LogosAPI* m_api;\n";
     s << "    LogosAPIClient* m_client;\n";
     s << "    QString m_moduleName;\n";
-    s << "    QPointer<QObject> m_eventReplica;\n";
-    s << "    QPointer<QObject> m_eventSource;\n";
+    s << "    LogosObject* m_eventReplica = nullptr;\n";
+    s << "    LogosObject* m_eventSource = nullptr;\n";
     s << "};\n";
     return h;
 }
@@ -409,27 +409,27 @@ static QString makeCoreManagerSource(const QString& headerBaseName)
     s << "#include <QDebug>\n";
     s << "#include <QStringList>\n\n";
     s << "CoreManager::CoreManager(LogosAPI* api) : m_api(api), m_client(api->getClient(\"core_manager\")), m_moduleName(QStringLiteral(\"core_manager\")) {}\n\n";
-    s << "QObject* CoreManager::ensureReplica() {\n";
+    s << "LogosObject* CoreManager::ensureReplica() {\n";
     s << "    if (!m_eventReplica) {\n";
-    s << "        QObject* replica = m_client->requestObject(m_moduleName);\n";
+    s << "        LogosObject* replica = m_client->requestObject(m_moduleName);\n";
     s << "        if (!replica) {\n";
     s << "            qWarning() << \"CoreManager: failed to acquire remote object for events on\" << m_moduleName;\n";
     s << "            return nullptr;\n";
     s << "        }\n";
     s << "        m_eventReplica = replica;\n";
     s << "    }\n";
-    s << "    return m_eventReplica.data();\n";
+    s << "    return m_eventReplica;\n";
     s << "}\n\n";
     s << "bool CoreManager::on(const QString& eventName, RawEventCallback callback) {\n";
     s << "    if (!callback) {\n";
     s << "        qWarning() << \"CoreManager: ignoring empty event callback for\" << eventName;\n";
     s << "        return false;\n";
     s << "    }\n";
-    s << "    QObject* origin = ensureReplica();\n";
+    s << "    LogosObject* origin = ensureReplica();\n";
     s << "    if (!origin) {\n";
     s << "        return false;\n";
     s << "    }\n";
-    s << "    m_client->onEvent(origin, nullptr, eventName, callback);\n";
+    s << "    m_client->onEvent(origin, eventName, callback);\n";
     s << "    return true;\n";
     s << "}\n\n";
     s << "bool CoreManager::on(const QString& eventName, EventCallback callback) {\n";
@@ -441,11 +441,11 @@ static QString makeCoreManagerSource(const QString& headerBaseName)
     s << "        callback(data);\n";
     s << "    });\n";
     s << "}\n\n";
-    s << "void CoreManager::setEventSource(QObject* source) {\n";
+    s << "void CoreManager::setEventSource(LogosObject* source) {\n";
     s << "    m_eventSource = source;\n";
     s << "}\n\n";
-    s << "QObject* CoreManager::eventSource() const {\n";
-    s << "    return m_eventSource.data();\n";
+    s << "LogosObject* CoreManager::eventSource() const {\n";
+    s << "    return m_eventSource;\n";
     s << "}\n\n";
     s << "void CoreManager::trigger(const QString& eventName) {\n";
     s << "    trigger(eventName, QVariantList{});\n";
@@ -455,9 +455,9 @@ static QString makeCoreManagerSource(const QString& headerBaseName)
     s << "        qWarning() << \"CoreManager: no event source set for trigger\" << eventName;\n";
     s << "        return;\n";
     s << "    }\n";
-    s << "    m_client->onEventResponse(m_eventSource.data(), eventName, data);\n";
+    s << "    m_client->onEventResponse(m_eventSource, eventName, data);\n";
     s << "}\n\n";
-    s << "void CoreManager::trigger(const QString& eventName, QObject* source, const QVariantList& data) {\n";
+    s << "void CoreManager::trigger(const QString& eventName, LogosObject* source, const QVariantList& data) {\n";
     s << "    if (!source) {\n";
     s << "        qWarning() << \"CoreManager: cannot trigger\" << eventName << \"with null source\";\n";
     s << "        return;\n";
@@ -679,6 +679,222 @@ static bool writeUmbrellaSourceFromDeps(const QString& genDirPath, const QJsonAr
     return true;
 }
 
+// ── Provider-header mode: scan LOGOS_METHOD markers and generate dispatch ────
+
+struct ParsedMethod {
+    QString returnType;
+    QString name;
+    QVector<QPair<QString, QString>> params; // (type, name)
+};
+
+static QVector<ParsedMethod> parseProviderHeader(const QString& headerPath, QTextStream& err)
+{
+    QVector<ParsedMethod> methods;
+
+    QFile file(headerPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        err << "Cannot open header file: " << headerPath << "\n";
+        return methods;
+    }
+
+    QTextStream in(&file);
+    QRegularExpression re(
+        R"(^\s*LOGOS_METHOD\s+(.+?)\s+(\w+)\s*\(([^)]*)\)\s*;)"
+    );
+
+    while (!in.atEnd()) {
+        QString line = in.readLine();
+        auto match = re.match(line);
+        if (!match.hasMatch()) continue;
+
+        ParsedMethod m;
+        m.returnType = normalizeType(match.captured(1));
+        m.name = match.captured(2);
+
+        QString paramStr = match.captured(3).trimmed();
+        if (!paramStr.isEmpty()) {
+            QStringList paramParts = paramStr.split(',');
+            for (const QString& part : paramParts) {
+                QString trimmed = part.trimmed();
+                int eqIdx = trimmed.indexOf('=');
+                if (eqIdx > 0) trimmed = trimmed.left(eqIdx).trimmed();
+                int lastSpace = trimmed.lastIndexOf(' ');
+                int lastAmp = trimmed.lastIndexOf('&');
+                int splitAt = qMax(lastSpace, lastAmp);
+                if (splitAt > 0) {
+                    QString type = normalizeType(trimmed.left(splitAt + 1));
+                    QString pname = trimmed.mid(splitAt + 1).trimmed();
+                    m.params.append({type, pname});
+                } else {
+                    m.params.append({normalizeType(trimmed), QString("arg%1").arg(m.params.size())});
+                }
+            }
+        }
+
+        methods.append(m);
+    }
+
+    file.close();
+    return methods;
+}
+
+static QString toQVariantConversion(const QString& type, const QString& argExpr)
+{
+    if (type == "int") return argExpr + ".toInt()";
+    if (type == "bool") return argExpr + ".toBool()";
+    if (type == "double") return argExpr + ".toDouble()";
+    if (type == "float") return argExpr + ".toFloat()";
+    if (type == "QString") return argExpr + ".toString()";
+    if (type == "QStringList") return argExpr + ".toStringList()";
+    if (type == "QJsonArray") return "qvariant_cast<QJsonArray>(" + argExpr + ")";
+    if (type == "QVariant") return argExpr;
+    if (type == "LogosResult") return argExpr + ".value<LogosResult>()";
+    return argExpr + ".toString()";
+}
+
+static int generateProviderDispatch(const QString& headerPath, const QString& outputDir, QTextStream& out, QTextStream& err)
+{
+    QFileInfo fi(headerPath);
+    if (!fi.exists()) {
+        err << "Header file does not exist: " << headerPath << "\n";
+        return 2;
+    }
+
+    QVector<ParsedMethod> methods = parseProviderHeader(headerPath, err);
+    if (methods.isEmpty()) {
+        err << "No LOGOS_METHOD markers found in: " << headerPath << "\n";
+        return 3;
+    }
+
+    // Derive the class name from the header: parse for ": public LogosProviderBase"
+    QString className;
+    {
+        QFile f(headerPath);
+        f.open(QIODevice::ReadOnly | QIODevice::Text);
+        QTextStream ts(&f);
+        QRegularExpression classRe(R"(class\s+(\w+)\s*:\s*public\s+LogosProviderBase)");
+        while (!ts.atEnd()) {
+            QString line = ts.readLine();
+            auto m = classRe.match(line);
+            if (m.hasMatch()) {
+                className = m.captured(1);
+                break;
+            }
+        }
+        f.close();
+    }
+
+    if (className.isEmpty()) {
+        err << "Could not find class inheriting LogosProviderBase in: " << headerPath << "\n";
+        return 4;
+    }
+
+    QString headerBaseName = fi.fileName();
+
+    QString genDirPath = outputDir.isEmpty() ? fi.absolutePath() : outputDir;
+    QDir().mkpath(genDirPath);
+
+    // Generate logos_provider_dispatch.cpp
+    QString content;
+    QTextStream s(&content);
+
+    s << "// AUTO-GENERATED by logos-cpp-generator -- do not edit\n";
+    s << "#include \"" << headerBaseName << "\"\n";
+    s << "#include <QJsonArray>\n";
+    s << "#include <QJsonObject>\n";
+    s << "#include <QVariant>\n";
+    s << "#include <QString>\n";
+    s << "#include \"logos_types.h\"\n\n";
+
+    // callMethod() — group by name to support overloaded methods
+    QMap<QString, QVector<const ParsedMethod*>> methodsByName;
+    for (const ParsedMethod& m : methods) {
+        methodsByName[m.name].append(&m);
+    }
+
+    s << "QVariant " << className << "::callMethod(const QString& methodName, const QVariantList& args)\n";
+    s << "{\n";
+    for (auto it = methodsByName.constBegin(); it != methodsByName.constEnd(); ++it) {
+        const QString& name = it.key();
+        const QVector<const ParsedMethod*>& overloads = it.value();
+        s << "    if (methodName == \"" << name << "\") {\n";
+        bool needArgsSizeCheck = overloads.size() > 1;
+        for (const ParsedMethod* m : overloads) {
+            if (needArgsSizeCheck) {
+                s << "        if (args.size() == " << m->params.size() << ") {\n";
+                s << "    ";
+            }
+            if (m->returnType == "void" || m->returnType.isEmpty()) {
+                s << "        " << m->name << "(";
+                for (int i = 0; i < m->params.size(); ++i) {
+                    s << toQVariantConversion(m->params[i].first, QString("args.at(%1)").arg(i));
+                    if (i + 1 < m->params.size()) s << ", ";
+                }
+                s << ");\n";
+                if (needArgsSizeCheck) s << "    ";
+                s << "        return QVariant(true);\n";
+            } else {
+                s << "        return QVariant::fromValue(" << m->name << "(";
+                for (int i = 0; i < m->params.size(); ++i) {
+                    s << toQVariantConversion(m->params[i].first, QString("args.at(%1)").arg(i));
+                    if (i + 1 < m->params.size()) s << ", ";
+                }
+                s << "));\n";
+            }
+            if (needArgsSizeCheck) {
+                s << "        }\n";
+            }
+        }
+        s << "    }\n";
+    }
+    s << "    qWarning() << \"" << className << "::callMethod: unknown method:\" << methodName;\n";
+    s << "    return QVariant();\n";
+    s << "}\n\n";
+
+    // getMethods()
+    s << "QJsonArray " << className << "::getMethods()\n";
+    s << "{\n";
+    s << "    QJsonArray methods;\n";
+    for (const ParsedMethod& m : methods) {
+        s << "    {\n";
+        s << "        QJsonObject obj;\n";
+        s << "        obj[\"name\"] = QStringLiteral(\"" << m.name << "\");\n";
+        s << "        obj[\"returnType\"] = QStringLiteral(\"" << m.returnType << "\");\n";
+        s << "        obj[\"isInvokable\"] = true;\n";
+        QString sig = m.name + "(";
+        for (int i = 0; i < m.params.size(); ++i) {
+            sig += m.params[i].first;
+            if (i + 1 < m.params.size()) sig += ",";
+        }
+        sig += ")";
+        s << "        obj[\"signature\"] = QStringLiteral(\"" << sig << "\");\n";
+        if (!m.params.isEmpty()) {
+            s << "        QJsonArray params;\n";
+            for (int i = 0; i < m.params.size(); ++i) {
+                s << "        params.append(QJsonObject{{\"type\", QStringLiteral(\"" << m.params[i].first << "\")}, {\"name\", QStringLiteral(\"" << m.params[i].second << "\")}});\n";
+            }
+            s << "        obj[\"parameters\"] = params;\n";
+        }
+        s << "        methods.append(obj);\n";
+        s << "    }\n";
+    }
+    s << "    return methods;\n";
+    s << "}\n";
+
+    QString outputPath = QDir(genDirPath).filePath("logos_provider_dispatch.cpp");
+    QFile outFile(outputPath);
+    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        err << "Failed to write dispatch file: " << outputPath << "\n";
+        return 5;
+    }
+    outFile.write(content.toUtf8());
+    outFile.close();
+
+    out << "Generated provider dispatch: " << outputPath << " (" << methods.size() << " methods from " << className << ")\n";
+    out.flush();
+    return 0;
+}
+
 static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, bool moduleOnly, QTextStream& out, QTextStream& err)
 {
     QFileInfo fi(pluginInputPath);
@@ -720,7 +936,21 @@ static int generateFromPlugin(const QString& pluginInputPath, const QString& out
         }
     }
 
-    QJsonArray methods = enumerateMethods(instance);
+    QJsonArray methods;
+    LogosProviderPlugin* providerPlugin = qobject_cast<LogosProviderPlugin*>(instance);
+    if (providerPlugin) {
+        LogosProviderObject* provider = providerPlugin->createProviderObject();
+        if (provider) {
+            methods = provider->getMethods();
+            out << "Detected new-API plugin (LogosProviderPlugin), using getMethods() — "
+                << methods.size() << " methods\n";
+            delete provider;
+        } else {
+            err << "LogosProviderPlugin::createProviderObject() returned null\n";
+        }
+    } else {
+        methods = enumerateMethods(instance);
+    }
 
     QString className = toPascalCase(moduleName);
     QString headerRel = QString("%1_api.h").arg(moduleName);
@@ -927,10 +1157,25 @@ int main(int argc, char* argv[])
         }
     }
 
+    // --provider-header mode: scan LOGOS_METHOD markers and generate dispatch code
+    {
+        const int phIdx = args.indexOf("--provider-header");
+        if (phIdx != -1) {
+            if (phIdx + 1 >= args.size()) {
+                err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --provider-header /path/to/impl.h [--output-dir /path/to/output]\n";
+                return 1;
+            }
+            QString headerArg = args.at(phIdx + 1);
+            if (headerArg.startsWith('@')) headerArg.remove(0, 1);
+            return generateProviderDispatch(headerArg, outputDir, out, err);
+        }
+    }
+
     if (args.size() < 2) {
         err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " /absolute/path/to/plugin [--output-dir /path/to/output] [--module-only]\n";
         err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only] [--general-only]\n";
         err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json --general-only [--output-dir /path/to/output]\n";
+        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --provider-header /path/to/impl.h [--output-dir /path/to/output]\n";
         return 1;
     }
 

@@ -1,6 +1,8 @@
 #include "logos_api_client.h"
 #include "logos_api_consumer.h"
+#include "logos_object.h"
 #include "token_manager.h"
+#include <QMetaObject>
 
 LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
     : QObject(parent)
@@ -12,10 +14,9 @@ LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to, const QString& 
 
 LogosAPIClient::~LogosAPIClient()
 {
-    // m_consumer will be deleted automatically as it's a child object
 }
 
-QObject* LogosAPIClient::requestObject(const QString& objectName, Timeout timeout)
+LogosObject* LogosAPIClient::requestObject(const QString& objectName, Timeout timeout)
 {
     return m_consumer->requestObject(objectName, timeout);
 }
@@ -40,7 +41,6 @@ QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QSt
 {
     qDebug() << "LogosAPIClient: invoking remote method" << objectName << methodName << "args_count:" << args.size();
 
-    // Get the token for the module
     QString token = getToken(objectName);
 
     if (token.isEmpty() && objectName != "capability_module") {
@@ -48,19 +48,7 @@ QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QSt
         LogosAPIConsumer* packageManagerConsumer = new LogosAPIConsumer("capability_module", m_origin_module, m_token_manager, this);
         QString capabilityToken = getToken("capability_module");
         QVariant result = packageManagerConsumer->invokeRemoteMethod(capabilityToken, "capability_module", "requestModule", QVariantList() << m_origin_module << objectName, timeout);
-        qDebug() << "================================================";
-        qDebug() << "================================================";
-        qDebug() << "================================================";
-        qDebug() << "================================================";
-        qDebug() << "================================================";
-        qDebug() << "================================================";
         qDebug() << "LogosAPIClient: requestModule result for" << objectName << ":" << result.toString();
-        qDebug() << "================================================";
-        qDebug() << "================================================";
-        qDebug() << "================================================";
-        qDebug() << "================================================";
-        qDebug() << "================================================";
-
         token = result.toString();
     }
 
@@ -99,38 +87,46 @@ QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QSt
     return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2 << arg3 << arg4 << arg5, timeout);
 }
 
-void LogosAPIClient::onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)
+void LogosAPIClient::onEvent(LogosObject* originObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)
 {
-    m_consumer->onEvent(originObject, destinationObject, eventName, callback);
+    m_consumer->onEvent(originObject, eventName, std::move(callback));
 }
 
-void LogosAPIClient::onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName)
+void LogosAPIClient::onEventResponse(LogosObject* object, const QString& eventName, const QVariantList& data)
 {
-    m_consumer->onEvent(originObject, destinationObject, eventName);
-}
-
-
-
-void LogosAPIClient::invokeCallback(const QString& eventName, const QVariantList& data)
-{
-    m_consumer->invokeCallback(eventName, data);
-}
-
-void LogosAPIClient::onEventResponse(QObject* replica, const QString& eventName, const QVariantList& data)
-{
-    // qDebug() << "LogosAPIClient: Received event:" << eventName << "with data:" << data;
-    qDebug() << "LogosAPIClient: Received event:" << eventName;
+    qDebug() << "[LogosObject] LogosAPIClient::onEventResponse" << eventName << "-> LogosObject::emitEvent";
 
     if (eventName.isEmpty()) {
         qWarning() << "LogosAPIClient: Event name cannot be empty";
         return;
     }
 
-    // qDebug() << "LogosAPIClient: Emitting event:" << eventName << "with data:" << data;
-    qDebug() << "LogosAPIClient: Emitting event:" << eventName;
+    if (!object) {
+        qWarning() << "LogosAPIClient: Cannot emit event on null object";
+        return;
+    }
 
-    // emit the eventResponse signal of replica
-    QMetaObject::invokeMethod(replica, "eventResponse", Qt::QueuedConnection, Q_ARG(QString, eventName), Q_ARG(QVariantList, data));
+    object->emitEvent(eventName, data);
+}
+
+void LogosAPIClient::onEventResponse(QObject* object, const QString& eventName, const QVariantList& data)
+{
+    qDebug() << "[LogosObject] LogosAPIClient::onEventResponse (QObject* compat)" << eventName;
+
+    if (eventName.isEmpty()) {
+        qWarning() << "LogosAPIClient: Event name cannot be empty";
+        return;
+    }
+
+    if (!object) {
+        qWarning() << "LogosAPIClient: Cannot emit event on null QObject";
+        return;
+    }
+
+    QMetaObject::invokeMethod(object, "eventResponse",
+                              Qt::DirectConnection,
+                              Q_ARG(QString, eventName),
+                              Q_ARG(QVariantList, data));
 }
 
 bool LogosAPIClient::informModuleToken(const QString& authToken, const QString& moduleName, const QString& token)
@@ -152,19 +148,12 @@ QString LogosAPIClient::getToken(const QString& module_name)
 {
     qDebug() << "LogosAPIClient: getToken for module:" << module_name;
 
-    // if (m_token_manager) {
-        QString token = m_token_manager->getToken(module_name);
-        if (!token.isEmpty()) {
-            qDebug() << "LogosAPIClient: Found token for module:" << module_name;
-            return token;
-        }
-    // } else {
-        // qDebug() << "LogosAPIClient: No token manager found - using default AUTH_TOKEN";
-    // }
+    QString token = m_token_manager->getToken(module_name);
+    if (!token.isEmpty()) {
+        qDebug() << "LogosAPIClient: Found token for module:" << module_name;
+        return token;
+    }
 
     qDebug() << "LogosAPIClient: No token found for module:" << module_name;
-
-    // TODO: this is breaking here for core_manager
-    // return AUTH_TOKEN;
     return "";
 }
