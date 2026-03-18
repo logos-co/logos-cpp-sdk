@@ -11,6 +11,9 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// DEPRECATED: Use NativeLogosResult (in native/logos_native_types.h) for new
+// modules using NativeProviderBase. This Qt-based LogosResult remains for the
+// Q_INVOKABLE and LogosProviderBase paths.
 struct LogosResult
 {
     bool success;

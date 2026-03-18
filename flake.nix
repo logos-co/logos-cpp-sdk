@@ -37,6 +37,7 @@
           # Combined outputs (for backward compatibility)
           logos-cpp-sdk = sdk;
           cpp-generator = bin;  # Alias for backward compatibility
+          native-generator = bin;  # Also includes logos-native-generator
           
           # Default package
           default = sdk;

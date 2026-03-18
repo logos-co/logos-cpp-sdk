@@ -32,13 +32,14 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// LogosProviderBase — convenience base class for new-API modules
+// LogosProviderBase — convenience base class for Qt-typed LOGOS_METHOD modules
 //
-// Handles framework plumbing so the developer only writes business logic.
-// callMethod() and getMethods() are provided by generated code produced
-// by logos-cpp-generator --provider-header (analogous to Qt MOC).
+// DEPRECATED: Use NativeProviderBase (in native/logos_native_provider.h) for
+// new modules. NativeProviderBase provides the same functionality with Qt-free
+// types (std::string, LogosValue, NativeLogosResult).
 // ---------------------------------------------------------------------------
-class LogosProviderBase : public LogosProviderObject {
+class [[deprecated("Use NativeProviderBase for new modules — see native/logos_native_provider.h")]]
+LogosProviderBase : public LogosProviderObject {
 public:
     // These two are implemented by generated code (logos_provider_dispatch.cpp):
     //   QVariant callMethod(const QString& methodName, const QVariantList& args) override;
@@ -78,7 +79,8 @@ Q_DECLARE_INTERFACE(LogosProviderPlugin, LogosProviderPlugin_iid)
 // ---------------------------------------------------------------------------
 
 // LOGOS_PROVIDER: declares providerName/providerVersion and a private typedef.
-// Place at the top of the class body (like Q_OBJECT).
+// DEPRECATED: Use NATIVE_LOGOS_PROVIDER (in native/logos_native_provider.h) for
+// new modules to avoid Qt type dependencies.
 #define LOGOS_PROVIDER(ClassName, Name, Version)            \
 public:                                                     \
     QString providerName() const override { return Name; }  \
@@ -88,9 +90,7 @@ public:                                                     \
 private:                                                    \
     using _LogosProviderThisType = ClassName;
 
-// LOGOS_METHOD: marks a method as callable by the framework.
-// Expands to nothing — scanned by logos-cpp-generator to produce
-// callMethod() dispatch and getMethods() metadata (like Q_INVOKABLE + MOC).
-#define LOGOS_METHOD
+// LOGOS_METHOD macro — shared definition in native/logos_macros.h
+#include "native/logos_macros.h"
 
 #endif // LOGOS_PROVIDER_OBJECT_H

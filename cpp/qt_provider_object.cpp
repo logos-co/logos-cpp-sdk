@@ -170,13 +170,12 @@ QtProviderObject::QtProviderObject(QObject* module, QObject* parent)
     if (m_module) {
         connect(m_module, SIGNAL(eventResponse(QString, QVariantList)),
                 this, SLOT(onWrappedEventResponse(QString, QVariantList)));
-        qDebug() << "[LogosProviderObject] QtProviderObject: connected to QObject eventResponse signal";
+        qDebug() << "[QT API] QtProviderObject: wrapping Q_INVOKABLE QObject (DEPRECATED — legacy path)";
     }
 }
 
 QtProviderObject::~QtProviderObject()
 {
-    qDebug() << "[LogosProviderObject] QtProviderObject: destroyed";
 }
 
 void QtProviderObject::onWrappedEventResponse(const QString& eventName, const QVariantList& data)
@@ -194,12 +193,12 @@ void QtProviderObject::init(void* apiInstance)
 
     int methodIndex = m_module->metaObject()->indexOfMethod("initLogos(LogosAPI*)");
     if (methodIndex != -1) {
-        qDebug() << "[LogosProviderObject] QtProviderObject: calling initLogos on wrapped QObject";
+        qDebug() << "[QT API] QtProviderObject::init — calling initLogos(LogosAPI*) on wrapped QObject";
         QMetaObject::invokeMethod(m_module, "initLogos",
                                   Qt::DirectConnection,
                                   Q_ARG(LogosAPI*, api));
     } else {
-        qDebug() << "[LogosProviderObject] QtProviderObject: wrapped QObject has no initLogos, skipping";
+        qDebug() << "[QT API] QtProviderObject::init — wrapped QObject has no initLogos, skipping";
     }
 }
 
@@ -223,14 +222,17 @@ void QtProviderObject::setEventListener(EventCallback callback)
 QVariant QtProviderObject::callMethod(const QString& methodName, const QVariantList& args)
 {
     if (!m_module) {
-        qWarning() << "[LogosProviderObject] QtProviderObject::callMethod: null module";
+        qWarning() << "[QT API] QtProviderObject::callMethod: null module";
         return QVariant();
     }
 
     if (methodName.isEmpty()) {
-        qWarning() << "[LogosProviderObject] QtProviderObject::callMethod: empty method name";
+        qWarning() << "[QT API] QtProviderObject::callMethod: empty method name";
         return QVariant();
     }
+
+    qDebug() << "[QT API] QtProviderObject: dispatching" << methodName
+             << "with" << args.size() << "args via QMetaObject::invokeMethod (Q_INVOKABLE path)";
 
     // Special-case getPluginMethods (framework-level, not on the wrapped plugin)
     if (methodName == "getPluginMethods" && args.isEmpty()) {
@@ -240,13 +242,13 @@ QVariant QtProviderObject::callMethod(const QString& methodName, const QVariantL
     // Auth-token validation (mirrors the old ModuleProxy logic)
     PluginInterface* pluginInterface = qobject_cast<PluginInterface*>(m_module);
     if (!pluginInterface) {
-        qWarning() << "[LogosProviderObject] QtProviderObject::callMethod: module is not a PluginInterface";
+        qWarning() << "[QT API] QtProviderObject::callMethod: module is not a PluginInterface";
         return QVariant();
     }
 
     LogosAPI* api = pluginInterface->logosAPI;
     if (!api) {
-        qWarning() << "[LogosProviderObject] QtProviderObject::callMethod: LogosAPI not available";
+        qWarning() << "[QT API] QtProviderObject::callMethod: LogosAPI not available";
         return QVariant();
     }
 
@@ -262,7 +264,7 @@ QVariant QtProviderObject::callMethod(const QString& methodName, const QVariantL
     }
 
     if (methodIndex == -1) {
-        qWarning() << "[LogosProviderObject] QtProviderObject: method not found:" << methodName
+        qWarning() << "[QT API] QtProviderObject: method not found:" << methodName
                     << "with" << args.size() << "arguments";
         return QVariant();
     }
@@ -305,13 +307,13 @@ QVariant QtProviderObject::callMethod(const QString& methodName, const QVariantL
         success = invokeMethodByArgCount(m_module, methodName, args, &v, "QStringList");
         if (success) result = QVariant(v);
     } else {
-        qWarning() << "[LogosProviderObject] QtProviderObject: unsupported return type:"
+        qWarning() << "[QT API] QtProviderObject: unsupported return type:"
                     << returnType.name() << "for method:" << methodName;
         return QVariant();
     }
 
     if (!success) {
-        qWarning() << "[LogosProviderObject] QtProviderObject: failed to invoke" << methodName;
+        qWarning() << "[QT API] QtProviderObject: failed to invoke" << methodName;
     }
     return result;
 }
@@ -320,23 +322,23 @@ bool QtProviderObject::informModuleToken(const QString& moduleName, const QStrin
 {
     PluginInterface* pluginInterface = qobject_cast<PluginInterface*>(m_module);
     if (!pluginInterface) {
-        qWarning() << "[LogosProviderObject] QtProviderObject::informModuleToken: not a PluginInterface";
+        qWarning() << "[QT API] QtProviderObject::informModuleToken: not a PluginInterface";
         return false;
     }
 
     LogosAPI* api = pluginInterface->logosAPI;
     if (!api) {
-        qWarning() << "[LogosProviderObject] QtProviderObject::informModuleToken: LogosAPI not available";
+        qWarning() << "[QT API] QtProviderObject::informModuleToken: LogosAPI not available";
         return false;
     }
 
     TokenManager* tokenManager = api->getTokenManager();
     if (!tokenManager) {
-        qWarning() << "[LogosProviderObject] QtProviderObject::informModuleToken: TokenManager not available";
+        qWarning() << "[QT API] QtProviderObject::informModuleToken: TokenManager not available";
         return false;
     }
 
-    qDebug() << "[LogosProviderObject] QtProviderObject: saving token for module:" << moduleName;
+    qDebug() << "[QT API] QtProviderObject: saving token for module:" << moduleName;
     tokenManager->saveToken(moduleName, token);
     return true;
 }

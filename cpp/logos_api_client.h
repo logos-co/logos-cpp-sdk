@@ -38,6 +38,8 @@ public:
     QString registryUrl() const;
     bool reconnect();
 
+    // DEPRECATED: Use NativeLogosClient::invokeMethod() for native modules.
+    // These QVariant-based overloads remain for Q_INVOKABLE and LogosProviderBase modules.
     QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, 
                              const QVariantList& args = QVariantList(), Timeout timeout = Timeout());
 
@@ -58,21 +60,11 @@ public:
                              const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, 
                              const QVariant& arg4, const QVariant& arg5, Timeout timeout = Timeout());
 
-    /**
-     * @brief Register an event listener via LogosObject's callback mechanism
-     * @param originObject The LogosObject that will emit the event
-     * @param eventName The name of the event to listen for
-     * @param callback Function to call when the event is triggered
-     */
+    // DEPRECATED: Use NativeLogosClient::onEvent() for native modules.
     void onEvent(LogosObject* originObject, const QString& eventName, 
                 std::function<void(const QString&, const QVariantList&)> callback);
 
-    /**
-     * @brief Emit an event on a LogosObject (for plugins that act as event sources)
-     * @param object The LogosObject to emit the event on
-     * @param eventName The name of the event
-     * @param data The event data
-     */
+    // DEPRECATED: Use NativeLogosClient::onEventResponse() for native modules.
     void onEventResponse(LogosObject* object, const QString& eventName, const QVariantList& data);
 
     /**

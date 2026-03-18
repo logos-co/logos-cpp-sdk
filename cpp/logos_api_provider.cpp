@@ -1,6 +1,8 @@
 #include "logos_api_provider.h"
 #include "logos_object.h"
 #include "logos_provider_object.h"
+#include "native/logos_native_provider.h"
+#include "native/logos_native_adapter.h"
 #include "qt_provider_object.h"
 #include "module_proxy.h"
 #include "logos_api.h"
@@ -43,19 +45,31 @@ bool LogosAPIProvider::registerObject(const QString& name, QObject* object)
         return false;
     }
 
-    // Check if this plugin implements LogosProviderPlugin (new API)
+    // Check for NativeProviderPlugin first (new native API)
+    NativeProviderPlugin* nativePlugin = qobject_cast<NativeProviderPlugin*>(object);
+    if (nativePlugin) {
+        qDebug() << "[NATIVE API] Module" << name << "uses NativeProviderPlugin (Qt-free native types)";
+        NativeProviderObject* native = nativePlugin->createNativeProviderObject();
+        if (native) {
+            auto* adapter = new NativeProviderAdapter(native);
+            return registerObject(name, adapter);
+        }
+        qWarning() << "[NATIVE API] Module" << name << ": createNativeProviderObject() returned null";
+    }
+
+    // Check if this plugin implements LogosProviderPlugin (Qt-typed new API)
     LogosProviderPlugin* providerPlugin = qobject_cast<LogosProviderPlugin*>(object);
     if (providerPlugin) {
-        qDebug() << "[LogosProviderObject] LogosAPIProvider: detected LogosProviderPlugin for" << name;
+        qDebug() << "[QT API] Module" << name << "uses LogosProviderPlugin (DEPRECATED — Qt-typed provider)";
         LogosProviderObject* provider = providerPlugin->createProviderObject();
         if (provider) {
             return registerObject(name, provider);
         }
-        qWarning() << "LogosAPIProvider: createProviderObject() returned null for" << name;
+        qWarning() << "[QT API] Module" << name << ": createProviderObject() returned null";
     }
 
     // Legacy path: wrap QObject in QtProviderObject adapter
-    qDebug() << "[LogosProviderObject] LogosAPIProvider: wrapping QObject in QtProviderObject for" << name;
+    qDebug() << "[QT API] Module" << name << "uses Q_INVOKABLE (DEPRECATED — legacy QObject path)";
 
     m_qtProviderObject = new QtProviderObject(object, this);
     m_qtProviderObject->init(qobject_cast<LogosAPI*>(parent()));
@@ -81,7 +95,7 @@ bool LogosAPIProvider::registerObject(const QString& name, LogosProviderObject* 
         return false;
     }
 
-    qDebug() << "[LogosProviderObject] LogosAPIProvider: registering LogosProviderObject directly for" << name;
+    qDebug() << "LogosAPIProvider: registering LogosProviderObject directly for" << name;
 
     provider->init(qobject_cast<LogosAPI*>(parent()));
 
@@ -95,7 +109,7 @@ bool LogosAPIProvider::publishProvider(const QString& name, LogosProviderObject*
     bool success = m_transport->publishObject(name, m_moduleProxy);
     if (success) {
         m_registeredObjectName = name;
-        qDebug() << "[LogosProviderObject] LogosAPIProvider: successfully published" << name;
+        qDebug() << "LogosAPIProvider: successfully published" << name;
     } else {
         qCritical() << "LogosAPIProvider: Failed to publish" << name;
     }

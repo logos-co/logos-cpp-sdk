@@ -1,4 +1,4 @@
-# Builds the logos-cpp-generator binary
+# Builds the logos-cpp-generator and logos-native-generator binaries
 { pkgs, common, src }:
 
 pkgs.stdenv.mkDerivation {
@@ -14,10 +14,17 @@ pkgs.stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
     
-    # Build generator
+    # Build Qt-based generator
     mkdir -p build-generator
     cd build-generator
     cmake ../cpp-generator -GNinja $cmakeFlags
+    ninja
+    cd ..
+
+    # Build native generator (no Qt dependency)
+    mkdir -p build-native-generator
+    cd build-native-generator
+    cmake ../native-generator -GNinja
     ninja
     cd ..
     
@@ -27,10 +34,13 @@ pkgs.stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     
-    # Install generator binary
+    # Install generator binaries
     mkdir -p $out/bin
     if [ -f build-generator/bin/logos-cpp-generator ]; then
       cp build-generator/bin/logos-cpp-generator $out/bin/
+    fi
+    if [ -f build-native-generator/logos-native-generator ]; then
+      cp build-native-generator/logos-native-generator $out/bin/
     fi
     
     runHook postInstall

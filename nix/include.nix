@@ -18,6 +18,7 @@ pkgs.stdenv.mkDerivation {
     # Install headers with proper structure
     mkdir -p $out/include/core
     mkdir -p $out/include/cpp
+    mkdir -p $out/include/cpp/native
     mkdir -p $out/include/cpp/implementations/qt_local
     mkdir -p $out/include/cpp/implementations/qt_remote
     mkdir -p $out/include/cpp/implementations/mock
@@ -61,6 +62,20 @@ pkgs.stdenv.mkDerivation {
       fi
     done
     
+    # Install native headers and sources
+    for file in logos_value.h logos_value.cpp \
+                logos_value_qt.h logos_value_qt.cpp \
+                logos_native_types.h \
+                logos_macros.h \
+                logos_native_provider.h logos_native_provider.cpp \
+                logos_native_client.h logos_native_client.cpp \
+                logos_native_api.h logos_native_api.cpp \
+                logos_native_adapter.h logos_native_adapter.cpp; do
+      if [ -f cpp/native/$file ]; then
+        cp cpp/native/$file $out/include/cpp/native/
+      fi
+    done
+
     if [ -f cpp/logos_mode.h ]; then
       cp cpp/logos_mode.h $out/include/
     fi

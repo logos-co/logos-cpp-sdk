@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 project(LogosSDK)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
@@ -51,6 +51,20 @@ set(SDK_SOURCES
     implementations/mock/mock_transport.h
     implementations/mock/mock_registry.h
     implementations/mock/logos_mock.h
+    native/logos_value.cpp
+    native/logos_value.h
+    native/logos_value_qt.cpp
+    native/logos_value_qt.h
+    native/logos_native_types.h
+    native/logos_native_provider.cpp
+    native/logos_native_provider.h
+    native/logos_native_client.cpp
+    native/logos_native_client.h
+    native/logos_native_api.cpp
+    native/logos_native_api.h
+    native/logos_native_adapter.cpp
+    native/logos_native_adapter.h
+    native/logos_macros.h
 )
 
 # Create the SDK library as STATIC instead of SHARED
@@ -62,6 +76,7 @@ target_link_libraries(logos_sdk PUBLIC Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSIO
 # Include directories
 target_include_directories(logos_sdk PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/native
     ${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_local
     ${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_remote
     ${CMAKE_CURRENT_SOURCE_DIR}/implementations/mock
@@ -118,4 +133,15 @@ install(FILES
     implementations/mock/mock_registry.h
     implementations/mock/logos_mock.h
     DESTINATION include/implementations/mock
+)
+
+install(FILES
+    native/logos_value.h
+    native/logos_native_types.h
+    native/logos_native_provider.h
+    native/logos_native_client.h
+    native/logos_native_api.h
+    native/logos_native_adapter.h
+    native/logos_macros.h
+    DESTINATION include/native
 )
