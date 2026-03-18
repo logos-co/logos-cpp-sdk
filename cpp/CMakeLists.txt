@@ -29,6 +29,10 @@ set(SDK_SOURCES
     logos_instance.h
     plugin_registry.h
     logos_object.h
+    logos_provider_object.cpp
+    logos_provider_object.h
+    qt_provider_object.cpp
+    qt_provider_object.h
     logos_transport.h
     logos_transport_factory.cpp
     logos_transport_factory.h
@@ -88,6 +92,8 @@ install(FILES
     logos_instance.h
     plugin_registry.h
     logos_object.h
+    logos_provider_object.h
+    qt_provider_object.h
     logos_transport.h
     logos_transport_factory.h
     logos_registry.h

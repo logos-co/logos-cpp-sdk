@@ -11,14 +11,16 @@
 class LogosTransportHost;
 class LogosObject;
 class ModuleProxy;
+class LogosProviderObject;
+class QtProviderObject;
 
 /**
  * @brief LogosAPIProvider handles registering objects for access by consumers
  * 
- * This class is responsible for the provider/server side functionality:
- * - Wrapping module objects with ModuleProxy
- * - Publishing them via the transport layer
- * - Handling event responses
+ * Supports two registration paths:
+ *   1. registerObject(name, QObject*)           — wraps in QtProviderObject, then ModuleProxy
+ *   2. registerObject(name, LogosProviderObject*) — wraps directly in ModuleProxy
+ * Both paths converge at ModuleProxy -> transport.
  */
 class LogosAPIProvider : public QObject
 {
@@ -29,30 +31,31 @@ public:
     ~LogosAPIProvider();
 
     /**
-     * @brief Register an object to be available for access by consumers.
-     *
-     * The provider side remains Qt-based: plugins are QObjects loaded via
-     * QPluginLoader.  Internally this wraps them in a ModuleProxy.
+     * @brief Register a legacy QObject-based plugin.
+     * Wraps in QtProviderObject, then ModuleProxy.
      */
     bool registerObject(const QString& name, QObject* object);
+
+    /**
+     * @brief Register a new-API LogosProviderObject plugin.
+     * Wraps directly in ModuleProxy.
+     */
+    bool registerObject(const QString& name, LogosProviderObject* provider);
 
     QString registryUrl() const;
     bool saveToken(const QString& from_module_name, const QString& token);
 
 public slots:
-    /**
-     * @brief Handle event responses from objects
-     * @param object The LogosObject that should receive the event
-     * @param eventName The name of the event
-     * @param data The event data
-     */
     void onEventResponse(LogosObject* object, const QString& eventName, const QVariantList& data);
 
 private:
+    bool publishProvider(const QString& name, LogosProviderObject* provider);
+
     std::unique_ptr<LogosTransportHost> m_transport;
     QString m_registryUrl;
     QMap<QString, QString> m_tokens;
     ModuleProxy* m_moduleProxy;
+    QtProviderObject* m_qtProviderObject;
     QString m_registeredObjectName;
 };
 
