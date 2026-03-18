@@ -14,6 +14,7 @@
 #include <QSet>
 #include <QRegularExpression>
 #include <QtGlobal>
+#include "logos_provider_object.h"
 
 static QJsonArray enumerateMethods(QObject* moduleInstance)
 {
@@ -715,6 +716,8 @@ static QVector<ParsedMethod> parseProviderHeader(const QString& headerPath, QTex
             QStringList paramParts = paramStr.split(',');
             for (const QString& part : paramParts) {
                 QString trimmed = part.trimmed();
+                int eqIdx = trimmed.indexOf('=');
+                if (eqIdx > 0) trimmed = trimmed.left(eqIdx).trimmed();
                 int lastSpace = trimmed.lastIndexOf(' ');
                 int lastAmp = trimmed.lastIndexOf('&');
                 int splitAt = qMax(lastSpace, lastAmp);
@@ -803,26 +806,44 @@ static int generateProviderDispatch(const QString& headerPath, const QString& ou
     s << "#include <QString>\n";
     s << "#include \"logos_types.h\"\n\n";
 
-    // callMethod()
+    // callMethod() — group by name to support overloaded methods
+    QMap<QString, QVector<const ParsedMethod*>> methodsByName;
+    for (const ParsedMethod& m : methods) {
+        methodsByName[m.name].append(&m);
+    }
+
     s << "QVariant " << className << "::callMethod(const QString& methodName, const QVariantList& args)\n";
     s << "{\n";
-    for (const ParsedMethod& m : methods) {
-        s << "    if (methodName == \"" << m.name << "\") {\n";
-        if (m.returnType == "void" || m.returnType.isEmpty()) {
-            s << "        " << m.name << "(";
-            for (int i = 0; i < m.params.size(); ++i) {
-                s << toQVariantConversion(m.params[i].first, QString("args.at(%1)").arg(i));
-                if (i + 1 < m.params.size()) s << ", ";
+    for (auto it = methodsByName.constBegin(); it != methodsByName.constEnd(); ++it) {
+        const QString& name = it.key();
+        const QVector<const ParsedMethod*>& overloads = it.value();
+        s << "    if (methodName == \"" << name << "\") {\n";
+        bool needArgsSizeCheck = overloads.size() > 1;
+        for (const ParsedMethod* m : overloads) {
+            if (needArgsSizeCheck) {
+                s << "        if (args.size() == " << m->params.size() << ") {\n";
+                s << "    ";
             }
-            s << ");\n";
-            s << "        return QVariant(true);\n";
-        } else {
-            s << "        return QVariant::fromValue(" << m.name << "(";
-            for (int i = 0; i < m.params.size(); ++i) {
-                s << toQVariantConversion(m.params[i].first, QString("args.at(%1)").arg(i));
-                if (i + 1 < m.params.size()) s << ", ";
+            if (m->returnType == "void" || m->returnType.isEmpty()) {
+                s << "        " << m->name << "(";
+                for (int i = 0; i < m->params.size(); ++i) {
+                    s << toQVariantConversion(m->params[i].first, QString("args.at(%1)").arg(i));
+                    if (i + 1 < m->params.size()) s << ", ";
+                }
+                s << ");\n";
+                if (needArgsSizeCheck) s << "    ";
+                s << "        return QVariant(true);\n";
+            } else {
+                s << "        return QVariant::fromValue(" << m->name << "(";
+                for (int i = 0; i < m->params.size(); ++i) {
+                    s << toQVariantConversion(m->params[i].first, QString("args.at(%1)").arg(i));
+                    if (i + 1 < m->params.size()) s << ", ";
+                }
+                s << "));\n";
             }
-            s << "));\n";
+            if (needArgsSizeCheck) {
+                s << "        }\n";
+            }
         }
         s << "    }\n";
     }
@@ -915,7 +936,21 @@ static int generateFromPlugin(const QString& pluginInputPath, const QString& out
         }
     }
 
-    QJsonArray methods = enumerateMethods(instance);
+    QJsonArray methods;
+    LogosProviderPlugin* providerPlugin = qobject_cast<LogosProviderPlugin*>(instance);
+    if (providerPlugin) {
+        LogosProviderObject* provider = providerPlugin->createProviderObject();
+        if (provider) {
+            methods = provider->getMethods();
+            out << "Detected new-API plugin (LogosProviderPlugin), using getMethods() — "
+                << methods.size() << " methods\n";
+            delete provider;
+        } else {
+            err << "LogosProviderPlugin::createProviderObject() returned null\n";
+        }
+    } else {
+        methods = enumerateMethods(instance);
+    }
 
     QString className = toPascalCase(moduleName);
     QString headerRel = QString("%1_api.h").arg(moduleName);
