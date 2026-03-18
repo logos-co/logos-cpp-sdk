@@ -2,6 +2,7 @@
 #include "logos_api_consumer.h"
 #include "logos_object.h"
 #include "token_manager.h"
+#include <QMetaObject>
 
 LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
     : QObject(parent)
@@ -106,6 +107,26 @@ void LogosAPIClient::onEventResponse(LogosObject* object, const QString& eventNa
     }
 
     object->emitEvent(eventName, data);
+}
+
+void LogosAPIClient::onEventResponse(QObject* object, const QString& eventName, const QVariantList& data)
+{
+    qDebug() << "[LogosObject] LogosAPIClient::onEventResponse (QObject* compat)" << eventName;
+
+    if (eventName.isEmpty()) {
+        qWarning() << "LogosAPIClient: Event name cannot be empty";
+        return;
+    }
+
+    if (!object) {
+        qWarning() << "LogosAPIClient: Cannot emit event on null QObject";
+        return;
+    }
+
+    QMetaObject::invokeMethod(object, "eventResponse",
+                              Qt::DirectConnection,
+                              Q_ARG(QString, eventName),
+                              Q_ARG(QVariantList, data));
 }
 
 bool LogosAPIClient::informModuleToken(const QString& authToken, const QString& moduleName, const QString& token)

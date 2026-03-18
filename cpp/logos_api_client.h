@@ -75,6 +75,14 @@ public:
      */
     void onEventResponse(LogosObject* object, const QString& eventName, const QVariantList& data);
 
+    /**
+     * @brief Backward-compatible overload for QObject-based plugins.
+     *
+     * Old-API plugins call onEventResponse(this, ...) where `this` is a QObject*.
+     * This overload invokes the eventResponse signal on the QObject via QMetaObject.
+     */
+    void onEventResponse(QObject* object, const QString& eventName, const QVariantList& data);
+
     bool informModuleToken(const QString& authToken, const QString& moduleName, const QString& token);
     bool informModuleToken_module(const QString& authToken, const QString& originModule, const QString& moduleName, const QString& token);
 
