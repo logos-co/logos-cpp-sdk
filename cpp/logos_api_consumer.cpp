@@ -8,6 +8,9 @@
 #include <QRemoteObjectNode>
 #include <QRemoteObjectReplica>
 #include <QRemoteObjectPendingCall>
+#include <QRemoteObjectPendingCallWatcher>
+#include <QPointer>
+#include <QTimer>
 #include <QDebug>
 #include <QUrl>
 #include <QMetaObject>
@@ -205,6 +208,81 @@ QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QS
     }
 
     return pendingCall.returnValue();
+}
+
+void LogosAPIConsumer::invokeRemoteMethodAsync(const QString& authToken, const QString& objectName, const QString& methodName,
+                                              const QVariantList& args,
+                                              AsyncResultCallback callback,
+                                              Timeout timeout)
+{
+    if (!callback) {
+        qWarning() << "LogosAPIConsumer: invokeRemoteMethodAsync called with null callback";
+        return;
+    }
+
+    QObject* plugin = requestObject(objectName, timeout);
+    if (!plugin) {
+        qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object:" << objectName;
+        QTimer::singleShot(0, this, [callback]() { callback(QVariant()); });
+        return;
+    }
+
+    ModuleProxy* moduleProxy = qobject_cast<ModuleProxy*>(plugin);
+    if (moduleProxy) {
+        QVariant result = moduleProxy->callRemoteMethod(authToken, methodName, args);
+        if (!LogosModeConfig::isLocal()) {
+            delete plugin;
+        }
+        QTimer::singleShot(0, this, [callback, result]() { callback(result); });
+        return;
+    }
+
+    if (LogosModeConfig::isLocal()) {
+        qWarning() << "LogosAPIConsumer: Local mode requires ModuleProxy-wrapped objects";
+        QTimer::singleShot(0, this, [callback]() { callback(QVariant()); });
+        return;
+    }
+
+    QRemoteObjectPendingCall pendingCall;
+    bool success = QMetaObject::invokeMethod(
+        plugin,
+        "callRemoteMethod",
+        Qt::DirectConnection,
+        Q_RETURN_ARG(QRemoteObjectPendingCall, pendingCall),
+        Q_ARG(QString, authToken),
+        Q_ARG(QString, methodName),
+        Q_ARG(QVariantList, args)
+    );
+
+    if (!success) {
+        qWarning() << "LogosAPIConsumer: Failed to invoke callRemoteMethod on replica for object:" << objectName;
+        delete plugin;
+        QTimer::singleShot(0, this, [callback]() { callback(QVariant()); });
+        return;
+    }
+
+    QRemoteObjectPendingCallWatcher* watcher = new QRemoteObjectPendingCallWatcher(pendingCall, this);
+    QPointer<QRemoteObjectPendingCallWatcher> watcherRef(watcher);
+    QObject* pluginToDelete = plugin;
+    // Use QueuedConnection so the callback always runs on the consumer's (e.g. main) thread,
+    // even if the watcher emits finished() from an IO or worker thread. Otherwise the callback
+    // may never run or may run in a context where UI/consumer state is inaccessible.
+    connect(watcher, &QRemoteObjectPendingCallWatcher::finished, this, [watcherRef, callback, pluginToDelete]() {
+        QVariant result;
+        if (!watcherRef.isNull() && watcherRef->error() == QRemoteObjectPendingCall::NoError) {
+            result = watcherRef->returnValue();
+        }
+        if (callback) callback(result);
+        delete pluginToDelete;
+        if (!watcherRef.isNull()) watcherRef->deleteLater();
+    }, Qt::QueuedConnection);
+    QTimer::singleShot(timeout.ms, this, [watcherRef, callback, pluginToDelete]() {
+        if (!watcherRef.isNull() && !watcherRef->isFinished()) {
+            if (callback) callback(QVariant());
+            delete pluginToDelete;
+            watcherRef->deleteLater();
+        }
+    });
 }
 
 void LogosAPIConsumer::onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)

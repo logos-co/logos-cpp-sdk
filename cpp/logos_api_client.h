@@ -144,6 +144,54 @@ public:
                              const QVariant& arg4, const QVariant& arg5, Timeout timeout = Timeout());
 
     /**
+     * @brief Invoke a remote method asynchronously; result or error is delivered via callback
+     * @param objectName The name of the remote object
+     * @param methodName The name of the method to call
+     * @param args Arguments to pass to the method
+     * @param callback Called when the call completes (typically on the main thread)
+     * @param timeout Timeout for replica acquisition and for the remote call (default 20000ms)
+     */
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                const QVariantList& args,
+                                std::function<void(QVariant)> callback,
+                                Timeout timeout = Timeout());
+
+    /**
+     * @brief Invoke a remote method asynchronously with a single argument
+     */
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                const QVariant& arg, std::function<void(QVariant)> callback, Timeout timeout = Timeout());
+
+    /**
+     * @brief Invoke a remote method asynchronously with two arguments
+     */
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                const QVariant& arg1, const QVariant& arg2, std::function<void(QVariant)> callback, Timeout timeout = Timeout());
+
+    /**
+     * @brief Invoke a remote method asynchronously with three arguments
+     */
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                                std::function<void(QVariant)> callback, Timeout timeout = Timeout());
+
+    /**
+     * @brief Invoke a remote method asynchronously with four arguments
+     */
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                                const QVariant& arg4,
+                                std::function<void(QVariant)> callback, Timeout timeout = Timeout());
+
+    /**
+     * @brief Invoke a remote method asynchronously with five arguments
+     */
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                                const QVariant& arg4, const QVariant& arg5,
+                                std::function<void(QVariant)> callback, Timeout timeout = Timeout());
+
+    /**
      * @brief Register an event listener for the specified event name
      * @param originObject The object that will emit the event
      * @param destinationObject The object that will receive the event
