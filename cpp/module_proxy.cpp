@@ -323,13 +323,29 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
         qDebug() << "  Param" << i << ":" << method.parameterMetaType(i).name();
     }
 
+    // Coerce args to the types the method actually declares.
+    QVariantList coercedArgs = args;
+    for (int i = 0; i < method.parameterCount() && i < coercedArgs.size(); ++i) {
+        QMetaType paramType = method.parameterMetaType(i);
+        if (coercedArgs[i].metaType() != paramType) {
+            QVariant converted = coercedArgs[i];
+            if (converted.convert(paramType)) {
+                coercedArgs[i] = converted;
+            } else {
+                qWarning() << "ModuleProxy: Could not convert arg" << i
+                           << "from" << coercedArgs[i].typeName()
+                           << "to" << paramType.name();
+            }
+        }
+    }
+
     // Handle different return types
     bool success = false;
     QVariant result;
 
     if (returnType == QMetaType::fromType<void>()) {
         // Void method - no return value expected
-        success = invokeMethodByArgCount(m_module, methodName, args, nullptr, nullptr);
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, nullptr, nullptr);
         if (success) {
             result = QVariant(true); // Return true to indicate success
         }
@@ -337,7 +353,7 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
         // Bool return type
         qDebug() << "ModuleProxy: Invoking bool method" << methodName;
         bool boolResult = false;
-        success = invokeMethodByArgCount(m_module, methodName, args, &boolResult, "bool");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &boolResult, "bool");
         qDebug() << "ModuleProxy: Bool method invocation result:" << success << "value:" << boolResult;
         if (success) {
             result = QVariant(boolResult);
@@ -345,14 +361,14 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
     } else if (returnType == QMetaType::fromType<int>()) {
         // Int return type
         int intResult = 0;
-        success = invokeMethodByArgCount(m_module, methodName, args, &intResult, "int");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &intResult, "int");
         if (success) {
             result = QVariant(intResult);
         }
     } else if (returnType == QMetaType::fromType<QString>()) {
         // QString return type
         QString stringResult;
-        success = invokeMethodByArgCount(m_module, methodName, args, &stringResult, "QString");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &stringResult, "QString");
         if (success) {
             result = QVariant(stringResult);
         }
@@ -360,7 +376,7 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
     else if (returnType == QMetaType::fromType<LogosResult>()) {
        // LogosResult return type
         LogosResult logosResult;
-        success = invokeMethodByArgCount(m_module, methodName, args, &logosResult, "LogosResult");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &logosResult, "LogosResult");
          if (success) {
              result = QVariant::fromValue(logosResult);
         }
@@ -368,7 +384,7 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
     else if (returnType == QMetaType::fromType<QVariant>()) {
         // QVariant return type
         QVariant variantResult;
-        success = invokeMethodByArgCount(m_module, methodName, args, &variantResult, "QVariant");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &variantResult, "QVariant");
         if (success) {
             result = variantResult;
         }
@@ -376,7 +392,7 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
         // QJsonArray return type
         qDebug() << "ModuleProxy: Invoking QJsonArray method" << methodName;
         QJsonArray jsonArrayResult;
-        success = invokeMethodByArgCount(m_module, methodName, args, &jsonArrayResult, "QJsonArray");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &jsonArrayResult, "QJsonArray");
         qDebug() << "ModuleProxy: QJsonArray method invocation result:" << success << "array size:" << jsonArrayResult.size();
         if (success) {
             result = QVariant(jsonArrayResult);
@@ -385,7 +401,7 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
         // QStringList return type
         qDebug() << "ModuleProxy: Invoking QStringList method" << methodName;
         QStringList stringListResult;
-        success = invokeMethodByArgCount(m_module, methodName, args, &stringListResult, "QStringList");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &stringListResult, "QStringList");
         qDebug() << "ModuleProxy: QStringList method invocation result:" << success << "list size:" << stringListResult.size();
         if (success) {
             result = QVariant(stringListResult);
