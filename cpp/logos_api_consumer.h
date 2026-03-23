@@ -43,20 +43,19 @@ public:
     QString registryUrl() const;
     bool reconnect();
 
-    QVariant invokeRemoteMethod(const QString& authToken, const QString& objectName, const QString& methodName, 
+    QVariant invokeRemoteMethod(const QString& authToken, const QString& objectName, const QString& methodName,
                              const QVariantList& args = QVariantList(), Timeout timeout = Timeout());
 
-    /** Callback type for async remote method results. Receives the result QVariant (invalid on error/timeout). */
     using AsyncResultCallback = std::function<void(QVariant)>;
 
     /**
-     * @brief Invoke a remote method asynchronously; result or error is delivered via callback
+     * @brief Invoke a remote method asynchronously; result is delivered via callback
      * @param authToken Authentication token for the operation
      * @param objectName The name of the remote object
      * @param methodName The name of the method to call
      * @param args Arguments to pass to the method
-     * @param callback Called when the call completes (on the same thread as this consumer, typically main)
-     * @param timeout Timeout for replica acquisition and for the remote call (default 20000ms)
+     * @param callback Called when the call completes (on the caller's thread via QueuedConnection)
+     * @param timeout Timeout for replica acquisition and for the remote call
      */
     void invokeRemoteMethodAsync(const QString& authToken, const QString& objectName, const QString& methodName,
                                  const QVariantList& args,

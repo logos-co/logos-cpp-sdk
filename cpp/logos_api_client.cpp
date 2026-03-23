@@ -87,6 +87,61 @@ QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QSt
     return invokeRemoteMethod(objectName, methodName, QVariantList() << arg1 << arg2 << arg3 << arg4 << arg5, timeout);
 }
 
+void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                              const QVariantList& args, AsyncResultCallback callback,
+                                              Timeout timeout)
+{
+    if (!callback) return;
+
+    QString token = getToken(objectName);
+
+    if (token.isEmpty() && objectName != "capability_module") {
+        LogosAPIConsumer* packageManagerConsumer = new LogosAPIConsumer("capability_module", m_origin_module, m_token_manager, this);
+        QString capabilityToken = getToken("capability_module");
+        QVariant result = packageManagerConsumer->invokeRemoteMethod(capabilityToken, "capability_module", "requestModule", QVariantList() << m_origin_module << objectName, timeout);
+        token = result.toString();
+    }
+
+    m_consumer->invokeRemoteMethodAsync(token, objectName, methodName, args, std::move(callback), timeout);
+}
+
+void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                              const QVariant& arg, AsyncResultCallback callback,
+                                              Timeout timeout)
+{
+    invokeRemoteMethodAsync(objectName, methodName, QVariantList() << arg, std::move(callback), timeout);
+}
+
+void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                              const QVariant& arg1, const QVariant& arg2,
+                                              AsyncResultCallback callback, Timeout timeout)
+{
+    invokeRemoteMethodAsync(objectName, methodName, QVariantList() << arg1 << arg2, std::move(callback), timeout);
+}
+
+void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                              const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                                              AsyncResultCallback callback, Timeout timeout)
+{
+    invokeRemoteMethodAsync(objectName, methodName, QVariantList() << arg1 << arg2 << arg3, std::move(callback), timeout);
+}
+
+void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                              const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                                              const QVariant& arg4, AsyncResultCallback callback,
+                                              Timeout timeout)
+{
+    invokeRemoteMethodAsync(objectName, methodName, QVariantList() << arg1 << arg2 << arg3 << arg4, std::move(callback), timeout);
+}
+
+void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                              const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                                              const QVariant& arg4, const QVariant& arg5,
+                                              AsyncResultCallback callback, Timeout timeout)
+{
+    invokeRemoteMethodAsync(objectName, methodName, QVariantList() << arg1 << arg2 << arg3 << arg4 << arg5, std::move(callback), timeout);
+}
+
 void LogosAPIClient::onEvent(LogosObject* originObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)
 {
     m_consumer->onEvent(originObject, eventName, std::move(callback));

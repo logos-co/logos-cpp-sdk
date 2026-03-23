@@ -54,9 +54,37 @@ public:
                              const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, 
                              const QVariant& arg4, Timeout timeout = Timeout());
 
-    QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, 
-                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, 
+    QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName,
+                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
                              const QVariant& arg4, const QVariant& arg5, Timeout timeout = Timeout());
+
+    using AsyncResultCallback = std::function<void(QVariant)>;
+
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                 const QVariantList& args, AsyncResultCallback callback,
+                                 Timeout timeout = Timeout());
+
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                 const QVariant& arg, AsyncResultCallback callback,
+                                 Timeout timeout = Timeout());
+
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                 const QVariant& arg1, const QVariant& arg2,
+                                 AsyncResultCallback callback, Timeout timeout = Timeout());
+
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                 const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                                 AsyncResultCallback callback, Timeout timeout = Timeout());
+
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                 const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                                 const QVariant& arg4, AsyncResultCallback callback,
+                                 Timeout timeout = Timeout());
+
+    void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
+                                 const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                                 const QVariant& arg4, const QVariant& arg5,
+                                 AsyncResultCallback callback, Timeout timeout = Timeout());
 
     /**
      * @brief Register an event listener via LogosObject's callback mechanism

@@ -10,6 +10,7 @@
 #include <QDebug>
 #include <QUrl>
 #include <QMetaObject>
+#include <QTimer>
 #include <QTime>
 
 LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
@@ -77,6 +78,29 @@ QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QS
     QVariant result = plugin->callMethod(authToken, methodName, args, timeout.ms);
     plugin->release();
     return result;
+}
+
+void LogosAPIConsumer::invokeRemoteMethodAsync(const QString& authToken, const QString& objectName, const QString& methodName,
+                                                const QVariantList& args,
+                                                AsyncResultCallback callback,
+                                                Timeout timeout)
+{
+    if (!callback) {
+        qWarning() << "LogosAPIConsumer: invokeRemoteMethodAsync called with null callback";
+        return;
+    }
+
+    LogosObject* plugin = m_transport->requestObject(objectName, timeout.ms);
+    if (!plugin) {
+        qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object:" << objectName;
+        QTimer::singleShot(0, this, [callback]() { callback(QVariant()); });
+        return;
+    }
+
+    qDebug() << "[LogosObject] LogosAPIConsumer: async calling via LogosObject::callMethod" << methodName;
+    QVariant result = plugin->callMethod(authToken, methodName, args, timeout.ms);
+    plugin->release();
+    QTimer::singleShot(0, this, [callback, result]() { callback(result); });
 }
 
 void LogosAPIConsumer::onEvent(LogosObject* originObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)
