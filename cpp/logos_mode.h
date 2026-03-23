@@ -8,10 +8,12 @@
  * 
  * - Remote: Uses QRemoteObjects for inter-process communication (desktop apps)
  * - Local: Uses in-process PluginRegistry (mobile apps, single process)
+ * - Mock: Uses in-memory mock transport for unit testing
  */
 enum class LogosMode {
     Remote,  // Default: Use QRemoteObjects (IPC)
-    Local    // Use in-process PluginRegistry
+    Local,   // Use in-process PluginRegistry
+    Mock     // Use in-memory mock transport for unit testing
 };
 
 /**
@@ -56,7 +58,10 @@ namespace LogosModeConfig {
      */
     inline void setMode(LogosMode mode) {
         modeStorage() = mode;
-        qDebug() << "LogosModeConfig: Mode set to" << (mode == LogosMode::Local ? "Local" : "Remote");
+        QString modeName = (mode == LogosMode::Local) ? "Local"
+                         : (mode == LogosMode::Mock)  ? "Mock"
+                                                       : "Remote";
+        qDebug() << "LogosModeConfig: Mode set to" << modeName;
     }
 
     /**
@@ -81,6 +86,14 @@ namespace LogosModeConfig {
      */
     inline bool isRemote() {
         return modeStorage() == LogosMode::Remote;
+    }
+
+    /**
+     * @brief Check if the SDK is in Mock mode
+     * @return true if Mock mode, false otherwise
+     */
+    inline bool isMock() {
+        return modeStorage() == LogosMode::Mock;
     }
 
 }

@@ -6,77 +6,57 @@
 #include <QVariant>
 #include <QVariantList>
 #include <QMap>
+#include <memory>
 
-class QRemoteObjectRegistryHost;
+class LogosTransportHost;
+class LogosObject;
 class ModuleProxy;
-
-#include "logos_mode.h"
+class LogosProviderObject;
+class QtProviderObject;
 
 /**
- * @brief LogosAPIProvider handles registering objects for remote access
+ * @brief LogosAPIProvider handles registering objects for access by consumers
  * 
- * This class is responsible for the provider/server side functionality:
- * - Creating registry hosts
- * - Registering objects for remote access
- * - Handling event responses
+ * Supports two registration paths:
+ *   1. registerObject(name, QObject*)           — wraps in QtProviderObject, then ModuleProxy
+ *   2. registerObject(name, LogosProviderObject*) — wraps directly in ModuleProxy
+ * Both paths converge at ModuleProxy -> transport.
  */
 class LogosAPIProvider : public QObject
 {
     Q_OBJECT
 
 public:
-    /**
-     * @brief Construct a new LogosAPIProvider
-     * @param module_name The name of this module
-     * @param parent Parent QObject
-     */
     explicit LogosAPIProvider(const QString& module_name, QObject *parent = nullptr);
-    
-    /**
-     * @brief Destructor - cleans up registry host
-     */
     ~LogosAPIProvider();
 
     /**
-     * @brief Register an object to be available for remote access
-     * @param name The name to register the object under
-     * @param object The object to register
-     * @param authToken Authentication token for the object
-     * @return true if registration successful, false otherwise
+     * @brief Register a legacy QObject-based plugin.
+     * Wraps in QtProviderObject, then ModuleProxy.
      */
     bool registerObject(const QString& name, QObject* object);
 
     /**
-     * @brief Get the registry URL for this provider
-     * @return QString containing the registry URL
+     * @brief Register a new-API LogosProviderObject plugin.
+     * Wraps directly in ModuleProxy.
      */
-    QString registryUrl() const;
+    bool registerObject(const QString& name, LogosProviderObject* provider);
 
-    /**
-     * @brief Save a token from a module via the proxy
-     * @param from_module_name The name of the module providing the token
-     * @param token The token to save
-     * @return bool true if token was saved successfully, false otherwise
-     */
+    QString registryUrl() const;
     bool saveToken(const QString& from_module_name, const QString& token);
 
 public slots:
-    /**
-     * @brief Handle event responses from objects
-     * @param replica The replica object that should receive the event
-     * @param eventName The name of the event
-     * @param data The event data
-     */
-    void onEventResponse(QObject* replica, const QString& eventName, const QVariantList& data);
+    void onEventResponse(LogosObject* object, const QString& eventName, const QVariantList& data);
 
 private:
-    QRemoteObjectRegistryHost* m_registryHost;
+    bool publishProvider(const QString& name, LogosProviderObject* provider);
+
+    std::unique_ptr<LogosTransportHost> m_transport;
     QString m_registryUrl;
     QMap<QString, QString> m_tokens;
     ModuleProxy* m_moduleProxy;
+    QtProviderObject* m_qtProviderObject;
     QString m_registeredObjectName;
-
-
 };
 
-#endif // LOGOS_API_PROVIDER_H 
+#endif // LOGOS_API_PROVIDER_H

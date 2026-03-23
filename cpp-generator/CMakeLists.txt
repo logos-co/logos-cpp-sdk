@@ -17,6 +17,7 @@ target_link_libraries(logos-cpp-generator PRIVATE Qt${QT_VERSION_MAJOR}::Core)
 
 target_include_directories(logos-cpp-generator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../cpp
 )
 
 # Output directories
