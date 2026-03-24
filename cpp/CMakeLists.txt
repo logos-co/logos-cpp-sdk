@@ -51,6 +51,12 @@ set(SDK_SOURCES
     implementations/mock/mock_transport.h
     implementations/mock/mock_registry.h
     implementations/mock/logos_mock.h
+    logos_json_utils.cpp
+    logos_json_utils.h
+    logos_core_client.cpp
+    logos_core_client.h
+    logos_sdk_c.cpp
+    logos_sdk_c.h
 )
 
 # Create the SDK library as STATIC instead of SHARED
@@ -98,6 +104,9 @@ install(FILES
     logos_transport_factory.h
     logos_registry.h
     logos_registry_factory.h
+    logos_json_utils.h
+    logos_core_client.h
+    logos_sdk_c.h
     DESTINATION include
 )
 
