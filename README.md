@@ -62,6 +62,21 @@ The nix build system is organized into modular files in the `/nix` directory:
 - `nix/bin.nix` - Generator binary compilation
 - `nix/lib.nix` - SDK library compilation
 - `nix/include.nix` - Header installation
+- `nix/tests.nix` - Test suite (build + run via `nix build '.#tests'`)
+
+#### Run Tests
+
+```bash
+# Build and run all tests (build fails if any test fails)
+nix build '.#tests'
+```
+
+The test binaries are available in `result/bin/` and can be re-run with filters:
+
+```bash
+./result/bin/sdk_tests --gtest_filter="LogosResultTest.*"
+./result/bin/generator_tests --gtest_filter="*PascalCase*"
+```
 
 ### Manual Build
 
