@@ -10,6 +10,18 @@ add_executable(sdk_tests
     test_logos_mode.cpp
     test_logos_mock_setup.cpp
     test_logos_api_client_mock.cpp
+    test_logos_api.cpp
+    test_logos_api_client_overloads.cpp
+    test_transport_factory.cpp
+    test_registry_factory.cpp
+    test_plugin_registry.cpp
+    test_logos_instance.cpp
+    test_logos_provider_base.cpp
+    test_module_proxy.cpp
+    test_logos_api_provider.cpp
+    test_mock_transport.cpp
+    test_local_transport_integration.cpp
+    test_event_system.cpp
 )
 
 target_link_libraries(sdk_tests PRIVATE
