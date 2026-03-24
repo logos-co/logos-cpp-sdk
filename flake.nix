@@ -22,6 +22,7 @@
           bin = import ./nix/bin.nix { inherit pkgs common src; };
           lib = import ./nix/lib.nix { inherit pkgs common src; };
           include = import ./nix/include.nix { inherit pkgs common src; };
+          tests = import ./nix/tests.nix { inherit pkgs common src; };
           
           # Combined SDK package
           sdk = pkgs.symlinkJoin {
@@ -34,6 +35,7 @@
           logos-cpp-bin = bin;
           logos-cpp-lib = lib;
           logos-cpp-include = include;
+          inherit tests;
           
           # Combined outputs (for backward compatibility)
           logos-cpp-sdk = sdk;
@@ -54,6 +56,7 @@
           buildInputs = [
             pkgs.qt6.qtbase
             pkgs.qt6.qtremoteobjects
+            pkgs.gtest
           ];
         };
       });
