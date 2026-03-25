@@ -10,6 +10,8 @@ TEST(MapParamTypeTest, KnownTypes)
     EXPECT_EQ(mapParamType("QString"), "QString");
     EXPECT_EQ(mapParamType("QStringList"), "QStringList");
     EXPECT_EQ(mapParamType("QJsonArray"), "QJsonArray");
+    EXPECT_EQ(mapParamType("QVariantList"), "QVariantList");
+    EXPECT_EQ(mapParamType("QVariantMap"), "QVariantMap");
     EXPECT_EQ(mapParamType("QVariant"), "QVariant");
     EXPECT_EQ(mapParamType("void"), "void");
 }

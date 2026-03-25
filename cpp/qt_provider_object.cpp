@@ -152,6 +152,10 @@ namespace {
             INVOKE_METHOD_WITH_RETURN(QVariant, QVariant);
         } else if (strcmp(returnTypeName, "QJsonArray") == 0) {
             INVOKE_METHOD_WITH_RETURN(QJsonArray, QJsonArray);
+        } else if (strcmp(returnTypeName, "QVariantList") == 0) {
+            INVOKE_METHOD_WITH_RETURN(QVariantList, QVariantList);
+        } else if (strcmp(returnTypeName, "QVariantMap") == 0) {
+            INVOKE_METHOD_WITH_RETURN(QVariantMap, QVariantMap);
         } else if (strcmp(returnTypeName, "QStringList") == 0) {
             INVOKE_METHOD_WITH_RETURN(QStringList, QStringList);
         } else {
@@ -300,6 +304,14 @@ QVariant QtProviderObject::callMethod(const QString& methodName, const QVariantL
         QJsonArray v;
         success = invokeMethodByArgCount(m_module, methodName, args, &v, "QJsonArray");
         if (success) result = QVariant(v);
+    } else if (returnType == QMetaType::fromType<QVariantList>()) {
+        QVariantList v;
+        success = invokeMethodByArgCount(m_module, methodName, args, &v, "QVariantList");
+        if (success) result = QVariant::fromValue(v);
+    } else if (returnType == QMetaType::fromType<QVariantMap>()) {
+        QVariantMap v;
+        success = invokeMethodByArgCount(m_module, methodName, args, &v, "QVariantMap");
+        if (success) result = QVariant::fromValue(v);
     } else if (returnType == QMetaType::fromType<QStringList>()) {
         QStringList v;
         success = invokeMethodByArgCount(m_module, methodName, args, &v, "QStringList");

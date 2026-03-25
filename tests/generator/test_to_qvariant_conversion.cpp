@@ -36,6 +36,16 @@ TEST(ToQVariantConversionTest, QJsonArray)
     EXPECT_EQ(toQVariantConversion("QJsonArray", "arg"), "qvariant_cast<QJsonArray>(arg)");
 }
 
+TEST(ToQVariantConversionTest, QVariantList)
+{
+    EXPECT_EQ(toQVariantConversion("QVariantList", "v"), "v.toList()");
+}
+
+TEST(ToQVariantConversionTest, QVariantMap)
+{
+    EXPECT_EQ(toQVariantConversion("QVariantMap", "v"), "v.toMap()");
+}
+
 TEST(ToQVariantConversionTest, QVariantPassthrough)
 {
     EXPECT_EQ(toQVariantConversion("QVariant", "v"), "v");

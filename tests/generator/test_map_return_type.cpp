@@ -10,6 +10,8 @@ TEST(MapReturnTypeTest, KnownTypes)
     EXPECT_EQ(mapReturnType("QString"), "QString");
     EXPECT_EQ(mapReturnType("QStringList"), "QStringList");
     EXPECT_EQ(mapReturnType("QJsonArray"), "QJsonArray");
+    EXPECT_EQ(mapReturnType("QVariantList"), "QVariantList");
+    EXPECT_EQ(mapReturnType("QVariantMap"), "QVariantMap");
     EXPECT_EQ(mapReturnType("QVariant"), "QVariant");
     EXPECT_EQ(mapReturnType("LogosResult"), "LogosResult");
 }
