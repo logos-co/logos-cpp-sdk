@@ -38,6 +38,9 @@ add_executable(sdk_tests
     test_local_transport_integration.cpp
     test_event_system.cpp
     test_provider_dispatch.cpp
+    test_logos_json_utils.cpp
+    test_logos_core_client.cpp
+    test_logos_sdk_c.cpp
     fixtures/sample_provider.cpp
     ${GENERATED_DISPATCH}
 )
