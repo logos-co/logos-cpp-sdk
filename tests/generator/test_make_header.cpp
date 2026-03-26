@@ -78,6 +78,8 @@ TEST(MakeHeaderTest, ContainsIncludes)
     EXPECT_TRUE(h.contains("#include \"logos_api.h\""));
     EXPECT_TRUE(h.contains("#include \"logos_api_client.h\""));
     EXPECT_TRUE(h.contains("#include \"logos_object.h\""));
+    EXPECT_TRUE(h.contains("#include <QVariantList>"));
+    EXPECT_TRUE(h.contains("#include <QVariantMap>"));
 }
 
 TEST(MakeHeaderTest, ContainsEventCallbackTypedefs)
@@ -138,4 +140,82 @@ TEST(MakeHeaderTest, ConstRefForStringParams)
 
     QString h = makeHeader("mod", "Mod", methods);
     EXPECT_TRUE(h.contains("const QString& name"));
+}
+
+TEST(MakeHeaderTest, ConstRefForQVariantListParam)
+{
+    QJsonArray methods;
+    {
+        QJsonObject m;
+        m["name"] = "process";
+        m["returnType"] = "void";
+        m["isInvokable"] = true;
+        QJsonArray params;
+        QJsonObject p;
+        p["type"] = "QVariantList";
+        p["name"] = "items";
+        params.append(p);
+        m["parameters"] = params;
+        methods.append(m);
+    }
+
+    QString h = makeHeader("mod", "Mod", methods);
+    EXPECT_TRUE(h.contains("const QVariantList& items"));
+}
+
+TEST(MakeHeaderTest, ConstRefForQVariantMapParam)
+{
+    QJsonArray methods;
+    {
+        QJsonObject m;
+        m["name"] = "update";
+        m["returnType"] = "void";
+        m["isInvokable"] = true;
+        QJsonArray params;
+        QJsonObject p;
+        p["type"] = "QVariantMap";
+        p["name"] = "data";
+        params.append(p);
+        m["parameters"] = params;
+        methods.append(m);
+    }
+
+    QString h = makeHeader("mod", "Mod", methods);
+    EXPECT_TRUE(h.contains("const QVariantMap& data"));
+}
+
+TEST(MakeHeaderTest, QVariantListAsyncOverload)
+{
+    QJsonArray methods;
+    {
+        QJsonObject m;
+        m["name"] = "getItems";
+        m["returnType"] = "QVariantList";
+        m["isInvokable"] = true;
+        m["parameters"] = QJsonArray();
+        methods.append(m);
+    }
+
+    QString h = makeHeader("mod", "Mod", methods);
+    EXPECT_TRUE(h.contains("QVariantList getItems()"));
+    EXPECT_TRUE(h.contains("getItemsAsync("));
+    EXPECT_TRUE(h.contains("std::function<void(QVariantList)> callback"));
+}
+
+TEST(MakeHeaderTest, QVariantMapAsyncOverload)
+{
+    QJsonArray methods;
+    {
+        QJsonObject m;
+        m["name"] = "getData";
+        m["returnType"] = "QVariantMap";
+        m["isInvokable"] = true;
+        m["parameters"] = QJsonArray();
+        methods.append(m);
+    }
+
+    QString h = makeHeader("mod", "Mod", methods);
+    EXPECT_TRUE(h.contains("QVariantMap getData()"));
+    EXPECT_TRUE(h.contains("getDataAsync("));
+    EXPECT_TRUE(h.contains("std::function<void(QVariantMap)> callback"));
 }

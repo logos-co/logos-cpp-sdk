@@ -125,6 +125,82 @@ TEST(MakeSourceTest, QJsonArrayReturn)
     EXPECT_TRUE(src.contains("qvariant_cast<QJsonArray>(_result)"));
 }
 
+TEST(MakeSourceTest, QVariantListReturn)
+{
+    QJsonArray methods;
+    methods.append(makeMethod("getItems", "QVariantList", 0));
+    QString src = makeSource("mod", "Mod", "mod.h", methods);
+    EXPECT_TRUE(src.contains("return _result.toList()"));
+}
+
+TEST(MakeSourceTest, QVariantMapReturn)
+{
+    QJsonArray methods;
+    methods.append(makeMethod("getData", "QVariantMap", 0));
+    QString src = makeSource("mod", "Mod", "mod.h", methods);
+    EXPECT_TRUE(src.contains("return _result.toMap()"));
+}
+
+TEST(MakeSourceTest, QVariantListAsync)
+{
+    QJsonArray methods;
+    methods.append(makeMethod("getItems", "QVariantList", 0));
+    QString src = makeSource("mod", "Mod", "mod.h", methods);
+    EXPECT_TRUE(src.contains("Mod::getItemsAsync("));
+    EXPECT_TRUE(src.contains("std::function<void(QVariantList)> callback"));
+    EXPECT_TRUE(src.contains("QVariantList()"));
+}
+
+TEST(MakeSourceTest, QVariantMapAsync)
+{
+    QJsonArray methods;
+    methods.append(makeMethod("getData", "QVariantMap", 0));
+    QString src = makeSource("mod", "Mod", "mod.h", methods);
+    EXPECT_TRUE(src.contains("Mod::getDataAsync("));
+    EXPECT_TRUE(src.contains("std::function<void(QVariantMap)> callback"));
+    EXPECT_TRUE(src.contains("QVariantMap()"));
+}
+
+TEST(MakeSourceTest, QVariantListConstRefParam)
+{
+    QJsonArray methods;
+    {
+        QJsonObject m;
+        m["name"] = "process";
+        m["returnType"] = "void";
+        m["isInvokable"] = true;
+        QJsonArray params;
+        QJsonObject p;
+        p["type"] = "QVariantList";
+        p["name"] = "items";
+        params.append(p);
+        m["parameters"] = params;
+        methods.append(m);
+    }
+    QString src = makeSource("mod", "Mod", "mod.h", methods);
+    EXPECT_TRUE(src.contains("const QVariantList& items"));
+}
+
+TEST(MakeSourceTest, QVariantMapConstRefParam)
+{
+    QJsonArray methods;
+    {
+        QJsonObject m;
+        m["name"] = "update";
+        m["returnType"] = "void";
+        m["isInvokable"] = true;
+        QJsonArray params;
+        QJsonObject p;
+        p["type"] = "QVariantMap";
+        p["name"] = "data";
+        params.append(p);
+        m["parameters"] = params;
+        methods.append(m);
+    }
+    QString src = makeSource("mod", "Mod", "mod.h", methods);
+    EXPECT_TRUE(src.contains("const QVariantMap& data"));
+}
+
 TEST(MakeSourceTest, LogosResultReturn)
 {
     QJsonArray methods;

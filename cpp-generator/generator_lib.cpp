@@ -34,7 +34,7 @@ QString mapParamType(const QString& qtType)
 {
     const QString base = normalizeType(qtType);
     static const QSet<QString> known = {
-        "void","bool","int","double","float","QString","QStringList","QJsonArray","QVariant"
+        "void","bool","int","double","float","QString","QStringList","QJsonArray","QVariantList","QVariantMap","QVariant"
     };
     if (known.contains(base)) return base;
     // Fallback to QVariant for unknown types
@@ -46,7 +46,7 @@ QString mapReturnType(const QString& qtType)
     const QString base = normalizeType(qtType);
     if (base.isEmpty() || base == "void") return QString("void");
     static const QSet<QString> known = {
-        "bool","int","double","float","QString","QStringList","QJsonArray","QVariant","LogosResult"
+        "bool","int","double","float","QString","QStringList","QJsonArray","QVariantList","QVariantMap","QVariant","LogosResult"
     };
     if (known.contains(base)) return base;
     return QString("QVariant");
@@ -61,6 +61,8 @@ QString toQVariantConversion(const QString& type, const QString& argExpr)
     if (type == "QString") return argExpr + ".toString()";
     if (type == "QStringList") return argExpr + ".toStringList()";
     if (type == "QJsonArray") return "qvariant_cast<QJsonArray>(" + argExpr + ")";
+    if (type == "QVariantList") return argExpr + ".toList()";
+    if (type == "QVariantMap") return argExpr + ".toMap()";
     if (type == "QVariant") return argExpr;
     if (type == "LogosResult") return argExpr + ".value<LogosResult>()";
     return argExpr + ".toString()";
@@ -75,6 +77,8 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
     s << "#include <QVariant>\n";
     s << "#include <QStringList>\n";
     s << "#include <QJsonArray>\n";
+    s << "#include <QVariantList>\n";
+    s << "#include <QVariantMap>\n";
     s << "#include <functional>\n";
     s << "#include <utility>\n";
     s << "#include \"logos_types.h\"\n";
@@ -114,7 +118,7 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
             QJsonObject p = params.at(i).toObject();
             QString pt = mapParamType(p.value("type").toString());
             QString pn = p.value("name").toString();
-            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray") {
+            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray" || pt == "QVariantList" || pt == "QVariantMap") {
                 s << "const " << pt << "& " << pn;
             } else {
                 s << pt << " " << pn;
@@ -129,7 +133,7 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
             QJsonObject p = params.at(i).toObject();
             QString pt = mapParamType(p.value("type").toString());
             QString pn = p.value("name").toString();
-            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray") {
+            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray" || pt == "QVariantList" || pt == "QVariantMap") {
                 s << "const " << pt << "& " << pn;
             } else {
                 s << pt << " " << pn;
@@ -233,7 +237,7 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
             QJsonObject p = params.at(i).toObject();
             QString pt = mapParamType(p.value("type").toString());
             QString pn = p.value("name").toString();
-            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray") {
+            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray" || pt == "QVariantList" || pt == "QVariantMap") {
                 s << "const " << pt << "& " << pn;
             } else {
                 s << pt << " " << pn;
@@ -301,6 +305,10 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
             s << "    return _result.toStringList();\n";
         } else if (ret == "QJsonArray") {
             s << "    return qvariant_cast<QJsonArray>(_result);\n";
+        } else if (ret == "QVariantList") {
+            s << "    return _result.toList();\n";
+        } else if (ret == "QVariantMap") {
+            s << "    return _result.toMap();\n";
         }else if (ret == "LogosResult") {
             s << "    return _result.value<LogosResult>();\n";
         } else { // QVariant
@@ -313,7 +321,7 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
             QJsonObject p = params.at(i).toObject();
             QString pt = mapParamType(p.value("type").toString());
             QString pn = p.value("name").toString();
-            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray") {
+            if (pt == "QString" || pt == "QStringList" || pt == "QJsonArray" || pt == "QVariantList" || pt == "QVariantMap") {
                 s << "const " << pt << "& " << pn;
             } else {
                 s << pt << " " << pn;
@@ -346,6 +354,8 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
             else if (ret == "QString") defaultVal = "QString()";
             else if (ret == "QStringList") defaultVal = "QStringList()";
             else if (ret == "QJsonArray") defaultVal = "QJsonArray()";
+            else if (ret == "QVariantList") defaultVal = "QVariantList()";
+            else if (ret == "QVariantMap") defaultVal = "QVariantMap()";
             else defaultVal = ret + "{}";
             if (ret == "QVariant") {
                 s << "        callback(v);\n";
