@@ -40,6 +40,7 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $out/bin
     cp build-tests/sdk/sdk_tests $out/bin/
     cp build-tests/generator/generator_tests $out/bin/
+    cp build-tests/experimental/experimental_tests $out/bin/
 
     runHook postInstall
   '';

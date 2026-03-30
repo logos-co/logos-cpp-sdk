@@ -30,3 +30,6 @@ jobs:
 
       - name: Run generator tests
         run: ./result/bin/generator_tests
+
+      - name: Run experimental generator tests
+        run: ./result/bin/experimental_tests
