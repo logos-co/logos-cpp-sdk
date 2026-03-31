@@ -33,3 +33,5 @@ jobs:
 
       - name: Run experimental generator tests
         run: ./result/bin/experimental_tests
+        env:
+          FIXTURES_DIR: ./result/fixtures

@@ -6,18 +6,22 @@
 #include <QTextStream>
 
 // Helper: find the fixtures directory.
-// During `ctest` in the nix sandbox, FIXTURES_DIR (set by CMake) points to the
-// source tree which still exists. When running the installed binary outside the
-// sandbox (e.g. CI), that path is gone — fall back to ../fixtures relative to
-// the binary, which is where nix/tests.nix copies them.
+// 1. FIXTURES_DIR env var — set by CI to point to installed fixtures
+// 2. FIXTURES_DIR compile define — set by CMake, works during ctest in nix sandbox
+// 3. ../fixtures relative to binary — nix install layout ($out/bin/ + $out/fixtures/)
 static QString fixturesDir()
 {
+    // Environment variable takes priority (set by CI or user)
+    QByteArray envDir = qgetenv("FIXTURES_DIR");
+    if (!envDir.isEmpty() && QDir(envDir).exists())
+        return QString::fromUtf8(envDir);
+
 #ifdef FIXTURES_DIR
     if (QDir(FIXTURES_DIR).exists())
         return QString(FIXTURES_DIR);
 #endif
+
     // Installed layout: $out/bin/experimental_tests + $out/fixtures/
-    // QCoreApplication::applicationDirPath() reads /proc/self/exe on Linux
     QString binDir = QCoreApplication::applicationDirPath();
     if (!binDir.isEmpty()) {
         QString installed = QDir::cleanPath(binDir + "/../fixtures");
