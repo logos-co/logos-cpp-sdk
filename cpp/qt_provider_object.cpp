@@ -107,6 +107,22 @@ namespace {
                     );
                     break;
                 }
+                case QMetaType::Double: {
+                    auto value = new double{arg.toDouble()};
+                    scopedArgs.emplace_back(
+                        Q_ARG(double, *value),
+                        [](const void* data) { delete static_cast<const double*>(data); }
+                    );
+                    break;
+                }
+                case QMetaType::Float: {
+                    auto value = new float{arg.toFloat()};
+                    scopedArgs.emplace_back(
+                        Q_ARG(float, *value),
+                        [](const void* data) { delete static_cast<const float*>(data); }
+                    );
+                    break;
+                }
                 case QMetaType::QString:
                 default: {
                     auto value = new QString{arg.toString()};
@@ -144,6 +160,10 @@ namespace {
             INVOKE_METHOD_WITH_RETURN(bool, bool);
         } else if (strcmp(returnTypeName, "int") == 0) {
             INVOKE_METHOD_WITH_RETURN(int, int);
+        } else if (strcmp(returnTypeName, "double") == 0) {
+            INVOKE_METHOD_WITH_RETURN(double, double);
+        } else if (strcmp(returnTypeName, "float") == 0) {
+            INVOKE_METHOD_WITH_RETURN(float, float);
         } else if (strcmp(returnTypeName, "QString") == 0) {
             INVOKE_METHOD_WITH_RETURN(QString, QString);
         } else if (strcmp(returnTypeName, "LogosResult") == 0) {
@@ -274,47 +294,72 @@ QVariant QtProviderObject::callMethod(const QString& methodName, const QVariantL
     QMetaMethod method = metaObject->method(methodIndex);
     QMetaType returnType = method.returnMetaType();
 
+    // Coerce args to the types the method actually declares.
+    QVariantList coercedArgs = args;
+    for (int i = 0; i < method.parameterCount() && i < coercedArgs.size(); ++i) {
+        QMetaType paramType = method.parameterMetaType(i);
+        if (coercedArgs[i].metaType() != paramType) {
+            QVariant converted = coercedArgs[i];
+            if (converted.convert(paramType)) {
+                coercedArgs[i] = converted;
+            } else {
+                qWarning() << "[LogosProviderObject] QtProviderObject: could not convert arg" << i
+                           << "from" << coercedArgs[i].typeName()
+                           << "to" << paramType.name()
+                           << "for method" << methodName;
+            }
+        }
+    }
+
     bool success = false;
     QVariant result;
 
     if (returnType == QMetaType::fromType<void>()) {
-        success = invokeMethodByArgCount(m_module, methodName, args, nullptr, nullptr);
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, nullptr, nullptr);
         if (success) result = QVariant(true);
     } else if (returnType == QMetaType::fromType<bool>()) {
         bool v = false;
-        success = invokeMethodByArgCount(m_module, methodName, args, &v, "bool");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "bool");
         if (success) result = QVariant(v);
     } else if (returnType == QMetaType::fromType<int>()) {
         int v = 0;
-        success = invokeMethodByArgCount(m_module, methodName, args, &v, "int");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "int");
+        if (success) result = QVariant(v);
+    } else if (returnType == QMetaType::fromType<double>()) {
+        double v = 0.0;
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "double");
+        if (success) result = QVariant(v);
+    } else if (returnType == QMetaType::fromType<float>()) {
+        float v = 0.0f;
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "float");
         if (success) result = QVariant(v);
     } else if (returnType == QMetaType::fromType<QString>()) {
         QString v;
-        success = invokeMethodByArgCount(m_module, methodName, args, &v, "QString");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "QString");
         if (success) result = QVariant(v);
     } else if (returnType == QMetaType::fromType<LogosResult>()) {
         LogosResult v;
-        success = invokeMethodByArgCount(m_module, methodName, args, &v, "LogosResult");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "LogosResult");
         if (success) result = QVariant::fromValue(v);
     } else if (returnType == QMetaType::fromType<QVariant>()) {
         QVariant v;
-        success = invokeMethodByArgCount(m_module, methodName, args, &v, "QVariant");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "QVariant");
         if (success) result = v;
     } else if (returnType == QMetaType::fromType<QJsonArray>()) {
         QJsonArray v;
-        success = invokeMethodByArgCount(m_module, methodName, args, &v, "QJsonArray");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "QJsonArray");
         if (success) result = QVariant(v);
     } else if (returnType == QMetaType::fromType<QVariantList>()) {
         QVariantList v;
-        success = invokeMethodByArgCount(m_module, methodName, args, &v, "QVariantList");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "QVariantList");
         if (success) result = QVariant::fromValue(v);
     } else if (returnType == QMetaType::fromType<QVariantMap>()) {
         QVariantMap v;
-        success = invokeMethodByArgCount(m_module, methodName, args, &v, "QVariantMap");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "QVariantMap");
         if (success) result = QVariant::fromValue(v);
     } else if (returnType == QMetaType::fromType<QStringList>()) {
         QStringList v;
-        success = invokeMethodByArgCount(m_module, methodName, args, &v, "QStringList");
+        success = invokeMethodByArgCount(m_module, methodName, coercedArgs, &v, "QStringList");
         if (success) result = QVariant(v);
     } else {
         qWarning() << "[LogosProviderObject] QtProviderObject: unsupported return type:"
