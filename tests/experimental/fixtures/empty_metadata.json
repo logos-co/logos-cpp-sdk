@@ -1,0 +1,8 @@
+{
+    "name": "empty_module",
+    "version": "0.0.1",
+    "description": "",
+    "type": "core",
+    "category": "",
+    "dependencies": []
+}

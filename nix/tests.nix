@@ -40,6 +40,11 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $out/bin
     cp build-tests/sdk/sdk_tests $out/bin/
     cp build-tests/generator/generator_tests $out/bin/
+    cp build-tests/experimental/experimental_tests $out/bin/
+
+    # Copy test fixtures needed by experimental_tests at runtime
+    mkdir -p $out/fixtures
+    cp tests/experimental/fixtures/* $out/fixtures/
 
     runHook postInstall
   '';
