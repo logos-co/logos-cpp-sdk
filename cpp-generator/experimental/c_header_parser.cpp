@@ -208,7 +208,7 @@ CHeaderParseResult parseCHeader(const QString& headerPath,
 
         // Skip reserved names — rename with "lib" prefix
         if (reservedNames.contains(methodName)) {
-            methodName = "lib" + methodName.at(0).toUpper() + methodName.mid(1);
+            methodName = QStringLiteral("lib") + methodName.at(0).toUpper() + methodName.mid(1);
         }
 
         // Parse return type
