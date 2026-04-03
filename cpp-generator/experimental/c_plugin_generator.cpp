@@ -166,6 +166,7 @@ QString cPluginMakeSource(const ModuleDecl& module,
     out += "void " + pluginName + "::initLogos(LogosAPI* logosAPIInstance)\n";
     out += "{\n";
     out += "    logosAPI = logosAPIInstance;\n";
+    out += "    qDebug() << \"" + pluginName + "::initLogos called, api=\" << (void*)logosAPIInstance << \"stored=\" << (void*)logosAPI;\n";
     out += "}\n\n";
 
     // Method implementations
