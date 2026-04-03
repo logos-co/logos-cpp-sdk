@@ -215,7 +215,7 @@ CHeaderParseResult parseCHeader(const QString& headerPath,
         TypeExpr retType = cTypeToLidl(retTypeStr);
 
         // Parse parameters
-        std::vector<ParamDecl> params;
+        QVector<ParamDecl> params;
         QStringList paramParts = splitParams(paramsStr);
         int argIdx = 0;
         for (const QString& p : paramParts) {
