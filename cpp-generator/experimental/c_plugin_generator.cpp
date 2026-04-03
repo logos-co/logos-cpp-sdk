@@ -162,10 +162,10 @@ QString cPluginMakeSource(const ModuleDecl& module,
     out += "    qDebug() << \"" + pluginName + ": destroyed\";\n";
     out += "}\n\n";
 
-    // initLogos
+    // initLogos — store the API pointer (required by QtProviderObject::callMethod)
     out += "void " + pluginName + "::initLogos(LogosAPI* logosAPIInstance)\n";
     out += "{\n";
-    out += "    Q_UNUSED(logosAPIInstance);\n";
+    out += "    logosAPI = logosAPIInstance;\n";
     out += "}\n\n";
 
     // Method implementations
