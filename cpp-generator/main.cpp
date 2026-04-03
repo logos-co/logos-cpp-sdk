@@ -2,6 +2,9 @@
 #include "experimental/lidl_gen_client.h"
 #include "experimental/lidl_gen_provider.h"
 #include "experimental/impl_header_parser.h"
+#include "experimental/c_header_parser.h"
+#include "experimental/c_plugin_generator.h"
+#include "experimental/lidl_serializer.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -15,13 +18,15 @@ int main(int argc, char* argv[])
     // since legacy_main creates its own.
     bool hasLidl = false;
     bool hasFromHeader = false;
+    bool hasFromCHeader = false;
     for (int i = 1; i < argc; ++i) {
         QString arg = QString::fromUtf8(argv[i]);
         if (arg == "--lidl") hasLidl = true;
         if (arg == "--from-header") hasFromHeader = true;
+        if (arg == "--from-c-header") hasFromCHeader = true;
     }
 
-    if (hasLidl || hasFromHeader) {
+    if (hasLidl || hasFromHeader || hasFromCHeader) {
         QCoreApplication app(argc, argv);
         QTextStream err(stderr);
         QTextStream out(stdout);
@@ -31,6 +36,100 @@ int main(int argc, char* argv[])
         const int outDirIdx = args.indexOf("--output-dir");
         if (outDirIdx != -1 && outDirIdx + 1 < args.size()) {
             outputDir = args.at(outDirIdx + 1);
+        }
+
+        // --from-c-header mode: parse plain C header → generate Qt plugin + LIDL
+        if (hasFromCHeader) {
+            const int fromIdx = args.indexOf("--from-c-header");
+            if (fromIdx + 1 >= args.size()) {
+                err << "Error: --from-c-header requires a path to the C header\n";
+                return 1;
+            }
+            QString headerPath = args.at(fromIdx + 1);
+
+            const int metadataIdx = args.indexOf("--metadata");
+            if (metadataIdx == -1 || metadataIdx + 1 >= args.size()) {
+                err << "Error: --from-c-header requires --metadata <metadata.json>\n";
+                return 1;
+            }
+            QString metadataPath = args.at(metadataIdx + 1);
+
+            const int backendIdx = args.indexOf("--backend");
+            if (backendIdx == -1 || backendIdx + 1 >= args.size()) {
+                err << "Error: --from-c-header requires --backend <qt>\n";
+                return 1;
+            }
+            QString backend = args.at(backendIdx + 1);
+
+            // Optional --prefix flag
+            QString prefix;
+            const int prefixIdx = args.indexOf("--prefix");
+            if (prefixIdx != -1 && prefixIdx + 1 < args.size()) {
+                prefix = args.at(prefixIdx + 1);
+            }
+
+            // Optional --c-header-include: the include path in generated code
+            QString cHeaderInclude;
+            const int inclIdx = args.indexOf("--c-header-include");
+            if (inclIdx != -1 && inclIdx + 1 < args.size()) {
+                cHeaderInclude = args.at(inclIdx + 1);
+            } else {
+                cHeaderInclude = QFileInfo(headerPath).fileName();
+            }
+
+            CHeaderParseResult pr = parseCHeader(headerPath, prefix, metadataPath, err);
+            if (pr.hasError()) {
+                err << "Error parsing C header: " << pr.error << "\n";
+                return 4;
+            }
+
+            const ModuleDecl& mod = pr.module;
+            QString genDirPath = outputDir.isEmpty()
+                ? QDir::current().filePath("generated")
+                : outputDir;
+            QDir().mkpath(genDirPath);
+
+            if (backend == "qt") {
+                // Generate plugin header
+                QString headerAbs = QDir(genDirPath).filePath(mod.name + "_plugin.h");
+                {
+                    QFile f(headerAbs);
+                    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                        err << "Failed to write plugin header: " << headerAbs << "\n";
+                        return 6;
+                    }
+                    f.write(cPluginMakeHeader(mod, cHeaderInclude, pr.prefix).toUtf8());
+                }
+
+                // Generate plugin source
+                QString sourceAbs = QDir(genDirPath).filePath(mod.name + "_plugin.cpp");
+                {
+                    QFile f(sourceAbs);
+                    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                        err << "Failed to write plugin source: " << sourceAbs << "\n";
+                        return 7;
+                    }
+                    f.write(cPluginMakeSource(mod, pr.prefix).toUtf8());
+                }
+
+                // Generate LIDL file for documentation
+                QString lidlAbs = QDir(genDirPath).filePath(mod.name + ".lidl");
+                {
+                    QFile f(lidlAbs);
+                    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                        f.write(lidlSerialize(mod).toUtf8());
+                    }
+                }
+
+                out << "Generated: " << headerAbs << "\n";
+                out << "Generated: " << sourceAbs << "\n";
+                out << "Generated: " << lidlAbs << "\n";
+                out.flush();
+                return 0;
+            }
+
+            err << "Error: --from-c-header currently only supports --backend qt\n";
+            return 1;
         }
 
         // --from-header mode: parse C++ impl header directly (no .lidl needed)
