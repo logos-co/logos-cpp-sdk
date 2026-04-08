@@ -37,6 +37,7 @@ add_executable(sdk_tests
     test_mock_transport.cpp
     test_local_transport_integration.cpp
     test_event_system.cpp
+    test_async_calls.cpp
     test_provider_dispatch.cpp
     fixtures/sample_provider.cpp
     ${GENERATED_DISPATCH}

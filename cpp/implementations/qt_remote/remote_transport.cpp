@@ -3,11 +3,15 @@
 #include <QRemoteObjectNode>
 #include <QRemoteObjectReplica>
 #include <QRemoteObjectPendingCall>
+#include <QRemoteObjectPendingCallWatcher>
+#include <QPointer>
+#include <QTimer>
 #include <QDebug>
 #include <QUrl>
 #include <QMetaObject>
 #include <QTime>
 #include <QJsonArray>
+#include <memory>
 
 // ── RemoteLogosObject ────────────────────────────────────────────────────────
 
@@ -87,6 +91,66 @@ public:
         }
 
         return pendingCall.returnValue();
+    }
+
+    void callMethodAsync(const QString& authToken,
+                         const QString& methodName,
+                         const QVariantList& args,
+                         int timeoutMs,
+                         AsyncResultCallback callback) override
+    {
+        if (!callback) return;
+        if (!m_replica) {
+            QTimer::singleShot(0, [callback]() { callback(QVariant()); });
+            return;
+        }
+
+        qDebug() << "[LogosObject] RemoteLogosObject::callMethodAsync" << methodName << "args:" << args.size();
+
+        QRemoteObjectPendingCall pendingCall;
+        bool success = QMetaObject::invokeMethod(
+            m_replica,
+            "callRemoteMethod",
+            Qt::DirectConnection,
+            Q_RETURN_ARG(QRemoteObjectPendingCall, pendingCall),
+            Q_ARG(QString, authToken),
+            Q_ARG(QString, methodName),
+            Q_ARG(QVariantList, args)
+        );
+
+        if (!success) {
+            qWarning() << "RemoteLogosObject: Failed to invoke callRemoteMethod on replica (async)";
+            QTimer::singleShot(0, [callback]() { callback(QVariant()); });
+            return;
+        }
+
+        auto handled = std::make_shared<bool>(false);
+        auto* watcher = new QRemoteObjectPendingCallWatcher(pendingCall);
+
+        // Success handler -- delivers result on the consumer's thread
+        QObject::connect(watcher, &QRemoteObjectPendingCallWatcher::finished,
+                         watcher, [callback, handled](QRemoteObjectPendingCallWatcher* w) {
+            if (*handled) { w->deleteLater(); return; }
+            *handled = true;
+            QVariant result;
+            if (w->error() == QRemoteObjectPendingCall::NoError) {
+                result = w->returnValue();
+            } else {
+                qWarning() << "RemoteLogosObject: async callMethod error:" << w->error();
+            }
+            callback(result);
+            w->deleteLater();
+        }, Qt::QueuedConnection);
+
+        // Timeout handler -- fires if the watcher hasn't finished in time
+        QPointer<QRemoteObjectPendingCallWatcher> weakWatcher(watcher);
+        QTimer::singleShot(timeoutMs, [weakWatcher, callback, handled]() {
+            if (*handled) return;
+            *handled = true;
+            qWarning() << "RemoteLogosObject: async callMethod timed out";
+            callback(QVariant());
+            if (!weakWatcher.isNull()) weakWatcher->deleteLater();
+        });
     }
 
     bool informModuleToken(const QString& authToken,

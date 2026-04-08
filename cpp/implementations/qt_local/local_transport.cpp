@@ -3,6 +3,7 @@
 #include "../../module_proxy.h"
 #include <QDebug>
 #include <QMetaObject>
+#include <QTimer>
 
 // ── LocalLogosObject ─────────────────────────────────────────────────────────
 
@@ -55,6 +56,24 @@ public:
         if (!m_proxy) return QVariant();
         qDebug() << "[LogosObject] LocalLogosObject::callMethod" << methodName << "args:" << args.size();
         return m_proxy->callRemoteMethod(authToken, methodName, args);
+    }
+
+    void callMethodAsync(const QString& authToken,
+                         const QString& methodName,
+                         const QVariantList& args,
+                         int /*timeoutMs*/,
+                         AsyncResultCallback callback) override
+    {
+        if (!callback) return;
+        if (!m_proxy) {
+            QTimer::singleShot(0, [callback]() { callback(QVariant()); });
+            return;
+        }
+        ModuleProxy* proxy = m_proxy;
+        QTimer::singleShot(0, [proxy, authToken, methodName, args, callback]() {
+            QVariant result = proxy->callRemoteMethod(authToken, methodName, args);
+            callback(result);
+        });
     }
 
     bool informModuleToken(const QString& authToken,

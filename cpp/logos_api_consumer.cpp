@@ -97,10 +97,12 @@ void LogosAPIConsumer::invokeRemoteMethodAsync(const QString& authToken, const Q
         return;
     }
 
-    qDebug() << "[LogosObject] LogosAPIConsumer: async calling via LogosObject::callMethod" << methodName;
-    QVariant result = plugin->callMethod(authToken, methodName, args, timeout.ms);
-    plugin->release();
-    QTimer::singleShot(0, this, [callback, result]() { callback(result); });
+    qDebug() << "[LogosObject] LogosAPIConsumer: async calling via LogosObject::callMethodAsync" << methodName;
+    plugin->callMethodAsync(authToken, methodName, args, timeout.ms,
+        [plugin, callback](QVariant result) {
+            plugin->release();
+            callback(result);
+        });
 }
 
 void LogosAPIConsumer::onEvent(LogosObject* originObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)
