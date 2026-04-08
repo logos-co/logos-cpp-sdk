@@ -12,6 +12,7 @@
 #include <QMetaObject>
 #include <QTimer>
 #include <QTime>
+#include <QPointer>
 
 LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
     : QObject(parent)
@@ -98,9 +99,15 @@ void LogosAPIConsumer::invokeRemoteMethodAsync(const QString& authToken, const Q
     }
 
     qDebug() << "[LogosObject] LogosAPIConsumer: async calling via LogosObject::callMethodAsync" << methodName;
+    // QPointer guards against use-after-free: if the consumer is destroyed
+    // before the transport callback fires, the callback is silently dropped.
+    // No re-queuing needed -- the transport already delivers on a deferred
+    // event-loop iteration (QTimer / QueuedConnection).
+    QPointer<LogosAPIConsumer> self(this);
     plugin->callMethodAsync(authToken, methodName, args, timeout.ms,
-        [plugin, callback](QVariant result) {
+        [plugin, callback, self](QVariant result) {
             plugin->release();
+            if (!self) return;
             callback(result);
         });
 }

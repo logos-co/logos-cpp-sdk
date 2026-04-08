@@ -4,14 +4,12 @@
 #include <QRemoteObjectReplica>
 #include <QRemoteObjectPendingCall>
 #include <QRemoteObjectPendingCallWatcher>
-#include <QPointer>
 #include <QTimer>
 #include <QDebug>
 #include <QUrl>
 #include <QMetaObject>
 #include <QTime>
 #include <QJsonArray>
-#include <memory>
 
 // ── RemoteLogosObject ────────────────────────────────────────────────────────
 
@@ -124,14 +122,17 @@ public:
             return;
         }
 
-        auto handled = std::make_shared<bool>(false);
         auto* watcher = new QRemoteObjectPendingCallWatcher(pendingCall);
+
+        // Timeout timer -- parented to the watcher so it is auto-deleted
+        // when the watcher is destroyed, preventing late timeout callbacks.
+        auto* timer = new QTimer(watcher);
+        timer->setSingleShot(true);
 
         // Success handler -- delivers result on the consumer's thread
         QObject::connect(watcher, &QRemoteObjectPendingCallWatcher::finished,
-                         watcher, [callback, handled](QRemoteObjectPendingCallWatcher* w) {
-            if (*handled) { w->deleteLater(); return; }
-            *handled = true;
+                         watcher, [callback, timer](QRemoteObjectPendingCallWatcher* w) {
+            timer->stop(); // cancel timeout
             QVariant result;
             if (w->error() == QRemoteObjectPendingCall::NoError) {
                 result = w->returnValue();
@@ -142,15 +143,14 @@ public:
             w->deleteLater();
         }, Qt::QueuedConnection);
 
-        // Timeout handler -- fires if the watcher hasn't finished in time
-        QPointer<QRemoteObjectPendingCallWatcher> weakWatcher(watcher);
-        QTimer::singleShot(timeoutMs, [weakWatcher, callback, handled]() {
-            if (*handled) return;
-            *handled = true;
+        // Timeout handler -- stops the watcher and delivers empty result
+        QObject::connect(timer, &QTimer::timeout, watcher, [watcher, callback]() {
             qWarning() << "RemoteLogosObject: async callMethod timed out";
             callback(QVariant());
-            if (!weakWatcher.isNull()) weakWatcher->deleteLater();
+            watcher->deleteLater(); // also destroys the timer (child)
         });
+
+        timer->start(timeoutMs);
     }
 
     bool informModuleToken(const QString& authToken,
