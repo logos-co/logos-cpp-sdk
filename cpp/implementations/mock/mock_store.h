@@ -1,11 +1,14 @@
 #ifndef MOCK_STORE_H
 #define MOCK_STORE_H
 
+#include <atomic>
 #include <QString>
 #include <QVariant>
 #include <QVariantList>
 #include <QList>
 #include <QMutex>
+
+class MockLogosObject;
 
 /**
  * @brief Records a single intercepted call to a mocked module method.
@@ -94,7 +97,18 @@ public:
     QVariantList lastArgs(const QString& module, const QString& method) const;
     QList<MockCallRecord> allCalls() const;
 
+    /**
+     * @brief When non-null, MockLogosObject::release() increments *counter exactly once.
+     *
+     * Used by sdk_tests to assert LogosAPIConsumer invokes the async user callback before
+     * calling plugin->release(). Cleared by reset().
+     */
+    void setMockObjectReleaseProbe(std::atomic<int>* counter);
+
 private:
+    friend class MockLogosObject;
+    void incrementMockObjectReleaseProbeIfSet();
+
     MockStore() = default;
     MockStore(const MockStore&) = delete;
     MockStore& operator=(const MockStore&) = delete;
@@ -102,6 +116,7 @@ private:
     mutable QMutex m_mutex;
     QList<MockExpectation> m_expectations;
     QList<MockCallRecord> m_calls;
+    std::atomic<int>* m_mockObjectReleaseProbe = nullptr;
 
     friend class ExpectationBuilder;
 };

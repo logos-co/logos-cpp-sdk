@@ -13,6 +13,20 @@ void MockStore::reset()
     QMutexLocker lock(&m_mutex);
     m_expectations.clear();
     m_calls.clear();
+    m_mockObjectReleaseProbe = nullptr;
+}
+
+void MockStore::setMockObjectReleaseProbe(std::atomic<int>* counter)
+{
+    QMutexLocker lock(&m_mutex);
+    m_mockObjectReleaseProbe = counter;
+}
+
+void MockStore::incrementMockObjectReleaseProbeIfSet()
+{
+    QMutexLocker lock(&m_mutex);
+    if (m_mockObjectReleaseProbe)
+        ++(*m_mockObjectReleaseProbe);
 }
 
 // ── ExpectationBuilder ───────────────────────────────────────────────────────
