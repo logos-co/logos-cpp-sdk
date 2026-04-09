@@ -33,6 +33,26 @@ public:
                                 const QVariantList& args,
                                 int timeoutMs) = 0;
 
+    using AsyncResultCallback = std::function<void(QVariant)>;
+
+    /**
+     * @brief Invoke a method asynchronously; result is delivered via callback.
+     *
+     * Returns immediately. The callback is always invoked on a subsequent
+     * event-loop iteration, never synchronously inside this call.
+     *
+     * @param authToken Authentication token for the operation
+     * @param methodName Method to call on the underlying module
+     * @param args Arguments for the method
+     * @param timeoutMs Maximum time to wait for the result
+     * @param callback Called with the result (invalid QVariant on failure/timeout)
+     */
+    virtual void callMethodAsync(const QString& authToken,
+                                 const QString& methodName,
+                                 const QVariantList& args,
+                                 int timeoutMs,
+                                 AsyncResultCallback callback) = 0;
+
     /**
      * @brief Deliver a module token to the underlying module.
      * @param authToken Authentication token for the operation

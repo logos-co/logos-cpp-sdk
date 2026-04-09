@@ -6,6 +6,7 @@
 #include "mock_store.h"
 #include <QString>
 #include <QList>
+#include <QTimer>
 
 /**
  * @brief LogosObject implementation for mock mode.
@@ -26,6 +27,20 @@ public:
                         int /*timeoutMs*/) override
     {
         return MockStore::instance().recordAndReturn(m_moduleName, methodName, args);
+    }
+
+    void callMethodAsync(const QString& /*authToken*/,
+                         const QString& methodName,
+                         const QVariantList& args,
+                         int /*timeoutMs*/,
+                         AsyncResultCallback callback) override
+    {
+        if (!callback) return;
+        QString mod = m_moduleName;
+        QTimer::singleShot(0, [mod, methodName, args, callback]() {
+            QVariant result = MockStore::instance().recordAndReturn(mod, methodName, args);
+            callback(result);
+        });
     }
 
     bool informModuleToken(const QString& /*authToken*/,
