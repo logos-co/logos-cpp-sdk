@@ -106,9 +106,15 @@ void LogosAPIConsumer::invokeRemoteMethodAsync(const QString& authToken, const Q
     QPointer<LogosAPIConsumer> self(this);
     plugin->callMethodAsync(authToken, methodName, args, timeout.ms,
         [plugin, callback, self](QVariant result) {
-            plugin->release();
-            if (!self) return;
+            // Deliver the result before release(): destroying the replica can
+            // invalidate storage that QVariant still references for some return
+            // types (matches sync invokeRemoteMethod: callMethod then release).
+            if (!self) {
+                plugin->release();
+                return;
+            }
             callback(result);
+            plugin->release();
         });
 }
 
