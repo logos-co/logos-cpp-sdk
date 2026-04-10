@@ -61,6 +61,21 @@ static TypeExpr cppTypeToLidl(const QString& raw)
         }
     }
 
+    // Qt collection types — pass through directly (non-std-convertible)
+    if (t == "QVariantMap")
+        return { TypeExpr::Map, "", { {TypeExpr::Primitive, "tstr", {}}, {TypeExpr::Primitive, "any", {}} } };
+    if (t == "QVariantList")
+        return { TypeExpr::Array, "", { {TypeExpr::Primitive, "any", {}} } };
+    if (t == "QStringList")
+        return { TypeExpr::Array, "", { {TypeExpr::Primitive, "tstr", {}} } };
+
+    // LogosMap / LogosList — nlohmann::json aliases; same LIDL shape as the Qt types
+    // but flagged so the generator emits an nlohmann→Qt conversion in the glue.
+    if (t == "LogosMap")
+        return { TypeExpr::Map, "", { {TypeExpr::Primitive, "tstr", {}}, {TypeExpr::Primitive, "any", {}} } };
+    if (t == "LogosList")
+        return { TypeExpr::Array, "", { {TypeExpr::Primitive, "any", {}} } };
+
     // Fallback: treat as opaque
     return { TypeExpr::Primitive, "any", {} };
 }
@@ -107,8 +122,22 @@ static bool parseMethodLine(const QString& line, MethodDecl& out)
         return false;
 
     out.name = prefix.mid(nameStart, nameEnd - nameStart);
+
+    // Reject if the extracted name is a C++ keyword — this filters out
+    // member variable declarations like "std::function<void(...)> onEvent"
+    // where the parser would mistakenly extract "void" as the method name.
+    static const QSet<QString> cppKeywords = {
+        "void", "int", "bool", "char", "short", "long", "double", "float",
+        "auto", "return", "if", "else", "for", "while", "do", "switch",
+        "case", "break", "continue", "const", "static", "inline", "virtual"
+    };
+    if (cppKeywords.contains(out.name))
+        return false;
     QString retTypeStr = prefix.left(nameStart).trimmed();
     out.returnType = cppTypeToLidl(retTypeStr);
+    // Flag methods whose impl returns LogosMap / LogosList so the generator
+    // can emit nlohmann→Qt conversion code in the glue layer.
+    out.jsonReturn = (retTypeStr == "LogosMap" || retTypeStr == "LogosList");
 
     // Parse parameters
     out.params.clear();
@@ -181,6 +210,24 @@ ImplParseResult parseImplHeader(const QString& headerPath,
         QJsonArray deps = obj.value("dependencies").toArray();
         for (const QJsonValue& v : deps)
             result.module.depends.append(v.toString());
+
+        // Read events declared in metadata.json
+        QJsonArray events = obj.value("events").toArray();
+        for (const QJsonValue& ev : events) {
+            QJsonObject evObj = ev.toObject();
+            EventDecl ed;
+            ed.name = evObj.value("name").toString();
+            QJsonArray params = evObj.value("params").toArray();
+            for (const QJsonValue& pv : params) {
+                QJsonObject po = pv.toObject();
+                ParamDecl pd;
+                pd.name = po.value("name").toString();
+                pd.type = cppTypeToLidl(po.value("type").toString());
+                ed.params.append(pd);
+            }
+            if (!ed.name.isEmpty())
+                result.module.events.append(ed);
+        }
     }
 
     // --- Read and parse header ---
@@ -253,6 +300,12 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 || line.startsWith("friend") || line.startsWith("enum")
                 || line.startsWith("struct"))
                 break;
+
+            if (line.contains("std::function<")) {
+                if (line.contains("emitEvent"))
+                    result.module.hasEmitEvent = true;
+                break;
+            }
 
             if (line.endsWith(';')) {
                 QString decl = line.left(line.size() - 1).trimmed();

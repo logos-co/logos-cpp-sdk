@@ -153,7 +153,8 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
     s << "#include <QJsonArray>\n";
     s << "#include <string>\n";
     s << "#include <vector>\n";
-    s << "#include <cstdint>\n\n";
+    s << "#include <cstdint>\n";
+    s << "#include <functional>\n\n";
 
     s << "#include \"logos_provider_object.h\"\n";
     s << "#include \"interface.h\"\n";
@@ -195,11 +196,57 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
         s << "} // anonymous namespace\n\n";
     }
 
+    // Emit nlohmannToQVariant helper if any method returns LogosMap / LogosList
+    bool needsNlohmannHelper = false;
+    for (const MethodDecl& md : module.methods) {
+        if (md.jsonReturn) { needsNlohmannHelper = true; break; }
+    }
+    if (needsNlohmannHelper) {
+        s << "#include <nlohmann/json.hpp>\n\n";
+        s << "namespace {\n";
+        s << "inline QVariant nlohmannToQVariant(const nlohmann::json& j) {\n";
+        s << "    if (j.is_null())    return QVariant();\n";
+        s << "    if (j.is_boolean()) return QVariant(j.get<bool>());\n";
+        s << "    if (j.is_number_integer()) return QVariant(static_cast<qlonglong>(j.get<int64_t>()));\n";
+        s << "    if (j.is_number_unsigned()) return QVariant(static_cast<qulonglong>(j.get<uint64_t>()));\n";
+        s << "    if (j.is_number_float()) return QVariant(j.get<double>());\n";
+        s << "    if (j.is_string()) return QVariant(QString::fromStdString(j.get<std::string>()));\n";
+        s << "    if (j.is_array()) {\n";
+        s << "        QVariantList list;\n";
+        s << "        list.reserve(static_cast<int>(j.size()));\n";
+        s << "        for (const auto& elem : j)\n";
+        s << "            list.append(nlohmannToQVariant(elem));\n";
+        s << "        return QVariant(list);\n";
+        s << "    }\n";
+        s << "    if (j.is_object()) {\n";
+        s << "        QVariantMap map;\n";
+        s << "        for (auto it = j.begin(); it != j.end(); ++it)\n";
+        s << "            map.insert(QString::fromStdString(it.key()), nlohmannToQVariant(it.value()));\n";
+        s << "        return QVariant(map);\n";
+        s << "    }\n";
+        s << "    return QVariant();\n";
+        s << "}\n";
+        s << "} // anonymous namespace\n\n";
+    }
+
     // --- ProviderObject class ---
     s << "class " << providerObjectClass << " : public LogosProviderBase {\n";
     s << "    LOGOS_PROVIDER(" << providerObjectClass << ", \""
       << module.name << "\", \"" << (module.version.isEmpty() ? "0.0.0" : module.version) << "\")\n\n";
     s << "public:\n";
+
+    // Wire m_impl.emitEvent → LogosProviderBase::emitEvent when the impl
+    // declares a public emitEvent callback (detected from header) or when
+    // events are declared in metadata.json (legacy path).
+    if (module.hasEmitEvent || !module.events.isEmpty()) {
+        s << "    " << providerObjectClass << "() {\n";
+        s << "        m_impl.emitEvent = [this](const std::string& name, const std::string& data) {\n";
+        s << "            QVariantList args;\n";
+        s << "            if (!data.empty()) args << QString::fromStdString(data);\n";
+        s << "            emitEvent(QString::fromStdString(name), args);\n";
+        s << "        };\n";
+        s << "    }\n\n";
+    }
 
     for (const MethodDecl& md : module.methods) {
         QString qtRet = lidlTypeToQt(md.returnType);
@@ -224,6 +271,18 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
                 if (i + 1 < md.params.size()) s << ", ";
             }
             s << ");\n";
+        } else if (md.jsonReturn) {
+            // LogosMap / LogosList: impl returns nlohmann::json, convert to Qt type
+            s << "        auto _result = m_impl." << md.name << "(";
+            for (int i = 0; i < md.params.size(); ++i) {
+                s << qtParamToStd(md.params[i].type, md.params[i].name);
+                if (i + 1 < md.params.size()) s << ", ";
+            }
+            s << ");\n";
+            if (qtRet == "QVariantMap")
+                s << "        return nlohmannToQVariant(_result).toMap();\n";
+            else
+                s << "        return nlohmannToQVariant(_result).toList();\n";
         } else if (retConvertible) {
             s << "        auto _result = m_impl." << md.name << "(";
             for (int i = 0; i < md.params.size(); ++i) {

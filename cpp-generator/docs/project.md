@@ -35,11 +35,11 @@ Shared data model used by all pipelines:
 
 - **`TypeExpr`** — type expression with `Kind` (Primitive, Array, Map, Optional, Named), `name`, and `elements`
 - **`ParamDecl`** — parameter name + type
-- **`MethodDecl`** — method name, params, return type
+- **`MethodDecl`** — method name, params, return type, `jsonReturn` flag (true when impl returns `LogosMap`/`LogosList`)
 - **`EventDecl`** — event name + params
 - **`FieldDecl`** — struct field name, type, optional flag
 - **`TypeDecl`** — named struct type with fields
-- **`ModuleDecl`** — complete module: name, version, description, category, depends, types, methods, events
+- **`ModuleDecl`** — complete module: name, version, description, category, depends, types, methods, events, `hasEmitEvent` flag
 
 All types have `operator==` for testing.
 
@@ -86,6 +86,8 @@ Converts `ModuleDecl` back to LIDL text. Used for roundtrip testing (parse → s
 - `lidlTypeToStd(TypeExpr)` — maps LIDL types to C++ std type strings
 - `lidlIsStdConvertible(TypeExpr)` — checks if a type has a pure C++ representation
 - `lidlMakeProviderHeader(ModuleDecl, implClass, implHeader)` — generates Qt glue header
+  - Emits `nlohmannToQVariant()` helper when any method has `jsonReturn = true`
+  - Wires `m_impl.emitEvent` → `LogosProviderBase::emitEvent` when `hasEmitEvent` or `events` are present
 - `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods dispatch
 - `lidlGenerateProviderGlue(lidlPath, ...)` — full pipeline from .lidl file
 
@@ -93,7 +95,9 @@ Converts `ModuleDecl` back to LIDL text. Used for roundtrip testing (parse → s
 
 - `parseImplHeader(headerPath, className, metadataPath, err)` — parses C++ header + metadata.json into ModuleDecl
 - State machine: `LookingForClass` → `InClass` → `InPublic`/`InPrivate`
-- Skips: constructors, destructors, typedefs, using, friend, enum, struct declarations
+- Skips: constructors, destructors, typedefs, using, friend, enum, struct, `std::function` declarations
+- Detects `std::function<...> emitEvent` members and sets `ModuleDecl.hasEmitEvent = true`
+- Recognizes `LogosMap` and `LogosList` return types (nlohmann::json aliases) and sets `MethodDecl.jsonReturn = true`
 - Template-aware parameter splitting (handles `std::vector<std::string>` correctly)
 
 ## CLI Usage
@@ -183,6 +187,7 @@ Fixture files in `tests/experimental/fixtures/`:
   - Method definitions in the header (only declarations ending with `;`)
   - Nested classes
   - Template methods
+  - `std::function` members other than `emitEvent` are silently skipped
 - LIDL does not support generic/parameterized types or inheritance
 - Only the `qt` backend is implemented for `--from-header`; future backends (CBOR, Rust) are planned
 - Client stub generation (`lidlMakeHeader`/`lidlMakeSource`) is only available from LIDL files, not from `--from-header`

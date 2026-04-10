@@ -1,0 +1,15 @@
+{
+  "name": "universal_mod",
+  "version": "2.0.0",
+  "description": "Fixture for universal / JSON-backed types",
+  "category": "test",
+  "dependencies": [],
+  "events": [
+    {
+      "name": "onReady",
+      "params": [
+        { "name": "info", "type": "std::string" }
+      ]
+    }
+  ]
+}
