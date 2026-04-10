@@ -58,7 +58,11 @@ public:
 
     QJsonArray getMethods() override { return QJsonArray(); }
 
-    void release() override { delete this; }
+    void release() override
+    {
+        MockStore::instance().incrementMockObjectReleaseProbeIfSet();
+        delete this;
+    }
 
     quintptr id() const override { return reinterpret_cast<quintptr>(this); }
 

@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
+#include <atomic>
 #include <QCoreApplication>
 #include "logos_mock.h"
+#include "mock_store.h"
 #include "logos_api.h"
 #include "logos_api_client.h"
 
@@ -94,6 +96,33 @@ TEST_F(AsyncCallsTest, AsyncCallWithVariantListResult)
 
     QCoreApplication::processEvents();
     EXPECT_EQ(received.toList().size(), 3);
+}
+
+TEST_F(AsyncCallsTest, AsyncUserCallbackRunsBeforeMockLogosObjectRelease)
+{
+    // Regression: LogosAPIConsumer must invoke the user callback before plugin->release().
+    // Releasing the mock/replica first can invalidate QVariant payloads (e.g. remote lists),
+    // which manifested as crashes inside Qt when converting the async result.
+    std::atomic<int> releaseCount{0};
+    MockStore::instance().setMockObjectReleaseProbe(&releaseCount);
+
+    QVariantList expected = {QStringLiteral("pkg_a"), QStringLiteral("pkg_b")};
+    m_mock->when("mod", "getInstalledPackages").thenReturn(QVariant(expected));
+    createApi();
+
+    bool userCallbackRan = false;
+    m_client->invokeRemoteMethodAsync("mod", "getInstalledPackages", QVariantList(),
+        [&](QVariant v) {
+            userCallbackRan = true;
+            EXPECT_EQ(releaseCount.load(), 0)
+                << "async user callback must run before MockLogosObject::release()";
+            ASSERT_EQ(v.toList().size(), 2);
+            EXPECT_EQ(v.toList().at(0).toString(), QStringLiteral("pkg_a"));
+        });
+
+    QCoreApplication::processEvents();
+    EXPECT_TRUE(userCallbackRan);
+    EXPECT_EQ(releaseCount.load(), 1);
 }
 
 TEST_F(AsyncCallsTest, AsyncCallWithVariantMapResult)
