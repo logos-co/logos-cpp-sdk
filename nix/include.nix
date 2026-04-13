@@ -36,7 +36,7 @@ pkgs.stdenv.mkDerivation {
                 qt_provider_object.h qt_provider_object.cpp \
                 logos_transport.h logos_transport_factory.h logos_transport_factory.cpp \
                 logos_registry.h logos_registry_factory.h logos_registry_factory.cpp \
-                plugin_registry.h; do
+                plugin_registry.h logos_json.h; do
       if [ -f cpp/$file ]; then
         cp cpp/$file $out/include/cpp/
       fi

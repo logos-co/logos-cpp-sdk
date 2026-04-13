@@ -239,3 +239,66 @@ TEST_F(ImplHeaderParserTest, WrongClassName)
     EXPECT_TRUE(r.module.methods.isEmpty());
     EXPECT_TRUE(errOutput.contains("Warning"));
 }
+
+// ---------------------------------------------------------------------------
+// LogosMap / LogosList, Qt collections, metadata events, emitEvent detection
+// ---------------------------------------------------------------------------
+
+TEST_F(ImplHeaderParserTest, UniversalTypesAndMetadataEvents)
+{
+    auto r = parseImplHeader(
+        fixturesDir() + "/universal_impl.h",
+        "UniversalImpl",
+        fixturesDir() + "/universal_metadata.json",
+        err);
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+
+    EXPECT_EQ(r.module.name, "universal_mod");
+    EXPECT_EQ(r.module.version, "2.0.0");
+
+    ASSERT_EQ(r.module.events.size(), 1);
+    EXPECT_EQ(r.module.events[0].name, "onReady");
+    ASSERT_EQ(r.module.events[0].params.size(), 1);
+    EXPECT_EQ(r.module.events[0].params[0].name, "info");
+    EXPECT_EQ(r.module.events[0].params[0].type.name, "tstr");
+
+    EXPECT_TRUE(r.module.hasEmitEvent);
+
+    auto findMethod = [&](const QString& name) -> const MethodDecl* {
+        for (const auto& m : r.module.methods)
+            if (m.name == name) return &m;
+        return nullptr;
+    };
+
+    auto fetchMap = findMethod("fetchMap");
+    ASSERT_NE(fetchMap, nullptr);
+    EXPECT_EQ(fetchMap->returnType.kind, TypeExpr::Map);
+    EXPECT_TRUE(fetchMap->jsonReturn);
+
+    auto fetchList = findMethod("fetchList");
+    ASSERT_NE(fetchList, nullptr);
+    EXPECT_EQ(fetchList->returnType.kind, TypeExpr::Array);
+    EXPECT_EQ(fetchList->returnType.elements[0].name, "any");
+    EXPECT_TRUE(fetchList->jsonReturn);
+
+    auto asVariantMap = findMethod("asVariantMap");
+    ASSERT_NE(asVariantMap, nullptr);
+    EXPECT_EQ(asVariantMap->returnType.kind, TypeExpr::Map);
+    EXPECT_FALSE(asVariantMap->jsonReturn);
+
+    auto listNames = findMethod("listNames");
+    ASSERT_NE(listNames, nullptr);
+    EXPECT_EQ(listNames->returnType.kind, TypeExpr::Array);
+    EXPECT_EQ(listNames->returnType.elements[0].name, "tstr");
+    EXPECT_FALSE(listNames->jsonReturn);
+
+    auto anyList = findMethod("anyList");
+    ASSERT_NE(anyList, nullptr);
+    EXPECT_EQ(anyList->returnType.kind, TypeExpr::Array);
+    EXPECT_EQ(anyList->returnType.elements[0].name, "any");
+    EXPECT_FALSE(anyList->jsonReturn);
+
+    for (const auto& m : r.module.methods) {
+        EXPECT_NE(m.name, "void") << "Keyword should not appear as method name";
+    }
+}

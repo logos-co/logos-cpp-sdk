@@ -267,6 +267,63 @@ TEST(LidlGenProvider, EventEmitters)
     QString h = lidlMakeProviderHeader(m, "EventedImpl", "evented_impl.h");
     EXPECT_TRUE(h.contains("emitOnupdate"));
     EXPECT_TRUE(h.contains("emitEvent(\"onUpdate\""));
+    // Events in metadata (or hasEmitEvent) wire m_impl.emitEvent in the ctor
+    EXPECT_TRUE(h.contains("m_impl.emitEvent ="));
+    EXPECT_TRUE(h.contains("emitEvent(QString::fromStdString(name)"));
+}
+
+TEST(LidlGenProvider, ConstructorWiresEmitEventWhenHasEmitEventOnly)
+{
+    ModuleDecl m;
+    m.name = "emitonly";
+    m.version = "1.0.0";
+    m.hasEmitEvent = true;
+
+    QString h = lidlMakeProviderHeader(m, "EmitOnlyImpl", "emitonly_impl.h");
+    EXPECT_TRUE(h.contains("m_impl.emitEvent ="));
+    EXPECT_TRUE(h.contains("emitEvent(QString::fromStdString(name)"));
+}
+
+TEST(LidlGenProvider, HeaderIncludesNlohmannConversionForJsonMapReturn)
+{
+    ModuleDecl m;
+    m.name = "jm";
+    m.version = "1.0.0";
+    MethodDecl md;
+    md.name = "getPayload";
+    md.returnType = { TypeExpr::Map, "", { { TypeExpr::Primitive, "tstr", {} },
+        { TypeExpr::Primitive, "any", {} } } };
+    md.jsonReturn = true;
+    m.methods.append(md);
+
+    QString h = lidlMakeProviderHeader(m, "JmImpl", "jm_impl.h");
+    EXPECT_TRUE(h.contains("#include <nlohmann/json.hpp>"));
+    EXPECT_TRUE(h.contains("nlohmannToQVariant"));
+    EXPECT_TRUE(h.contains("auto _result = m_impl.getPayload("));
+    EXPECT_TRUE(h.contains("return nlohmannToQVariant(_result).toMap()"));
+}
+
+TEST(LidlGenProvider, HeaderUsesToListForJsonListReturn)
+{
+    ModuleDecl m;
+    m.name = "jl";
+    m.version = "1.0.0";
+    MethodDecl md;
+    md.name = "getItems";
+    md.returnType = { TypeExpr::Array, "", { { TypeExpr::Primitive, "any", {} } } };
+    md.jsonReturn = true;
+    m.methods.append(md);
+
+    QString h = lidlMakeProviderHeader(m, "JlImpl", "jl_impl.h");
+    EXPECT_TRUE(h.contains("return nlohmannToQVariant(_result).toList()"));
+}
+
+TEST(LidlGenProvider, NoNlohmannBlockWithoutJsonReturnMethods)
+{
+    ModuleDecl m = makeTestModule();
+    QString h = lidlMakeProviderHeader(m, "TestModuleImpl", "test_module_impl.h");
+    EXPECT_FALSE(h.contains("nlohmann/json.hpp"));
+    EXPECT_FALSE(h.contains("nlohmannToQVariant"));
 }
 
 // ---------------------------------------------------------------------------

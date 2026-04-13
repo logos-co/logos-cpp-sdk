@@ -98,6 +98,7 @@ install(FILES
     logos_transport_factory.h
     logos_registry.h
     logos_registry_factory.h
+    logos_json.h
     DESTINATION include
 )
 
