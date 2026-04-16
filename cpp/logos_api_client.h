@@ -7,6 +7,7 @@
 #include <QVariantList>
 #include <QMap>
 #include <functional>
+#include <string>
 
 #include "logos_mode.h"
 
@@ -112,6 +113,9 @@ public:
     void onEventResponse(QObject* object, const QString& eventName, const QVariantList& data);
 
     bool informModuleToken(const QString& authToken, const QString& moduleName, const QString& token);
+    bool informModuleToken(const char* authToken, const char* moduleName, const char* token)
+        { return informModuleToken(QString(authToken), QString(moduleName), QString(token)); }
+    bool informModuleToken(const std::string& authToken, const std::string& moduleName, const std::string& token);
     bool informModuleToken_module(const QString& authToken, const QString& originModule, const QString& moduleName, const QString& token);
 
     TokenManager* getTokenManager() const;

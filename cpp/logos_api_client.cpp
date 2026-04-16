@@ -3,6 +3,7 @@
 #include "logos_object.h"
 #include "token_manager.h"
 #include <QMetaObject>
+#include <string>
 
 LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
     : QObject(parent)
@@ -187,6 +188,13 @@ void LogosAPIClient::onEventResponse(QObject* object, const QString& eventName, 
 bool LogosAPIClient::informModuleToken(const QString& authToken, const QString& moduleName, const QString& token)
 {
     return m_consumer->informModuleToken(authToken, moduleName, token);
+}
+
+bool LogosAPIClient::informModuleToken(const std::string& authToken, const std::string& moduleName, const std::string& token)
+{
+    return informModuleToken(QString::fromStdString(authToken),
+                             QString::fromStdString(moduleName),
+                             QString::fromStdString(token));
 }
 
 bool LogosAPIClient::informModuleToken_module(const QString& authToken, const QString& originModule, const QString& moduleName, const QString& token)

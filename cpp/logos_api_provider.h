@@ -7,6 +7,7 @@
 #include <QVariantList>
 #include <QMap>
 #include <memory>
+#include <string>
 
 class LogosTransportHost;
 class LogosObject;
@@ -35,6 +36,17 @@ public:
      * Wraps in QtProviderObject, then ModuleProxy.
      */
     bool registerObject(const QString& name, QObject* object);
+
+    /**
+     * @brief Register a legacy QObject-based plugin — const char* overload (resolves ambiguity)
+     */
+    bool registerObject(const char* name, QObject* object)
+        { return registerObject(QString(name), object); }
+
+    /**
+     * @brief Register a legacy QObject-based plugin (std::string overload).
+     */
+    bool registerObject(const std::string& name, QObject* object);
 
     /**
      * @brief Register a new-API LogosProviderObject plugin.

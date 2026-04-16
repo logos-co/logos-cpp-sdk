@@ -5,6 +5,7 @@
 #include <QString>
 #include <QHash>
 #include <QMutex>
+#include <string>
 
 /**
  * @brief TokenManager provides a singleton interface for managing authentication tokens
@@ -31,11 +32,34 @@ public:
     void saveToken(const QString& key, const QString& token);
 
     /**
+     * @brief Save a token — const char* overload (resolves ambiguity, delegates to QString)
+     */
+    void saveToken(const char* key, const char* token)
+        { saveToken(QString(key), QString(token)); }
+
+    /**
+     * @brief Save a token with the given key (std::string overload)
+     */
+    void saveToken(const std::string& key, const std::string& token);
+
+    /**
      * @brief Retrieve a token by key
      * @param key The identifier for the token
      * @return QString The token value, or empty string if not found
      */
     QString getToken(const QString& key) const;
+
+    /**
+     * @brief Retrieve a token — const char* overload (resolves ambiguity, delegates to QString)
+     */
+    QString getToken(const char* key) const
+        { return getToken(QString(key)); }
+
+    /**
+     * @brief Retrieve a token by key (std::string overload)
+     * @return std::string The token value, or empty string if not found
+     */
+    std::string getToken(const std::string& key) const;
 
     /**
      * @brief Check if a token exists for the given key
@@ -45,11 +69,33 @@ public:
     bool hasToken(const QString& key) const;
 
     /**
+     * @brief hasToken — const char* overload (resolves ambiguity, delegates to QString)
+     */
+    bool hasToken(const char* key) const
+        { return hasToken(QString(key)); }
+
+    /**
+     * @brief Check if a token exists for the given key (std::string overload)
+     */
+    bool hasToken(const std::string& key) const;
+
+    /**
      * @brief Remove a token by key
      * @param key The identifier for the token to remove
      * @return bool True if token was removed, false if it didn't exist
      */
     bool removeToken(const QString& key);
+
+    /**
+     * @brief removeToken — const char* overload (resolves ambiguity, delegates to QString)
+     */
+    bool removeToken(const char* key)
+        { return removeToken(QString(key)); }
+
+    /**
+     * @brief Remove a token by key (std::string overload)
+     */
+    bool removeToken(const std::string& key);
 
     /**
      * @brief Clear all tokens
