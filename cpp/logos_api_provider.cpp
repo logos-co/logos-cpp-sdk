@@ -8,6 +8,7 @@
 #include "logos_transport.h"
 #include "logos_transport_factory.h"
 #include <QDebug>
+#include <string>
 
 LogosAPIProvider::LogosAPIProvider(const QString& module_name, QObject *parent)
     : QObject(parent)
@@ -61,6 +62,11 @@ bool LogosAPIProvider::registerObject(const QString& name, QObject* object)
     m_qtProviderObject->init(qobject_cast<LogosAPI*>(parent()));
 
     return publishProvider(name, m_qtProviderObject);
+}
+
+bool LogosAPIProvider::registerObject(const std::string& name, QObject* object)
+{
+    return registerObject(QString::fromStdString(name), object);
 }
 
 // New path: LogosProviderObject* -> ModuleProxy -> transport

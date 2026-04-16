@@ -23,16 +23,31 @@ void TokenManager::saveToken(const QString& key, const QString& token)
     emit tokenSaved(key);
 }
 
+void TokenManager::saveToken(const std::string& key, const std::string& token)
+{
+    saveToken(QString::fromStdString(key), QString::fromStdString(token));
+}
+
 QString TokenManager::getToken(const QString& key) const
 {
     QMutexLocker locker(&m_mutex);
     return m_tokens.value(key, QString());
 }
 
+std::string TokenManager::getToken(const std::string& key) const
+{
+    return getToken(QString::fromStdString(key)).toStdString();
+}
+
 bool TokenManager::hasToken(const QString& key) const
 {
     QMutexLocker locker(&m_mutex);
     return m_tokens.contains(key);
+}
+
+bool TokenManager::hasToken(const std::string& key) const
+{
+    return hasToken(QString::fromStdString(key));
 }
 
 bool TokenManager::removeToken(const QString& key)
@@ -44,6 +59,11 @@ bool TokenManager::removeToken(const QString& key)
         return true;
     }
     return false;
+}
+
+bool TokenManager::removeToken(const std::string& key)
+{
+    return removeToken(QString::fromStdString(key));
 }
 
 void TokenManager::clearAllTokens()

@@ -39,6 +39,7 @@ add_executable(sdk_tests
     test_event_system.cpp
     test_async_calls.cpp
     test_provider_dispatch.cpp
+    test_std_string_overloads.cpp
     fixtures/sample_provider.cpp
     ${GENERATED_DISPATCH}
 )

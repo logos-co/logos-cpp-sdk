@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QHash>
+#include <string>
 #include "logos_types.h"
 
 class LogosAPIClient;
@@ -26,6 +27,17 @@ public:
      * @param parent Parent QObject
      */
     explicit LogosAPI(const QString& module_name, QObject *parent = nullptr);
+
+    /**
+     * @brief Construct a new LogosAPI instance (const char* overload — resolves ambiguity)
+     */
+    explicit LogosAPI(const char* module_name, QObject *parent = nullptr)
+        : LogosAPI(QString(module_name), parent) {}
+
+    /**
+     * @brief Construct a new LogosAPI instance (std::string overload)
+     */
+    explicit LogosAPI(const std::string& module_name, QObject *parent = nullptr);
     
     /**
      * @brief Destructor
@@ -44,6 +56,17 @@ public:
      * @return LogosAPIClient* Pointer to the client
      */
     LogosAPIClient* getClient(const QString& target_module) const;
+
+    /**
+     * @brief Get the client instance — const char* overload (resolves ambiguity)
+     */
+    LogosAPIClient* getClient(const char* target_module) const
+        { return getClient(QString(target_module)); }
+
+    /**
+     * @brief Get the client instance for communicating with a module (std::string overload)
+     */
+    LogosAPIClient* getClient(const std::string& target_module) const;
 
     /**
      * @brief Get the token manager instance
