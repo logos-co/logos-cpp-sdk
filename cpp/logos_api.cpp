@@ -2,6 +2,7 @@
 #include "logos_api_client.h"
 #include "logos_api_provider.h"
 #include "token_manager.h"
+#include <QVariant>
 #include <string>
 
 LogosAPI::LogosAPI(const QString& module_name, QObject *parent)
@@ -62,4 +63,9 @@ LogosAPIClient* LogosAPI::getClient(const std::string& target_module) const
 TokenManager* LogosAPI::getTokenManager() const
 {
     return m_token_manager;
-} 
+}
+
+bool LogosAPI::setProperty(const char* name, const std::string& value)
+{
+    return QObject::setProperty(name, QVariant(QString::fromStdString(value)));
+}

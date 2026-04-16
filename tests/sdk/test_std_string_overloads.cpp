@@ -122,6 +122,16 @@ TEST_F(LogosApiStdStringTest, GetClientStdStringAndQStringSameModule)
     EXPECT_EQ(cStd, cQt);
 }
 
+TEST_F(LogosApiStdStringTest, SetPropertyWithStdString)
+{
+    LogosAPI api(std::string("prop_mod"));
+    const std::string path = "/tmp/plugin_parent";
+    api.setProperty("modulePath", path);
+    QVariant stored = api.property("modulePath");
+    ASSERT_TRUE(stored.isValid());
+    EXPECT_EQ(stored.toString().toStdString(), path);
+}
+
 // ============================================================
 // LogosAPIClient::informModuleToken std::string overload
 // ============================================================

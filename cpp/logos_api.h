@@ -74,6 +74,13 @@ public:
      */
     TokenManager* getTokenManager() const;
 
+    using QObject::setProperty;
+
+    /**
+     * @brief Set a dynamic property from a UTF-8 std::string (delegates to QVariant + QString).
+     */
+    bool setProperty(const char* name, const std::string& value);
+
 private:
     QString m_module_name;
     LogosAPIProvider* m_provider;
