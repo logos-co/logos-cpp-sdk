@@ -298,6 +298,13 @@ TEST_F(ImplHeaderParserTest, UniversalTypesAndMetadataEvents)
     EXPECT_EQ(anyList->returnType.elements[0].name, "any");
     EXPECT_FALSE(anyList->jsonReturn);
 
+    auto fetchResult = findMethod("fetchResult");
+    ASSERT_NE(fetchResult, nullptr);
+    EXPECT_EQ(fetchResult->returnType.kind, TypeExpr::Primitive);
+    EXPECT_EQ(fetchResult->returnType.name, "result");
+    EXPECT_FALSE(fetchResult->jsonReturn);
+    EXPECT_TRUE(fetchResult->resultReturn);
+
     for (const auto& m : r.module.methods) {
         EXPECT_NE(m.name, "void") << "Keyword should not appear as method name";
     }

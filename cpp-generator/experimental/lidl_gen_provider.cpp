@@ -196,10 +196,12 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
         s << "} // anonymous namespace\n\n";
     }
 
-    // Emit nlohmannToQVariant helper if any method returns LogosMap / LogosList
+    // Emit nlohmannToQVariant helper if any method returns LogosMap / LogosList / StdLogosResult
     bool needsNlohmannHelper = false;
+    bool needsResultHelper = false;
     for (const MethodDecl& md : module.methods) {
-        if (md.jsonReturn) { needsNlohmannHelper = true; break; }
+        if (md.jsonReturn)   needsNlohmannHelper = true;
+        if (md.resultReturn) { needsNlohmannHelper = true; needsResultHelper = true; }
     }
     if (needsNlohmannHelper) {
         s << "#include <nlohmann/json.hpp>\n\n";
@@ -226,6 +228,17 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
         s << "    }\n";
         s << "    return QVariant();\n";
         s << "}\n";
+        if (needsResultHelper) {
+            s << "\n";
+            s << "#include \"logos_result.h\"\n";
+            s << "inline LogosResult stdResultToQt(const StdLogosResult& r) {\n";
+            s << "    LogosResult qr;\n";
+            s << "    qr.success = r.success;\n";
+            s << "    qr.value = nlohmannToQVariant(r.value);\n";
+            s << "    qr.error = r.error.empty() ? QVariant() : QVariant(QString::fromStdString(r.error));\n";
+            s << "    return qr;\n";
+            s << "}\n";
+        }
         s << "} // anonymous namespace\n\n";
     }
 
@@ -283,6 +296,15 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
                 s << "        return nlohmannToQVariant(_result).toMap();\n";
             else
                 s << "        return nlohmannToQVariant(_result).toList();\n";
+        } else if (md.resultReturn) {
+            // StdLogosResult: impl returns pure-C++ result, convert to Qt LogosResult
+            s << "        auto _result = m_impl." << md.name << "(";
+            for (int i = 0; i < md.params.size(); ++i) {
+                s << qtParamToStd(md.params[i].type, md.params[i].name);
+                if (i + 1 < md.params.size()) s << ", ";
+            }
+            s << ");\n";
+            s << "        return stdResultToQt(_result);\n";
         } else if (retConvertible) {
             s << "        auto _result = m_impl." << md.name << "(";
             for (int i = 0; i < md.params.size(); ++i) {
