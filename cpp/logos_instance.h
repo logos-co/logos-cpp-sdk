@@ -1,6 +1,7 @@
 #ifndef LOGOS_INSTANCE_H
 #define LOGOS_INSTANCE_H
 
+#include <QCryptographicHash>
 #include <QDebug>
 #include <QString>
 #include <QUuid>
@@ -15,6 +16,34 @@
  * ID. Used by both provider and consumer to build matching registry URLs.
  */
 namespace LogosInstance {
+    inline QString shortSha1Hex(const QString& value, int length)
+    {
+        return QString::fromLatin1(
+            QCryptographicHash::hash(value.toUtf8(), QCryptographicHash::Sha1)
+                .toHex()
+                .left(length));
+    }
+
+    inline QString leftUtf8Bytes(const QString& value, int maxBytes)
+    {
+        if (maxBytes <= 0)
+            return QString();
+
+        const QByteArray utf8 = value.toUtf8();
+        if (utf8.size() <= maxBytes)
+            return value;
+
+        QByteArray truncated = utf8.left(maxBytes);
+        while (!truncated.isEmpty()) {
+            const QString decoded =
+                QString::fromUtf8(truncated.constData(), truncated.size());
+            if (decoded.toUtf8().size() == truncated.size())
+                return decoded;
+            truncated.chop(1);
+        }
+        return QString();
+    }
+
     inline const QString id() {
         const QByteArray inherited = qgetenv("LOGOS_INSTANCE_ID");
         if (!inherited.isEmpty())
@@ -25,7 +54,34 @@ namespace LogosInstance {
     }
 
     inline QString id(const QString& moduleName) {
-        return QString("local:logos_%1_%2").arg(moduleName).arg(id());
+        constexpr int kMaxSocketFilenameBytes = 40;
+        constexpr int kModuleHashHexLen = 16;
+        constexpr int kMaxInstanceIdBytes = 12;
+
+        const QString instanceId = id();
+        const QString baseName =
+            QStringLiteral("logos_%1_%2").arg(moduleName, instanceId);
+
+        if (baseName.toUtf8().size() <= kMaxSocketFilenameBytes)
+            return QStringLiteral("local:") + baseName;
+
+        const QString instanceIdForSocket =
+            (instanceId.toUtf8().size() <= kMaxInstanceIdBytes)
+                ? instanceId
+                : shortSha1Hex(instanceId, kMaxInstanceIdBytes);
+        const QString moduleHash = shortSha1Hex(moduleName, kModuleHashHexLen);
+
+        // Reserve bytes for "logos_" + "_" + moduleHash + "_" + instance ID.
+        const int fixedBytes =
+            8 + kModuleHashHexLen + instanceIdForSocket.toUtf8().size();
+        const int modulePrefixBytes =
+            qMax(0, kMaxSocketFilenameBytes - fixedBytes);
+        const QString modulePrefix = leftUtf8Bytes(moduleName, modulePrefixBytes);
+
+        const QString socketName =
+            QStringLiteral("logos_%1_%2_%3")
+                .arg(modulePrefix, moduleHash, instanceIdForSocket);
+        return QStringLiteral("local:") + socketName;
     }
 }
 

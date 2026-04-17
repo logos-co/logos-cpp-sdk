@@ -53,3 +53,65 @@ TEST_F(LogosInstanceTest, RegistryUrlFormat)
     QString url = LogosInstance::id("my_module");
     EXPECT_EQ(url, "local:logos_my_module_abc123def456");
 }
+
+TEST_F(LogosInstanceTest, RegistryUrlTruncatesLongModuleNames)
+{
+    qputenv("LOGOS_INSTANCE_ID", "abc123def456");
+    const QString longName =
+        "liblogos_execution_zone_wallet_module_with_extra_suffix";
+    QString url = LogosInstance::id(longName);
+
+    ASSERT_TRUE(url.startsWith("local:"));
+    const QString socketName = url.mid(QString("local:").size());
+
+    EXPECT_LE(socketName.toUtf8().size(), 40);
+    EXPECT_EQ(url, LogosInstance::id(longName));
+
+    EXPECT_NE(url, LogosInstance::id(longName + "_different"));
+}
+
+// Golden test: pin the exact derived name so refactors don't silently change
+// the socket naming scheme.
+TEST_F(LogosInstanceTest, RegistryUrlGoldenLongName)
+{
+    qputenv("LOGOS_INSTANCE_ID", "abc123def456");
+    const QString longName =
+        "liblogos_execution_zone_wallet_module_with_extra_suffix";
+    EXPECT_EQ(LogosInstance::id(longName),
+              QStringLiteral("local:logos_libl_dc0d0a2280b70b17_abc123def456"));
+}
+
+TEST_F(LogosInstanceTest, RegistryUrlTruncatesLongInstanceId)
+{
+    const QByteArray longInstanceId =
+        "instance_id_with_extra_suffix_that_is_deliberately_long_for_socket_names";
+    const QString longName =
+        "liblogos_execution_zone_wallet_module_with_extra_suffix";
+
+    qputenv("LOGOS_INSTANCE_ID", longInstanceId);
+    const QString url = LogosInstance::id(longName);
+
+    ASSERT_TRUE(url.startsWith("local:"));
+    const QString socketName = url.mid(QString("local:").size());
+    EXPECT_LE(socketName.toUtf8().size(), 40);
+    EXPECT_EQ(url, LogosInstance::id(longName));
+
+    qputenv(
+        "LOGOS_INSTANCE_ID",
+        "instance_id_with_extra_suffix_that_is_deliberately_long_for_socket_names_changed");
+    EXPECT_NE(url, LogosInstance::id(longName));
+}
+
+TEST_F(LogosInstanceTest, RegistryUrlTruncatesByUtf8Bytes)
+{
+    qputenv("LOGOS_INSTANCE_ID", "abc123def456");
+    const QString unicodeLongName = QString::fromUtf8(
+        "模块_пример_モジュール_الوحدة_가나다라마바사아자차카타파하");
+
+    const QString url = LogosInstance::id(unicodeLongName);
+    ASSERT_TRUE(url.startsWith("local:"));
+    const QString socketName = url.mid(QString("local:").size());
+
+    EXPECT_LE(socketName.toUtf8().size(), 40);
+    EXPECT_EQ(url, LogosInstance::id(unicodeLongName));
+}
