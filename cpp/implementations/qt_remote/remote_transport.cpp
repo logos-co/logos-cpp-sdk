@@ -1,4 +1,5 @@
 #include "remote_transport.h"
+#include "../../deferred_delete_guard.h"
 #include <QRemoteObjectRegistryHost>
 #include <QRemoteObjectNode>
 #include <QRemoteObjectReplica>
@@ -52,6 +53,17 @@ public:
     ~RemoteLogosObject() override {
         qDebug() << "[LogosObject] Destroying RemoteLogosObject" << reinterpret_cast<quintptr>(m_replica);
         delete m_helper;
+        // Release the replica via deleteLater so QRemoteObjectNode's
+        // destroyed-signal wiring gets to deregister us from its internal
+        // name→replica map. Without this, every invokeRemoteMethod leaks
+        // a QRemoteObjectDynamicReplica on the node; the accumulated
+        // entries collide when a later acquireDynamic for the same name
+        // walks the map, and QRemoteObjectNodePrivate::setReplicaImplementation
+        // ends up dereferencing a stale vtable pointer.
+        if (m_replica) {
+            m_replica->deleteLater();
+            m_replica = nullptr;
+        }
     }
 
     QVariant callMethod(const QString& authToken,
@@ -356,6 +368,14 @@ LogosObject* RemoteTransportConnection::requestObject(const QString& objectName,
     qDebug() << "RemoteTransportConnection: Requesting object:" << objectName
              << "at" << QTime::currentTime().toString("hh:mm:ss.zzz");
 
+    // The DeferredDeleteGuard covers both acquireDynamic() and
+    // waitForSource() — either one can spin a nested event loop, and we
+    // must hold DeferredDelete events for the full duration so a QML
+    // delegate rebuild during the sync wait can't destroy the Button
+    // whose onClicked is currently on the call stack. See the guard
+    // definition above for the full rationale.
+    DeferredDeleteGuard guard;
+
     QRemoteObjectReplica* replica = m_node->acquireDynamic(objectName);
     if (!replica) {
         qWarning() << "RemoteTransportConnection: Failed to acquire replica for:" << objectName;
@@ -364,7 +384,11 @@ LogosObject* RemoteTransportConnection::requestObject(const QString& objectName,
 
     if (!replica->waitForSource(timeoutMs)) {
         qWarning() << "RemoteTransportConnection: Timeout waiting for replica:" << objectName;
-        delete replica;
+        // deleteLater, not delete — raw-deleting a replica that the
+        // QRemoteObjectNode still tracks leaves a dangling entry in the
+        // node's name→replica map and corrupts future acquireDynamic calls
+        // for the same name. See RemoteLogosObject dtor.
+        replica->deleteLater();
         return nullptr;
     }
 
