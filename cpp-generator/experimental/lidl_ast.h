@@ -43,10 +43,13 @@ struct MethodDecl {
     // True when the impl returns LogosMap or LogosList (nlohmann::json).
     // The generator will emit nlohmann→Qt conversion code in the glue layer.
     bool jsonReturn = false;
+    // True when the impl returns StdLogosResult.
+    // The generator will emit a stdResultToQt() conversion in the glue layer.
+    bool resultReturn = false;
 
     bool operator==(const MethodDecl& o) const {
         return name == o.name && params == o.params && returnType == o.returnType
-            && jsonReturn == o.jsonReturn;
+            && jsonReturn == o.jsonReturn && resultReturn == o.resultReturn;
     }
 };
 

@@ -326,6 +326,41 @@ TEST(LidlGenProvider, NoNlohmannBlockWithoutJsonReturnMethods)
     EXPECT_FALSE(h.contains("nlohmannToQVariant"));
 }
 
+TEST(LidlGenProvider, HeaderIncludesNlohmannAndStdResultForResultReturn)
+{
+    ModuleDecl m;
+    m.name = "resmod";
+    m.version = "1.0.0";
+    MethodDecl md;
+    md.name = "getResult";
+    md.returnType = { TypeExpr::Primitive, "result", {} };
+    md.resultReturn = true;
+    m.methods.append(md);
+
+    QString h = lidlMakeProviderHeader(m, "ResModImpl", "resmod_impl.h");
+    EXPECT_TRUE(h.contains("#include <nlohmann/json.hpp>"));
+    EXPECT_TRUE(h.contains("nlohmannToQVariant"));
+    EXPECT_TRUE(h.contains("#include \"logos_result.h\""));
+    EXPECT_TRUE(h.contains("stdResultToQt"));
+    EXPECT_TRUE(h.contains("auto _result = m_impl.getResult("));
+    EXPECT_TRUE(h.contains("return stdResultToQt(_result)"));
+}
+
+TEST(LidlGenProvider, StdResultMethodHasLogosResultReturnType)
+{
+    ModuleDecl m;
+    m.name = "resmod2";
+    m.version = "1.0.0";
+    MethodDecl md;
+    md.name = "doWork";
+    md.returnType = { TypeExpr::Primitive, "result", {} };
+    md.resultReturn = true;
+    m.methods.append(md);
+
+    QString h = lidlMakeProviderHeader(m, "ResModImpl2", "resmod2_impl.h");
+    EXPECT_TRUE(h.contains("LogosResult doWork("));
+}
+
 // ---------------------------------------------------------------------------
 // Empty module
 // ---------------------------------------------------------------------------

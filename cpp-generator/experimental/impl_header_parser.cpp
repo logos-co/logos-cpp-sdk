@@ -76,6 +76,11 @@ static TypeExpr cppTypeToLidl(const QString& raw)
     if (t == "LogosList")
         return { TypeExpr::Array, "", { {TypeExpr::Primitive, "any", {}} } };
 
+    // StdLogosResult — pure C++ result type for universal impls. The generator
+    // emits a StdLogosResult→Qt LogosResult conversion in the glue layer.
+    if (t == "StdLogosResult")
+        return { TypeExpr::Primitive, "result", {} };
+
     // Fallback: treat as opaque
     return { TypeExpr::Primitive, "any", {} };
 }
@@ -138,6 +143,9 @@ static bool parseMethodLine(const QString& line, MethodDecl& out)
     // Flag methods whose impl returns LogosMap / LogosList so the generator
     // can emit nlohmann→Qt conversion code in the glue layer.
     out.jsonReturn = (retTypeStr == "LogosMap" || retTypeStr == "LogosList");
+    // Flag methods whose impl returns StdLogosResult so the generator can
+    // emit a StdLogosResult→Qt LogosResult conversion in the glue layer.
+    out.resultReturn = (retTypeStr == "StdLogosResult");
 
     // Parse parameters
     out.params.clear();
