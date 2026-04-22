@@ -2,6 +2,7 @@
 #define LIDL_GEN_PROVIDER_H
 
 #include "lidl_ast.h"
+#include "c_header_parser.h"
 #include <QString>
 #include <QTextStream>
 
@@ -26,5 +27,18 @@ int lidlGenerateProviderGlue(const QString& lidlPath,
                               const QString& implHeader,
                               const QString& outputDir,
                               QTextStream& out, QTextStream& err);
+
+// ---------------------------------------------------------------------------
+// C-FFI variants: call C functions directly (no C++ impl class required)
+// ---------------------------------------------------------------------------
+
+// Generate the Qt glue header that calls C functions directly.
+// cParseResult carries the C function names and string-ownership info.
+// freeStringFunc is the name of the free function (e.g. "rust_example_free_string"),
+// or empty if none was found (heap char* returns will be leaked with a warning comment).
+QString lidlMakeProviderHeaderCFFI(const CHeaderParseResult& cParseResult);
+
+// Generate callMethod() + getMethods() dispatch source for C-FFI mode.
+QString lidlMakeProviderDispatchCFFI(const CHeaderParseResult& cParseResult);
 
 #endif // LIDL_GEN_PROVIDER_H

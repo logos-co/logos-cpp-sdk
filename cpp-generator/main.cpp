@@ -2,26 +2,31 @@
 #include "experimental/lidl_gen_client.h"
 #include "experimental/lidl_gen_provider.h"
 #include "experimental/impl_header_parser.h"
+#include "experimental/c_header_parser.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTextStream>
 
 int main(int argc, char* argv[])
 {
-    // Check for --lidl or --from-header mode before initializing QCoreApplication,
-    // since legacy_main creates its own.
-    bool hasLidl = false;
-    bool hasFromHeader = false;
+    // Check for --lidl, --from-header, or --from-c-header mode before initializing
+    // QCoreApplication, since legacy_main creates its own.
+    bool hasLidl         = false;
+    bool hasFromHeader   = false;
+    bool hasFromCHeader  = false;
     for (int i = 1; i < argc; ++i) {
         QString arg = QString::fromUtf8(argv[i]);
-        if (arg == "--lidl") hasLidl = true;
-        if (arg == "--from-header") hasFromHeader = true;
+        if (arg == "--lidl")           hasLidl        = true;
+        if (arg == "--from-header")    hasFromHeader  = true;
+        if (arg == "--from-c-header")  hasFromCHeader = true;
     }
 
-    if (hasLidl || hasFromHeader) {
+    if (hasLidl || hasFromHeader || hasFromCHeader) {
         QCoreApplication app(argc, argv);
         QTextStream err(stderr);
         QTextStream out(stdout);
@@ -31,6 +36,109 @@ int main(int argc, char* argv[])
         const int outDirIdx = args.indexOf("--output-dir");
         if (outDirIdx != -1 && outDirIdx + 1 < args.size()) {
             outputDir = args.at(outDirIdx + 1);
+        }
+
+        // --from-c-header mode: parse plain C header directly (no C++ impl class needed)
+        if (hasFromCHeader) {
+            const int fromCHeaderIdx = args.indexOf("--from-c-header");
+            if (fromCHeaderIdx + 1 >= args.size()) {
+                err << "Error: --from-c-header requires a path to the C header\n";
+                return 1;
+            }
+            QString headerPath = args.at(fromCHeaderIdx + 1);
+
+            const int metadataIdx = args.indexOf("--metadata");
+            if (metadataIdx == -1 || metadataIdx + 1 >= args.size()) {
+                err << "Error: --from-c-header requires --metadata <metadata.json>\n";
+                return 1;
+            }
+            QString metadataPath = args.at(metadataIdx + 1);
+
+            const int backendIdx = args.indexOf("--backend");
+            if (backendIdx == -1 || backendIdx + 1 >= args.size()) {
+                err << "Error: --from-c-header requires --backend <qt>\n";
+                return 1;
+            }
+            QString backend = args.at(backendIdx + 1);
+
+            // --c-header-include: the #include name embedded in generated code
+            // (defaults to the header filename without path)
+            QString cHeaderInclude;
+            const int cHeaderIncIdx = args.indexOf("--c-header-include");
+            if (cHeaderIncIdx != -1 && cHeaderIncIdx + 1 < args.size()) {
+                cHeaderInclude = args.at(cHeaderIncIdx + 1);
+            } else {
+                cHeaderInclude = QFileInfo(headerPath).fileName();
+            }
+
+            // --prefix: optional override for the C function prefix
+            // Defaults to auto-derived from module name (read from metadata)
+            QString prefix;
+            const int prefixIdx = args.indexOf("--prefix");
+            if (prefixIdx != -1 && prefixIdx + 1 < args.size()) {
+                prefix = args.at(prefixIdx + 1);
+            }
+
+            // Parse the C header (prefix derived from module name if not given)
+            // We need the module name first — do a quick metadata read to get it
+            if (prefix.isEmpty()) {
+                // Read module name from metadata to derive prefix
+                QFile mf(metadataPath);
+                if (mf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                    QJsonParseError pe;
+                    QJsonDocument doc = QJsonDocument::fromJson(mf.readAll(), &pe);
+                    if (pe.error == QJsonParseError::NoError) {
+                        QString moduleName = doc.object().value("name").toString();
+                        prefix = defaultPrefixFromModuleName(moduleName);
+                    }
+                }
+                if (prefix.isEmpty()) {
+                    err << "Error: could not derive prefix from module name; use --prefix\n";
+                    return 1;
+                }
+            }
+
+            CHeaderParseResult cpr = parseCHeader(headerPath, prefix, metadataPath, cHeaderInclude, err);
+            if (cpr.hasError()) {
+                err << "Error parsing C header: " << cpr.error << "\n";
+                return 4;
+            }
+
+            const ModuleDecl& mod = cpr.module;
+            QString genDirPath = outputDir.isEmpty()
+                ? QDir::current().filePath("generated")
+                : outputDir;
+            QDir().mkpath(genDirPath);
+
+            if (backend == "qt") {
+                QString glueHeaderAbs = QDir(genDirPath).filePath(mod.name + "_qt_glue.h");
+                {
+                    QFile f(glueHeaderAbs);
+                    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                        err << "Failed to write glue header: " << glueHeaderAbs << "\n";
+                        return 6;
+                    }
+                    f.write(lidlMakeProviderHeaderCFFI(cpr).toUtf8());
+                }
+
+                QString dispatchAbs = QDir(genDirPath).filePath(mod.name + "_dispatch.cpp");
+                {
+                    QFile f(dispatchAbs);
+                    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                        err << "Failed to write dispatch source: " << dispatchAbs << "\n";
+                        return 7;
+                    }
+                    f.write(lidlMakeProviderDispatchCFFI(cpr).toUtf8());
+                }
+
+                out << "Generated: " << glueHeaderAbs << "\n";
+                out << "Generated: " << dispatchAbs << "\n";
+                out.flush();
+                return 0;
+            }
+
+            err << "Error: --from-c-header currently only supports --backend qt\n";
+            return 1;
         }
 
         // --from-header mode: parse C++ impl header directly (no .lidl needed)

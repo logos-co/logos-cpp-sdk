@@ -11,15 +11,16 @@ cpp-generator/
 │   ├── main.cpp                    # legacy_main() — plugin/metadata/provider-header modes
 │   ├── generator_lib.h/cpp         # Shared utilities, type mapping, header parser
 │   └── legacy_main.h              # Forward declaration
-├── experimental/                   # New LIDL + impl-header generator
+├── experimental/                   # New LIDL + impl-header + c-ffi generator
 │   ├── lidl_ast.h                 # AST types (TypeExpr, ModuleDecl, MethodDecl, etc.)
 │   ├── lidl_lexer.h/cpp           # LIDL tokenizer
 │   ├── lidl_parser.h/cpp          # LIDL recursive descent parser
 │   ├── lidl_validator.h/cpp       # Semantic validation
 │   ├── lidl_serializer.h/cpp      # AST → LIDL text pretty-printer
 │   ├── lidl_gen_client.h/cpp      # Client stub generation + helpers
-│   ├── lidl_gen_provider.h/cpp    # Provider glue + dispatch generation
-│   └── impl_header_parser.h/cpp   # C++ header → ModuleDecl parser
+│   ├── lidl_gen_provider.h/cpp    # Provider glue + dispatch generation (universal + c-ffi)
+│   ├── impl_header_parser.h/cpp   # C++ header → ModuleDecl parser (--from-header)
+│   └── c_header_parser.h/cpp      # C header → CHeaderParseResult parser (--from-c-header)
 └── docs/                          # This documentation
 ```
 
@@ -27,7 +28,7 @@ cpp-generator/
 
 ### Entry Point (`main.cpp`)
 
-Checks for `--from-header` or `--lidl` flags before creating `QCoreApplication`. If neither is present, falls through to `legacy_main()`.
+Checks for `--from-c-header`, `--from-header`, or `--lidl` flags before creating `QCoreApplication`. If none is present, falls through to `legacy_main()`.
 
 ### AST (`lidl_ast.h`)
 
@@ -85,10 +86,15 @@ Converts `ModuleDecl` back to LIDL text. Used for roundtrip testing (parse → s
 
 - `lidlTypeToStd(TypeExpr)` — maps LIDL types to C++ std type strings
 - `lidlIsStdConvertible(TypeExpr)` — checks if a type has a pure C++ representation
-- `lidlMakeProviderHeader(ModuleDecl, implClass, implHeader)` — generates Qt glue header
+- `lidlMakeProviderHeader(ModuleDecl, implClass, implHeader)` — generates Qt glue header (universal / `--from-header` mode)
   - Emits `nlohmannToQVariant()` helper when any method has `jsonReturn = true`
   - Wires `m_impl.emitEvent` → `LogosProviderBase::emitEvent` when `hasEmitEvent` or `events` are present
 - `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods dispatch
+- `lidlMakeProviderHeaderCFFI(CHeaderParseResult)` — generates Qt glue header (c-ffi / `--from-c-header` mode)
+  - No `m_impl` member; includes C header via `extern "C" { #include "..." }`
+  - Emits direct C function calls with Qt ↔ C type conversions
+  - Handles `char*` heap strings with auto-wired free function; `const char*` with no free
+- `lidlMakeProviderDispatchCFFI(CHeaderParseResult)` — dispatch for c-ffi (delegates to `lidlMakeProviderDispatch`)
 - `lidlGenerateProviderGlue(lidlPath, ...)` — full pipeline from .lidl file
 
 ### Impl Header Parser (`impl_header_parser.h/cpp`)
@@ -100,9 +106,38 @@ Converts `ModuleDecl` back to LIDL text. Used for roundtrip testing (parse → s
 - Recognizes `LogosMap` and `LogosList` return types (nlohmann::json aliases) and sets `MethodDecl.jsonReturn = true`
 - Template-aware parameter splitting (handles `std::vector<std::string>` correctly)
 
+- `parseCHeader(headerPath, prefix, metadataPath, cHeaderInclude, err)` — parses plain C header + metadata.json into `CHeaderParseResult`
+  - Strips block comments, skips preprocessor and `extern "C"` lines
+  - Matches `rettype prefix_methodname(params);` declarations
+  - Maps C types (`int64_t`, `char*`, `const char*`, etc.) to LIDL TypeExpr
+  - Detects `{prefix}free_string` and stores it in `freeStringFunc`; excludes it from exposed methods
+  - Renames reserved names: `version` → `libVersion`, `name` → `libName`
+  - Returns `CHeaderParseResult` carrying `ModuleDecl` + per-method `CHeaderMethod` entries
+- `defaultPrefixFromModuleName(moduleName)` — auto-derives prefix: `"rust_example_module"` → `"rust_example_"`
+
 ## CLI Usage
 
-### From C++ impl header (primary use case for universal modules)
+### From C header — c-ffi mode (zero hand-written C++)
+
+```bash
+logos-cpp-generator --from-c-header rust-lib/include/rust_example.h \
+    --metadata metadata.json \
+    --backend qt \
+    --c-header-include rust_example.h \
+    --output-dir ./generated_code \
+    [--prefix rust_example_]
+```
+
+Flags:
+- `--from-c-header <path>` — the C header to parse
+- `--metadata <path>` — module name, version, description (required)
+- `--backend qt` — only `qt` supported
+- `--c-header-include <name>` — the `#include` string embedded in generated code (defaults to header filename)
+- `--prefix <prefix>` — override auto-derived prefix (default: `{moduleName_without_module}_`)
+
+Generates: `<name>_qt_glue.h`, `<name>_dispatch.cpp`
+
+### From C++ impl header — universal mode
 
 ```bash
 logos-cpp-generator --from-header src/my_module_impl.h \
@@ -113,7 +148,7 @@ logos-cpp-generator --from-header src/my_module_impl.h \
     --output-dir ./generated_code
 ```
 
-Generates: `my_module_qt_glue.h`, `my_module_dispatch.cpp`
+Generates: `<name>_qt_glue.h`, `<name>_dispatch.cpp`
 
 ### From LIDL file — provider glue
 
@@ -170,7 +205,8 @@ Test coverage:
 | `test_lidl_type_mapping.cpp` | `lidlTypeToQt`, `lidlTypeToStd`, `lidlIsStdConvertible`, `lidlToPascalCase` |
 | `test_lidl_gen_provider.cpp` | Provider header + dispatch generation: class names, includes, macros, wrapper methods, conversions, events |
 | `test_lidl_gen_client.cpp` | Client stub generation: sync/async methods, events, metadata JSON, edge cases |
-| `test_impl_header_parser.cpp` | Header parsing: type mapping, access specifiers, skipping private/protected, error cases |
+| `test_impl_header_parser.cpp` | C++ header parsing: type mapping, access specifiers, skipping private/protected, error cases |
+| `test_lidl_gen_provider.cpp` (c-ffi) | C-FFI provider generation via `lidlMakeProviderHeaderCFFI`: direct C calls, string ownership, free function wiring |
 
 Fixture files in `tests/experimental/fixtures/`:
 - `sample_impl.h` — module with all supported type variations
@@ -178,16 +214,24 @@ Fixture files in `tests/experimental/fixtures/`:
 - `complex_impl.h` — module with multiple access specifier sections
 - `empty_class_impl.h` — class with no public methods
 - `empty_metadata.json` — minimal metadata
+- `universal_impl.h` — c-ffi fixture: C header with mixed types, heap/static strings, and free function
 
 ## Known Limitations
 
-- The impl header parser is lightweight (regex + state machine). It does not handle:
+- The impl header parser (`--from-header`) is lightweight (regex + state machine). It does not handle:
   - Multi-line method declarations
   - Default parameter values
   - Method definitions in the header (only declarations ending with `;`)
   - Nested classes
   - Template methods
   - `std::function` members other than `emitEvent` are silently skipped
+- The C header parser (`--from-c-header`) does not handle:
+  - Multi-line function declarations
+  - Macros that expand to function declarations
+  - Function pointer typedefs
+  - Variadic functions (`...`)
+  - C++ templates (not valid C anyway)
 - LIDL does not support generic/parameterized types or inheritance
-- Only the `qt` backend is implemented for `--from-header`; future backends (CBOR, Rust) are planned
-- Client stub generation (`lidlMakeHeader`/`lidlMakeSource`) is only available from LIDL files, not from `--from-header`
+- Only the `qt` backend is implemented for `--from-header` and `--from-c-header`; future backends (CBOR, Rust) are planned
+- Client stub generation (`lidlMakeHeader`/`lidlMakeSource`) is only available from LIDL files, not from `--from-header` or `--from-c-header`
+- C-FFI modules do not support events (no `emitEvent` mechanism); use `universal` mode if you need events

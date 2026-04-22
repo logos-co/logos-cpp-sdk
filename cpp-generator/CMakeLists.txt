@@ -20,6 +20,7 @@ add_executable(logos-cpp-generator
     experimental/lidl_gen_client.cpp
     experimental/lidl_gen_provider.cpp
     experimental/impl_header_parser.cpp
+    experimental/c_header_parser.cpp
 )
 
 target_link_libraries(logos-cpp-generator PRIVATE Qt${QT_VERSION_MAJOR}::Core)
