@@ -26,7 +26,11 @@ public:
 
 public slots:
     void onEventResponse(const QString& eventName, const QVariantList& data) {
+        // Dispatch to callbacks registered for this specific event name,
+        // plus any wildcard subscribers (callbacks registered with an
+        // empty event name, meaning "receive every event").
         auto cbs = m_callbacks.value(eventName);
+        cbs.append(m_callbacks.value(QString()));
         if (!cbs.isEmpty()) {
             qDebug() << "[LogosObject] Remote EventHelper: dispatching event" << eventName << "to" << cbs.size() << "callback(s) (via IPC)";
         }

@@ -303,6 +303,114 @@ TEST_F(LocalEventPipelineTest, EmitEventOnLocalLogosObjectTriggersSignal)
     obj->release();
 }
 
+// ── Wildcard subscriptions (empty event name = match any event) ────────────
+//
+// An empty event name passed to LogosObject::onEvent means "receive every
+// event regardless of name". Without this, wrapper layers that subscribe
+// without knowing the specific event names up front (e.g. logoscore's
+// `watch` with no --event filter) silently drop every event.
+
+TEST_F(LocalEventPipelineTest, WildcardSubscriptionReceivesEveryEvent)
+{
+    LocalTransportHost host;
+    host.publishObject("pipeline_mod", m_proxy);
+
+    LocalTransportConnection conn;
+    LogosObject* obj = conn.requestObject("pipeline_mod", 5000);
+    ASSERT_NE(obj, nullptr);
+
+    QList<QPair<QString, QVariantList>> received;
+    obj->onEvent("", [&](const QString& name, const QVariantList& data) {
+        received.append({name, data});
+    });
+
+    m_provider->testEmitEvent("alpha", {QVariant(1)});
+    m_provider->testEmitEvent("beta",  {QVariant("two"), QVariant(2)});
+    m_provider->testEmitEvent("gamma", {});
+
+    ASSERT_EQ(received.size(), 3);
+    EXPECT_EQ(received[0].first, "alpha");
+    EXPECT_EQ(received[0].second.size(), 1);
+    EXPECT_EQ(received[0].second[0].toInt(), 1);
+    EXPECT_EQ(received[1].first, "beta");
+    EXPECT_EQ(received[1].second.size(), 2);
+    EXPECT_EQ(received[2].first, "gamma");
+    EXPECT_EQ(received[2].second.size(), 0);
+    obj->release();
+}
+
+TEST_F(LocalEventPipelineTest, WildcardAndNamedSubscriptionsCoexist)
+{
+    LocalTransportHost host;
+    host.publishObject("pipeline_mod", m_proxy);
+
+    LocalTransportConnection conn;
+    LogosObject* obj = conn.requestObject("pipeline_mod", 5000);
+    ASSERT_NE(obj, nullptr);
+
+    int wildcardCount = 0;
+    int alphaCount = 0;
+    QStringList wildcardNames;
+    obj->onEvent("", [&](const QString& name, const QVariantList&) {
+        wildcardCount++;
+        wildcardNames.append(name);
+    });
+    obj->onEvent("alpha", [&](const QString&, const QVariantList&) {
+        alphaCount++;
+    });
+
+    m_provider->testEmitEvent("alpha", {});
+    m_provider->testEmitEvent("beta",  {});
+    m_provider->testEmitEvent("alpha", {});
+
+    // Wildcard sees all 3, named-"alpha" sees 2.
+    EXPECT_EQ(wildcardCount, 3);
+    EXPECT_EQ(alphaCount, 2);
+    EXPECT_EQ(wildcardNames, (QStringList{"alpha", "beta", "alpha"}));
+    obj->release();
+}
+
+TEST_F(LocalEventPipelineTest, MultipleWildcardSubscribersAllReceive)
+{
+    LocalTransportHost host;
+    host.publishObject("pipeline_mod", m_proxy);
+
+    LocalTransportConnection conn;
+    LogosObject* obj = conn.requestObject("pipeline_mod", 5000);
+    ASSERT_NE(obj, nullptr);
+
+    int countA = 0, countB = 0;
+    obj->onEvent("", [&](const QString&, const QVariantList&) { countA++; });
+    obj->onEvent("", [&](const QString&, const QVariantList&) { countB++; });
+
+    m_provider->testEmitEvent("evt1", {});
+    m_provider->testEmitEvent("evt2", {});
+
+    EXPECT_EQ(countA, 2);
+    EXPECT_EQ(countB, 2);
+    obj->release();
+}
+
+TEST_F(LocalEventPipelineTest, NamedSubscriberDoesNotReceiveOtherEvents)
+{
+    LocalTransportHost host;
+    host.publishObject("pipeline_mod", m_proxy);
+
+    LocalTransportConnection conn;
+    LogosObject* obj = conn.requestObject("pipeline_mod", 5000);
+    ASSERT_NE(obj, nullptr);
+
+    int alphaCount = 0;
+    obj->onEvent("alpha", [&](const QString&, const QVariantList&) { alphaCount++; });
+
+    m_provider->testEmitEvent("beta",  {});
+    m_provider->testEmitEvent("alpha", {});
+    m_provider->testEmitEvent("gamma", {});
+
+    EXPECT_EQ(alphaCount, 1);
+    obj->release();
+}
+
 // ── Consumer onEvent integration ───────────────────────────────────────────
 
 TEST_F(LocalEventPipelineTest, ConsumerOnEventRegistersCallback)
