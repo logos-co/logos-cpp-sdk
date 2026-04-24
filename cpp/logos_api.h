@@ -83,6 +83,24 @@ public:
     LogosAPIClient* getClient(const std::string& target_module) const;
 
     /**
+     * @brief Get a client that uses an *explicit* transport instead of
+     *        the process-global default.
+     *
+     * Use this when the caller needs to dial one module over a
+     * particular protocol without side-effecting the rest of the
+     * process. Canonical case: a CLI that talks only to `core_service`
+     * over tcp_ssl — using `LogosTransportConfigGlobal::setDefault` for
+     * that would also flip the same process's `LogosAPIProvider` into
+     * trying to bind a tcp_ssl server, which the CLI has no cert for.
+     *
+     * Cached per (target_module, transport) pair so repeat calls with
+     * the same config return the same client; a request with a
+     * different transport to the same target creates a separate client.
+     */
+    LogosAPIClient* getClient(const QString& target_module,
+                              const LogosTransportConfig& transport) const;
+
+    /**
      * @brief Get the token manager instance
      * @return TokenManager* Pointer to the token manager
      */
@@ -98,7 +116,8 @@ public:
 private:
     QString m_module_name;
     LogosAPIProvider* m_provider;
-    mutable QHash<QString, LogosAPIClient*> m_clients;  // Cache of clients per target module
+    mutable QHash<QString, LogosAPIClient*> m_clients;  // Cache of default-transport clients per target module
+    mutable QHash<QString, LogosAPIClient*> m_clientsByTransport;  // Cache for explicit-transport clients, keyed by target+transport
     TokenManager* m_token_manager;
 };
 

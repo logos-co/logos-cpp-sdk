@@ -23,6 +23,23 @@ LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to, const QStri
     m_transport->connectToHost();
 }
 
+LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to,
+                                   const QString& origin_module,
+                                   TokenManager* token_manager,
+                                   const LogosTransportConfig& transport,
+                                   QObject *parent)
+    : QObject(parent)
+    , m_registryUrl(LogosInstance::id(module_to_talk_to))
+    , m_token_manager(token_manager)
+{
+    // Explicit-config path. Bypasses `LogosTransportConfigGlobal::getDefault`
+    // so the caller's choice of transport for THIS consumer doesn't bleed
+    // into the rest of the process (in particular, any `LogosAPIProvider`
+    // in the same LogosAPI still creates its host from the global default).
+    m_transport = LogosTransportFactory::createConnection(transport, m_registryUrl);
+    m_transport->connectToHost();
+}
+
 LogosAPIConsumer::~LogosAPIConsumer()
 {
 }

@@ -11,6 +11,7 @@
 #include <memory>
 
 #include "logos_mode.h"
+#include "logos_transport_config.h"
 
 class LogosTransportConnection;
 class LogosObject;
@@ -31,6 +32,20 @@ class LogosAPIConsumer : public QObject
 
 public:
     explicit LogosAPIConsumer(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent = nullptr);
+    /**
+     * Explicit-transport overload. Use this when the caller needs a
+     * specific transport for this consumer and does *not* want the
+     * process-global default (which also drives provider bind-URLs).
+     * Typical case: a pure client that only reaches one remote module
+     * over a particular protocol — e.g. the logoscore CLI dialing
+     * `core_service` over tcp_ssl without side-effecting the client's
+     * own LogosAPI provider into also trying to bind TLS.
+     */
+    LogosAPIConsumer(const QString& module_to_talk_to,
+                     const QString& origin_module,
+                     TokenManager* token_manager,
+                     const LogosTransportConfig& transport,
+                     QObject *parent = nullptr);
     ~LogosAPIConsumer();
 
     /**

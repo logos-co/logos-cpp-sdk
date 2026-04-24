@@ -62,6 +62,27 @@ LogosAPIClient* LogosAPI::getClient(const std::string& target_module) const
     return getClient(QString::fromStdString(target_module));
 }
 
+LogosAPIClient* LogosAPI::getClient(const QString& target_module,
+                                    const LogosTransportConfig& transport) const
+{
+    // Separate cache from the default-transport path. Caching by
+    // (target, protocol) keeps `getClient(x, tcp_ssl)` and
+    // `getClient(x, local)` from aliasing onto the same object, which
+    // would double-open connections / confuse reuse.
+    const QString key = target_module + "#" +
+        QString::number(static_cast<int>(transport.protocol)) + ":" +
+        QString::fromStdString(transport.host) + ":" +
+        QString::number(transport.port);
+    if (m_clientsByTransport.contains(key))
+        return m_clientsByTransport.value(key);
+
+    LogosAPIClient* client = new LogosAPIClient(
+        target_module, m_module_name, m_token_manager, transport,
+        const_cast<LogosAPI*>(this));
+    m_clientsByTransport.insert(key, client);
+    return client;
+}
+
 TokenManager* LogosAPI::getTokenManager() const
 {
     return m_token_manager;

@@ -10,6 +10,7 @@
 #include <string>
 
 #include "logos_mode.h"
+#include "logos_transport_config.h"
 
 class LogosAPIConsumer;
 class LogosObject;
@@ -27,6 +28,18 @@ class LogosAPIClient : public QObject
 
 public:
     explicit LogosAPIClient(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent = nullptr);
+    /**
+     * Explicit-transport overload. The client (and the consumer it
+     * owns) will use `transport` for its connection, bypassing
+     * `LogosTransportConfigGlobal::getDefault`. See
+     * `LogosAPIConsumer`'s explicit-transport constructor for the
+     * full rationale.
+     */
+    LogosAPIClient(const QString& module_to_talk_to,
+                   const QString& origin_module,
+                   TokenManager* token_manager,
+                   const LogosTransportConfig& transport,
+                   QObject *parent = nullptr);
     ~LogosAPIClient();
 
     /**
