@@ -40,6 +40,10 @@ add_executable(sdk_tests
     test_async_calls.cpp
     test_provider_dispatch.cpp
     test_std_string_overloads.cpp
+    test_rpc_framing.cpp
+    test_json_codec.cpp
+    test_cbor_codec.cpp
+    test_plain_transport_tcp.cpp
     fixtures/sample_provider.cpp
     ${GENERATED_DISPATCH}
 )

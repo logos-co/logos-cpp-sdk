@@ -21,6 +21,7 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $out/include/cpp/implementations/qt_local
     mkdir -p $out/include/cpp/implementations/qt_remote
     mkdir -p $out/include/cpp/implementations/mock
+    mkdir -p $out/include/cpp/implementations/plain
     
     # Install core headers
     if [ -f core/interface.h ]; then
@@ -34,7 +35,8 @@ pkgs.stdenv.mkDerivation {
                 logos_instance.h logos_object.h \
                 logos_provider_object.h logos_provider_object.cpp \
                 qt_provider_object.h qt_provider_object.cpp \
-                logos_transport.h logos_transport_factory.h logos_transport_factory.cpp \
+                logos_transport.h logos_transport.cpp logos_transport_config.h \
+                logos_transport_factory.h logos_transport_factory.cpp \
                 logos_registry.h logos_registry_factory.h logos_registry_factory.cpp \
                 plugin_registry.h logos_json.h logos_result.h; do
       if [ -f cpp/$file ]; then
@@ -58,6 +60,26 @@ pkgs.stdenv.mkDerivation {
     for file in mock_store.h mock_store.cpp mock_transport.h mock_transport.cpp mock_registry.h logos_mock.h; do
       if [ -f cpp/implementations/mock/$file ]; then
         cp cpp/implementations/mock/$file $out/include/cpp/implementations/mock/
+      fi
+    done
+
+    # Plain-C++ transport headers + sources (no Qt; Boost.Asio + OpenSSL +
+    # nlohmann/json under the hood — downstream consumers pick them up
+    # automatically when compiling against the SDK).
+    for file in rpc_value.h rpc_message.h rpc_message.cpp \
+                wire_codec.h json_codec.h json_codec.cpp \
+                json_mapping.h json_mapping.cpp \
+                cbor_codec.h cbor_codec.cpp \
+                rpc_framing.h rpc_framing.cpp \
+                incoming_call_handler.h \
+                rpc_connection.h rpc_server.h rpc_server.cpp \
+                io_context_pool.h io_context_pool.cpp \
+                qvariant_rpc_value.h qvariant_rpc_value.cpp \
+                plain_logos_object.h plain_logos_object.cpp \
+                plain_transport_host.h plain_transport_host.cpp \
+                plain_transport_connection.h plain_transport_connection.cpp; do
+      if [ -f cpp/implementations/plain/$file ]; then
+        cp cpp/implementations/plain/$file $out/include/cpp/implementations/plain/
       fi
     done
     

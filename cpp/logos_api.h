@@ -1,11 +1,13 @@
 #ifndef LOGOS_API_H
 #define LOGOS_API_H
 
+#include "logos_transport_config.h"
+#include "logos_types.h"
+
 #include <QObject>
 #include <QString>
 #include <QHash>
 #include <string>
-#include "logos_types.h"
 
 class LogosAPIClient;
 class LogosAPIProvider;
@@ -27,6 +29,18 @@ public:
      * @param parent Parent QObject
      */
     explicit LogosAPI(const QString& module_name, QObject *parent = nullptr);
+
+    /**
+     * @brief Construct a new LogosAPI with an explicit transport set.
+     *
+     * `transports` is empty ⇒ use the process-global default (back-compat).
+     * Non-empty ⇒ provider publishes on every configured transport
+     * (e.g. a daemon listing both LocalSocket and TCP+SSL so the CLI has
+     * a fast in-process path *and* remote clients have a secure path).
+     */
+    LogosAPI(const QString& module_name,
+             LogosTransportSet transports,
+             QObject *parent = nullptr);
 
     /**
      * @brief Construct a new LogosAPI instance (const char* overload — resolves ambiguity)

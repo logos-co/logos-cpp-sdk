@@ -6,18 +6,20 @@
 #include <string>
 
 LogosAPI::LogosAPI(const QString& module_name, QObject *parent)
+    : LogosAPI(module_name, LogosTransportSet{}, parent)
+{
+}
+
+LogosAPI::LogosAPI(const QString& module_name,
+                   LogosTransportSet transports,
+                   QObject *parent)
     : QObject(parent)
     , m_module_name(module_name)
     , m_provider(nullptr)
     , m_token_manager(nullptr)
 {
-    // Initialize provider
-    m_provider = new LogosAPIProvider(m_module_name, this);
-    
-    // Get token manager instance
+    m_provider = new LogosAPIProvider(m_module_name, std::move(transports), this);
     m_token_manager = &TokenManager::instance();
-
-    // Register LogosResult as QVariant type
     qRegisterMetaType<LogosResult>("LogosResult");
 }
 

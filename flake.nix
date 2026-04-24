@@ -68,6 +68,9 @@
             pkgs.qt6.qtbase
             pkgs.qt6.qtremoteobjects
             pkgs.gtest
+            pkgs.boost
+            pkgs.openssl
+            pkgs.nlohmann_json
           ];
         };
       });

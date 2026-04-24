@@ -10,19 +10,30 @@
 #include <QDebug>
 #include <string>
 
-LogosAPIProvider::LogosAPIProvider(const QString& module_name, QObject *parent)
+LogosAPIProvider::LogosAPIProvider(const QString& module_name,
+                                   LogosTransportSet transports,
+                                   QObject *parent)
     : QObject(parent)
     , m_registryUrl(LogosInstance::id(module_name))
     , m_moduleProxy(nullptr)
     , m_qtProviderObject(nullptr)
 {
-    m_transport = LogosTransportFactory::createHost(m_registryUrl);
+    if (transports.empty()) {
+        // Back-compat: one host, chosen by the global mode + transport config.
+        m_transports.push_back(LogosTransportFactory::createHost(m_registryUrl));
+    } else {
+        // One host per configured transport — lets a single provider serve
+        // its object on several endpoints simultaneously (local-socket +
+        // TCP, TCP + TCP+SSL, etc.).
+        for (const auto& cfg : transports)
+            m_transports.push_back(LogosTransportFactory::createHost(cfg, m_registryUrl));
+    }
 }
 
 LogosAPIProvider::~LogosAPIProvider()
 {
     if (!m_registeredObjectName.isEmpty()) {
-        m_transport->unpublishObject(m_registeredObjectName);
+        for (auto& t : m_transports) t->unpublishObject(m_registeredObjectName);
     }
 }
 
@@ -98,7 +109,12 @@ bool LogosAPIProvider::publishProvider(const QString& name, LogosProviderObject*
 {
     m_moduleProxy = new ModuleProxy(provider, this);
 
-    bool success = m_transport->publishObject(name, m_moduleProxy);
+    // Publish on every configured transport. Success = any transport
+    // accepted the publish (follow-up: surface per-transport failures).
+    bool success = false;
+    for (auto& t : m_transports) {
+        if (t->publishObject(name, m_moduleProxy)) success = true;
+    }
     if (success) {
         m_registeredObjectName = name;
         qDebug() << "[LogosProviderObject] LogosAPIProvider: successfully published" << name;
