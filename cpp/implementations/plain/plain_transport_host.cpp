@@ -11,7 +11,12 @@
 #include <QMetaObject>
 
 #include <boost/asio/ssl/context.hpp>
+#include <boost/version.hpp>
 #include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/opensslv.h>
+#include <openssl/x509.h>
+#include <openssl/evp.h>
 
 namespace logos::plain {
 
@@ -26,8 +31,47 @@ std::shared_ptr<IWireCodec> makeCodec(LogosWireCodec kind)
     }
 }
 
+// Print the last OpenSSL error to qWarning, clearing the error stack.
+// Used after any SSL_CTX_set_* call that returned 0 — silent failures
+// were how we missed the cipher-list misconfig for multiple rounds.
+void dumpSslErrors(const char* where)
+{
+    unsigned long e;
+    while ((e = ERR_get_error()) != 0) {
+        char buf[256];
+        ERR_error_string_n(e, buf, sizeof(buf));
+        qWarning() << "buildSslCtx/" << where << ":" << buf;
+    }
+}
+
 boost::asio::ssl::context buildSslCtx(const LogosTransportConfig& cfg, bool server)
 {
+    // One-time diagnostic: print Boost + OpenSSL build-vs-runtime
+    // versions on first call. We've spent multiple rounds on
+    // TLS configuration that *appeared* to take effect (strings
+    // baked into the binary) but didn't change runtime behaviour;
+    // a version mismatch between compile-time headers and runtime
+    // libs would do that, and this prints the smoking gun.
+    static bool versionsLogged = false;
+    if (!versionsLogged) {
+        versionsLogged = true;
+        qInfo().nospace()
+            << "buildSslCtx versions: "
+            << "Boost build=" << BOOST_VERSION
+            << " (" << BOOST_LIB_VERSION << "), "
+            << "OpenSSL build=0x" << Qt::hex << OPENSSL_VERSION_NUMBER
+            << Qt::dec << " (" << OPENSSL_VERSION_TEXT << "), "
+            << "runtime=" << OpenSSL_version(OPENSSL_VERSION);
+    }
+
+    qInfo().nospace() << "buildSslCtx: cfg.certFile='"
+        << QString::fromStdString(cfg.certFile)
+        << "' cfg.keyFile='"
+        << QString::fromStdString(cfg.keyFile)
+        << "' cfg.caFile='"
+        << QString::fromStdString(cfg.caFile)
+        << "' role=" << (server ? "server" : "client");
+
     boost::asio::ssl::context ctx(server
         ? boost::asio::ssl::context::tls_server
         : boost::asio::ssl::context::tls_client);
@@ -36,52 +80,97 @@ boost::asio::ssl::context buildSslCtx(const LogosTransportConfig& cfg, bool serv
                     | boost::asio::ssl::context::no_sslv3
                     | boost::asio::ssl::context::single_dh_use);
 
-    // Require TLS 1.2+. Without an explicit floor, certain
-    // Boost.Asio × OpenSSL 3.x combinations fall through to a
-    // server-side max proto of TLS 1.1, so every modern client (which
-    // refuses 1.1) gets a handshake_failure alert before the server
-    // sends ServerHello. Symptom: `openssl s_client -tls1_3` returns
-    // alert 70 (protocol_version); `-tls1_2` returns alert 40
-    // (handshake_failure). Set a floor and a ceiling explicitly.
-    SSL_CTX_set_min_proto_version(ctx.native_handle(), TLS1_2_VERSION);
-    SSL_CTX_set_max_proto_version(ctx.native_handle(), TLS1_3_VERSION);
+    // Require TLS 1.2+. Check return values on every set_* below and
+    // dump any pending OpenSSL errors — previous silent-fail behaviour
+    // was the root cause of multiple debugging rounds landing no fix.
+    if (!SSL_CTX_set_min_proto_version(ctx.native_handle(), TLS1_2_VERSION)) {
+        qWarning() << "buildSslCtx: SSL_CTX_set_min_proto_version(TLS1_2) failed";
+        dumpSslErrors("set_min_proto_version");
+    }
+    if (!SSL_CTX_set_max_proto_version(ctx.native_handle(), TLS1_3_VERSION)) {
+        qWarning() << "buildSslCtx: SSL_CTX_set_max_proto_version(TLS1_3) failed";
+        dumpSslErrors("set_max_proto_version");
+    }
+    if (!SSL_CTX_set1_groups_list(ctx.native_handle(),
+                                  "X25519:P-256:P-384:P-521")) {
+        qWarning() << "buildSslCtx: SSL_CTX_set1_groups_list failed";
+        dumpSslErrors("set1_groups_list");
+    }
+    if (!SSL_CTX_set_ciphersuites(ctx.native_handle(),
+            "TLS_AES_128_GCM_SHA256:"
+            "TLS_AES_256_GCM_SHA384:"
+            "TLS_CHACHA20_POLY1305_SHA256")) {
+        qWarning() << "buildSslCtx: SSL_CTX_set_ciphersuites failed";
+        dumpSslErrors("set_ciphersuites");
+    }
+    if (!SSL_CTX_set_cipher_list(ctx.native_handle(),
+            "ECDHE+AESGCM:ECDHE+CHACHA20:"
+            "DHE+AESGCM:DHE+CHACHA20:"
+            "!aNULL:!MD5:!DSS:!RC4:!3DES")) {
+        qWarning() << "buildSslCtx: SSL_CTX_set_cipher_list failed";
+        dumpSslErrors("set_cipher_list");
+    }
 
-    // Enable EC groups for both TLS 1.3 key_share and TLS 1.2 ECDHE.
-    // OpenSSL 3.x ships sane defaults here but some
-    // minimal / embedded builds ship an empty list, in which case the
-    // server has nothing to respond with and aborts the handshake.
-    // Being explicit costs nothing and removes a class of mystery
-    // bugs.
-    SSL_CTX_set1_groups_list(ctx.native_handle(),
-                             "X25519:P-256:P-384:P-521");
+    // Log what stuck. If min/max_proto read back as 0, the platform
+    // doesn't support bounded proto versions (very old OpenSSL) and
+    // nothing we did above will have capped anything. Cipher count is
+    // the second-most-likely silent failure: a non-zero count from
+    // SSL_CTX_get_ciphers means the TLS 1.2 cipher list got applied.
+    {
+        auto* sk = SSL_CTX_get_ciphers(ctx.native_handle());
+        const int n = sk ? sk_SSL_CIPHER_num(sk) : 0;
+        QString first;
+        if (n > 0) {
+            const SSL_CIPHER* c = sk_SSL_CIPHER_value(sk, 0);
+            first = QString::fromLatin1(SSL_CIPHER_get_name(c));
+        }
+        qInfo().nospace() << "buildSslCtx: role="
+            << (server ? "server" : "client")
+            << " min_proto=0x" << Qt::hex
+            << SSL_CTX_get_min_proto_version(ctx.native_handle())
+            << " max_proto=0x"
+            << SSL_CTX_get_max_proto_version(ctx.native_handle())
+            << " options=0x"
+            << SSL_CTX_get_options(ctx.native_handle())
+            << Qt::dec
+            << " cipher_count=" << n
+            << " first_cipher=" << first;
+    }
 
-    // Explicit cipher / cipher-suite lists. TLS 1.3 has a distinct list
-    // controlled by `SSL_CTX_set_ciphersuites`; if that's empty, the
-    // server can't accept TLS 1.3 ClientHellos at all and reports
-    // "unsupported protocol" even though min_proto / max_proto allow
-    // it. TLS 1.2 ciphers are set via `SSL_CTX_set_cipher_list` and
-    // the symptom of an empty list is "no shared cipher". The bundled
-    // OpenSSL 3.x in some nix builds ships empty defaults; spell them
-    // out so the daemon works in every build environment.
-    SSL_CTX_set_ciphersuites(ctx.native_handle(),
-        "TLS_AES_128_GCM_SHA256:"
-        "TLS_AES_256_GCM_SHA384:"
-        "TLS_CHACHA20_POLY1305_SHA256");
-    SSL_CTX_set_cipher_list(ctx.native_handle(),
-        "ECDHE+AESGCM:ECDHE+CHACHA20:"
-        "DHE+AESGCM:DHE+CHACHA20:"
-        "!aNULL:!MD5:!DSS:!RC4:!3DES");
-
-    if (!cfg.certFile.empty())
+    if (!cfg.certFile.empty()) {
         ctx.use_certificate_chain_file(cfg.certFile);
-    if (!cfg.keyFile.empty())
+        dumpSslErrors("use_certificate_chain_file");
+    }
+    if (!cfg.keyFile.empty()) {
         ctx.use_private_key_file(cfg.keyFile, boost::asio::ssl::context::pem);
-    if (!cfg.caFile.empty())
+        dumpSslErrors("use_private_key_file");
+    }
+    if (!cfg.caFile.empty()) {
         ctx.load_verify_file(cfg.caFile);
+        dumpSslErrors("load_verify_file");
+    }
     if (cfg.verifyPeer && !server) {
         ctx.set_verify_mode(boost::asio::ssl::verify_peer);
     } else if (!server) {
         ctx.set_verify_mode(boost::asio::ssl::verify_none);
+    }
+
+    // Final check: is a cert + matching key actually attached to the
+    // SSL_CTX? "no shared cipher" / "unsupported protocol" can both
+    // result from a server that has no usable cert at all (no PKI
+    // cipher suites can negotiate without one). use_certificate_*
+    // / use_private_key_* throw on outright failure but can leave the
+    // ctx in a "loaded but the CTX-level slot is empty" state if the
+    // file's first PEM block was something other than a CERTIFICATE.
+    {
+        X509* serverCert = SSL_CTX_get0_certificate(ctx.native_handle());
+        EVP_PKEY* serverKey = SSL_CTX_get0_privatekey(ctx.native_handle());
+        const int checkOk = SSL_CTX_check_private_key(ctx.native_handle());
+        qInfo().nospace() << "buildSslCtx: cert_attached="
+            << (serverCert ? "yes" : "no")
+            << " key_attached=" << (serverKey ? "yes" : "no")
+            << " check_private_key=" << checkOk;
+        if (!checkOk) dumpSslErrors("SSL_CTX_check_private_key");
     }
     return ctx;
 }
