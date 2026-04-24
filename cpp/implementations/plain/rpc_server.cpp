@@ -2,6 +2,8 @@
 
 #include <boost/asio/ip/address.hpp>
 
+#include <QDebug>
+
 #include <algorithm>
 
 namespace logos::plain {
@@ -136,7 +138,17 @@ void RpcServerSsl::doAccept()
                 boost::asio::ssl::stream_base::server,
                 [self, stream](const boost::system::error_code& hs) {
                     if (hs) {
-                        // Handshake failed; socket discarded.
+                        // Handshake failed. Log the error — silently
+                        // discarding the socket used to be a debugging
+                        // dead-end (clients see a generic "alert 40"
+                        // and can't tell if the cert is bad, a curve
+                        // is unavailable, or the listener picked a
+                        // version the client refuses). Category + code
+                        // + message give enough to grep for.
+                        qWarning().nospace()
+                            << "RpcServerSsl: TLS handshake failed: "
+                            << hs.category().name() << ':' << hs.value()
+                            << " (" << QString::fromStdString(hs.message()) << ")";
                         return;
                     }
                     // Move the stream into a connection. SslStream is not

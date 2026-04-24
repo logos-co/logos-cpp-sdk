@@ -11,6 +11,7 @@
 #include <QMetaObject>
 
 #include <boost/asio/ssl/context.hpp>
+#include <openssl/ssl.h>
 
 namespace logos::plain {
 
@@ -34,6 +35,43 @@ boost::asio::ssl::context buildSslCtx(const LogosTransportConfig& cfg, bool serv
                     | boost::asio::ssl::context::no_sslv2
                     | boost::asio::ssl::context::no_sslv3
                     | boost::asio::ssl::context::single_dh_use);
+
+    // Require TLS 1.2+. Without an explicit floor, certain
+    // Boost.Asio × OpenSSL 3.x combinations fall through to a
+    // server-side max proto of TLS 1.1, so every modern client (which
+    // refuses 1.1) gets a handshake_failure alert before the server
+    // sends ServerHello. Symptom: `openssl s_client -tls1_3` returns
+    // alert 70 (protocol_version); `-tls1_2` returns alert 40
+    // (handshake_failure). Set a floor and a ceiling explicitly.
+    SSL_CTX_set_min_proto_version(ctx.native_handle(), TLS1_2_VERSION);
+    SSL_CTX_set_max_proto_version(ctx.native_handle(), TLS1_3_VERSION);
+
+    // Enable EC groups for both TLS 1.3 key_share and TLS 1.2 ECDHE.
+    // OpenSSL 3.x ships sane defaults here but some
+    // minimal / embedded builds ship an empty list, in which case the
+    // server has nothing to respond with and aborts the handshake.
+    // Being explicit costs nothing and removes a class of mystery
+    // bugs.
+    SSL_CTX_set1_groups_list(ctx.native_handle(),
+                             "X25519:P-256:P-384:P-521");
+
+    // Explicit cipher / cipher-suite lists. TLS 1.3 has a distinct list
+    // controlled by `SSL_CTX_set_ciphersuites`; if that's empty, the
+    // server can't accept TLS 1.3 ClientHellos at all and reports
+    // "unsupported protocol" even though min_proto / max_proto allow
+    // it. TLS 1.2 ciphers are set via `SSL_CTX_set_cipher_list` and
+    // the symptom of an empty list is "no shared cipher". The bundled
+    // OpenSSL 3.x in some nix builds ships empty defaults; spell them
+    // out so the daemon works in every build environment.
+    SSL_CTX_set_ciphersuites(ctx.native_handle(),
+        "TLS_AES_128_GCM_SHA256:"
+        "TLS_AES_256_GCM_SHA384:"
+        "TLS_CHACHA20_POLY1305_SHA256");
+    SSL_CTX_set_cipher_list(ctx.native_handle(),
+        "ECDHE+AESGCM:ECDHE+CHACHA20:"
+        "DHE+AESGCM:DHE+CHACHA20:"
+        "!aNULL:!MD5:!DSS:!RC4:!3DES");
+
     if (!cfg.certFile.empty())
         ctx.use_certificate_chain_file(cfg.certFile);
     if (!cfg.keyFile.empty())
