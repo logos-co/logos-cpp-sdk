@@ -1,5 +1,9 @@
 #include "qvariant_rpc_value.h"
 
+#include "../../logos_types.h"
+
+#include <QMetaType>
+
 namespace logos::plain {
 
 namespace {
@@ -74,6 +78,35 @@ QJsonValue toJsonValue(const RpcValue& v)
 RpcValue qvariantToRpcValue(const QVariant& v)
 {
     if (!v.isValid()) return RpcValue{std::monostate{}};
+
+    // LogosResult is a user-defined struct registered via qRegisterMetaType;
+    // its metatype id is assigned at runtime so we can't put it in the
+    // switch on QMetaType::Type below. Check it first — if we let it fall
+    // through to the default, we'd stringify it via QVariant::toString()
+    // (returning "" because LogosResult has no QString converter) or,
+    // earlier, lose it as std::monostate{} and the receiver would see null.
+    //
+    // Wire shape: {"success": bool, "value": <any>, "error": <any>}.
+    // That matches the struct's fields and recursively reuses the RpcValue
+    // conversion for `value` and `error`, which themselves are QVariants
+    // carrying primitives / QVariantMap / QVariantList / etc.
+    //
+    // Look up the metatype id per call (not cached in a `static`): the
+    // first `qvariantToRpcValue` call might land before any `LogosAPI`
+    // has called `qRegisterMetaType<LogosResult>`, and we don't want to
+    // permanently cache `UnknownType` in that case. The lookup is a
+    // hash probe — trivially cheap compared to the actual RPC work.
+    {
+        const int logosResultId = QMetaType::fromName("LogosResult").id();
+        if (logosResultId != QMetaType::UnknownType && v.userType() == logosResultId) {
+            const LogosResult r = v.value<LogosResult>();
+            RpcMap m;
+            m.emplace("success", RpcValue{r.success});
+            m.emplace("value",   qvariantToRpcValue(r.value));
+            m.emplace("error",   qvariantToRpcValue(r.error));
+            return RpcValue{std::move(m)};
+        }
+    }
 
     // Fast path for the common scalar types.
     switch (static_cast<QMetaType::Type>(v.userType())) {
