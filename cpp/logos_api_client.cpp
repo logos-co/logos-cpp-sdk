@@ -5,9 +5,14 @@
 #include <QMetaObject>
 #include <string>
 
-LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent)
+LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to,
+                               const QString& origin_module,
+                               TokenManager* token_manager,
+                               const LogosTransportConfig& transport,
+                               QObject *parent)
     : QObject(parent)
-    , m_consumer(new LogosAPIConsumer(module_to_talk_to, origin_module, token_manager, this))
+    , m_consumer(new LogosAPIConsumer(module_to_talk_to, origin_module,
+                                      token_manager, transport, this))
     , m_token_manager(token_manager)
     , m_origin_module(origin_module)
 {
@@ -16,12 +21,9 @@ LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to, const QString& 
 LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to,
                                const QString& origin_module,
                                TokenManager* token_manager,
-                               const LogosTransportConfig& transport,
                                QObject *parent)
-    : QObject(parent)
-    , m_consumer(new LogosAPIConsumer(module_to_talk_to, origin_module, token_manager, transport, this))
-    , m_token_manager(token_manager)
-    , m_origin_module(origin_module)
+    : LogosAPIClient(module_to_talk_to, origin_module, token_manager,
+                     LogosTransportConfigGlobal::getDefault(), parent)
 {
 }
 

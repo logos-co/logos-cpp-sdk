@@ -1,5 +1,7 @@
 #include "rpc_message.h"
 
+#include <type_traits>
+
 namespace logos::plain {
 
 MessageType messageTypeOf(const AnyMessage& m)

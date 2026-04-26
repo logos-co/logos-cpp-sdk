@@ -49,8 +49,11 @@ public:
     // IncomingCallHandler
     void onCall(const CallMessage& req, CallReply reply) override;
     void onMethods(const MethodsMessage& req, MethodsReply reply) override;
-    void onSubscribe(const SubscribeMessage& req, EventSink sink) override;
-    void onUnsubscribe(const UnsubscribeMessage& req) override;
+    void onSubscribe(const SubscribeMessage& req, EventSink sink,
+                     const void* connectionId) override;
+    void onUnsubscribe(const UnsubscribeMessage& req,
+                       const void* connectionId) override;
+    void onConnectionClosed(const void* connectionId) override;
     void onToken(const TokenMessage& req) override;
 
     // Internal: deliver an event emitted by the wrapped QObject to every

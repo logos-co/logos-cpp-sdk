@@ -43,18 +43,11 @@ LogosAPIProvider* LogosAPI::getProvider() const
 
 LogosAPIClient* LogosAPI::getClient(const QString& target_module) const
 {
-    // Check if we already have a client for this target module
-    if (m_clients.contains(target_module)) {
-        return m_clients.value(target_module);
-    }
-    
-    // Create a new client for this target module
-    LogosAPIClient* client = new LogosAPIClient(target_module, m_module_name, m_token_manager, const_cast<LogosAPI*>(this));
-    
-    // Cache it for future use
-    m_clients.insert(target_module, client);
-    
-    return client;
+    // The no-transport overload is just shorthand for "use the
+    // process-global default" — the explicit-transport overload below
+    // is the single resolution path. Mode-awareness lives in the
+    // factory, so this delegation preserves Mock/Local semantics.
+    return getClient(target_module, LogosTransportConfigGlobal::getDefault());
 }
 
 LogosAPIClient* LogosAPI::getClient(const std::string& target_module) const
@@ -65,21 +58,24 @@ LogosAPIClient* LogosAPI::getClient(const std::string& target_module) const
 LogosAPIClient* LogosAPI::getClient(const QString& target_module,
                                     const LogosTransportConfig& transport) const
 {
-    // Separate cache from the default-transport path. Caching by
-    // (target, protocol) keeps `getClient(x, tcp_ssl)` and
-    // `getClient(x, local)` from aliasing onto the same object, which
-    // would double-open connections / confuse reuse.
-    const QString key = target_module + "#" +
-        QString::number(static_cast<int>(transport.protocol)) + ":" +
-        QString::fromStdString(transport.host) + ":" +
-        QString::number(transport.port);
-    if (m_clientsByTransport.contains(key))
-        return m_clientsByTransport.value(key);
+    // Single cache, single construction path. Key composition mirrors
+    // the factory's resolution rule (see LogosAPIClientCacheKey in
+    // logos_api.h):
+    //   - Mock/Local mode: every cfg collapses to one cache slot per
+    //     target — switching cfg returns the same MockTransport-backed
+    //     client instead of allocating a duplicate.
+    //   - Remote mode: every distinguishing field of cfg matters, so
+    //     two callers with different TLS/codec settings get separate
+    //     clients (no risk of silently reusing an insecure transport).
+    const LogosAPIClientCacheKey key{
+        target_module, LogosModeConfig::getMode(), transport};
+    auto it = m_clients.constFind(key);
+    if (it != m_clients.constEnd()) return it.value();
 
     LogosAPIClient* client = new LogosAPIClient(
         target_module, m_module_name, m_token_manager, transport,
         const_cast<LogosAPI*>(this));
-    m_clientsByTransport.insert(key, client);
+    m_clients.insert(key, client);
     return client;
 }
 

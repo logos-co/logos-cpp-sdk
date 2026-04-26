@@ -1,17 +1,83 @@
 #ifndef LOGOS_API_H
 #define LOGOS_API_H
 
+#include "logos_mode.h"
 #include "logos_transport_config.h"
 #include "logos_types.h"
 
+#include <QHash>
+#include <QHashFunctions>
 #include <QObject>
 #include <QString>
-#include <QHash>
+
+#include <functional>
 #include <string>
 
 class LogosAPIClient;
 class LogosAPIProvider;
 class TokenManager;
+
+// qHash for LogosTransportConfig — combined with operator== from
+// logos_transport_config.h, this lets QHash use it as a key. Lives here
+// rather than in logos_transport_config.h so that header stays Qt-free
+// (the SDK is being de-Qt'd; only Qt-using consumers like the cache
+// here pull in the QHash adapter).
+//
+// Every field that distinguishes one explicit-transport client from
+// another contributes to the hash; otherwise two callers with different
+// TLS or codec settings could land on the same bucket and cache-alias
+// onto a single client.
+inline size_t qHash(const LogosTransportConfig& cfg, size_t seed = 0) noexcept
+{
+    return qHashMulti(seed,
+        static_cast<int>(cfg.protocol),
+        std::hash<std::string>{}(cfg.host),
+        cfg.port,
+        std::hash<std::string>{}(cfg.caFile),
+        std::hash<std::string>{}(cfg.certFile),
+        std::hash<std::string>{}(cfg.keyFile),
+        cfg.verifyPeer,
+        static_cast<int>(cfg.codec));
+}
+
+// LogosAPIClient cache key. Mirrors the factory's transport-resolution
+// rule so two callers that would observe the same connection share a
+// cached client:
+//
+//   - Mock / Local mode   → transport is ignored at construction; key
+//                            ignores it too. Switching mode changes the
+//                            key (so cached clients don't bleed across
+//                            mode switches in tests).
+//   - Remote mode         → cfg picks the wire endpoint; key includes
+//                            the full LogosTransportConfig.
+//
+// Without the mode-aware comparison, calling
+// `getClient(x, tcp)` and `getClient(x, tcp_ssl)` in Mock mode would
+// allocate two clients pointing at functionally identical
+// MockTransportConnections.
+struct LogosAPIClientCacheKey {
+    QString               target;
+    LogosMode             mode;
+    LogosTransportConfig  transport;  // only compared when mode == Remote
+};
+
+inline bool operator==(const LogosAPIClientCacheKey& a,
+                       const LogosAPIClientCacheKey& b) noexcept
+{
+    if (a.target != b.target) return false;
+    if (a.mode   != b.mode)   return false;
+    return a.mode == LogosMode::Remote ? a.transport == b.transport : true;
+}
+
+inline size_t qHash(const LogosAPIClientCacheKey& k, size_t seed = 0) noexcept
+{
+    if (k.mode == LogosMode::Remote) {
+        return qHashMulti(seed, k.target, static_cast<int>(k.mode), k.transport);
+    }
+    // Mock / Local: transport is irrelevant — leave it out of the hash
+    // so it can't bias which bucket the key lands in.
+    return qHashMulti(seed, k.target, static_cast<int>(k.mode));
+}
 
 /**
  * @brief LogosAPI provides a unified interface to the Logos SDK
@@ -93,9 +159,14 @@ public:
      * that would also flip the same process's `LogosAPIProvider` into
      * trying to bind a tcp_ssl server, which the CLI has no cert for.
      *
-     * Cached per (target_module, transport) pair so repeat calls with
-     * the same config return the same client; a request with a
-     * different transport to the same target creates a separate client.
+     * Cached per (target_module, full LogosTransportConfig) — repeat
+     * calls with the same target *and* the same transport return the
+     * same client. The cache key covers every config field that can
+     * distinguish two clients (protocol, host, port, codec, all TLS
+     * settings), via the operator== / qHash defined alongside
+     * LogosTransportConfig, so two callers with different TLS or codec
+     * settings always get separate clients — no risk of silently
+     * reusing an insecure connection where a secure one was asked for.
      */
     LogosAPIClient* getClient(const QString& target_module,
                               const LogosTransportConfig& transport) const;
@@ -116,8 +187,14 @@ public:
 private:
     QString m_module_name;
     LogosAPIProvider* m_provider;
-    mutable QHash<QString, LogosAPIClient*> m_clients;  // Cache of default-transport clients per target module
-    mutable QHash<QString, LogosAPIClient*> m_clientsByTransport;  // Cache for explicit-transport clients, keyed by target+transport
+    // Single cache for both getClient overloads. Keyed by a
+    // mode-aware composite (LogosAPIClientCacheKey above) so that:
+    //  - Mock/Local mode buckets ignore transport (the factory does too)
+    //  - Remote mode keys include the full LogosTransportConfig
+    //  - the no-transport overload resolves to the same key as an
+    //    explicit caller passing LogosTransportConfigGlobal::getDefault()
+    //  - mode switches don't return stale clients from the previous mode
+    mutable QHash<LogosAPIClientCacheKey, LogosAPIClient*> m_clients;
     TokenManager* m_token_manager;
 };
 

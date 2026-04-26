@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 // -----------------------------------------------------------------------------
@@ -49,6 +50,31 @@ struct LogosTransportConfig {
     // ignores it and uses QRemoteObjects' own wire format.
     LogosWireCodec codec = LogosWireCodec::Json;
 };
+
+// Field-wise equality. Used as the equality predicate for hashed
+// containers keyed by LogosTransportConfig (e.g. the explicit-transport
+// LogosAPIClient cache in logos_api.h). Every field that can plausibly
+// distinguish one transport-attached client from another belongs here —
+// missing one would let two callers with different security or codec
+// settings alias onto the same cached client.
+inline bool operator==(const LogosTransportConfig& a,
+                       const LogosTransportConfig& b) noexcept
+{
+    return a.protocol   == b.protocol
+        && a.port       == b.port
+        && a.verifyPeer == b.verifyPeer
+        && a.codec      == b.codec
+        && a.host       == b.host
+        && a.caFile     == b.caFile
+        && a.certFile   == b.certFile
+        && a.keyFile    == b.keyFile;
+}
+
+inline bool operator!=(const LogosTransportConfig& a,
+                       const LogosTransportConfig& b) noexcept
+{
+    return !(a == b);
+}
 
 using LogosTransportSet = std::vector<LogosTransportConfig>;
 

@@ -2,10 +2,14 @@
 
 #include "qvariant_rpc_value.h"
 
+#include <QCoreApplication>
 #include <QDebug>
+#include <QMetaObject>
+#include <QTimer>
 
 #include <chrono>
 #include <future>
+#include <thread>
 #include <utility>
 
 namespace logos::plain {
@@ -51,6 +55,32 @@ QVariant PlainLogosObject::callMethod(const QString& authToken,
     return rpcValueToQVariant(res.value);
 }
 
+namespace {
+
+// Hand `callback(result)` over to the Qt event loop so PlainLogosObject's
+// async path matches LogosObject's interface contract: callbacks are
+// always delivered on a subsequent event-loop iteration, on the Qt
+// thread, never synchronously and never racing with QObjects/UI code.
+//
+// Using QCoreApplication::instance() as the anchor means the queued
+// invocation lands on whichever thread runs the Qt event loop in this
+// process, regardless of which worker thread completed the future.
+// If the application has shut down (instance() is null), we drop the
+// callback rather than invoke it from an arbitrary thread.
+void postToQtEventLoop(PlainLogosObject::AsyncResultCallback callback,
+                       QVariant result)
+{
+    QCoreApplication* app = QCoreApplication::instance();
+    if (!app) return;
+    QMetaObject::invokeMethod(app,
+        [callback = std::move(callback), result = std::move(result)]() mutable {
+            callback(result);
+        },
+        Qt::QueuedConnection);
+}
+
+} // anonymous namespace
+
 void PlainLogosObject::callMethodAsync(const QString& authToken,
                                        const QString& methodName,
                                        const QVariantList& args,
@@ -59,7 +89,9 @@ void PlainLogosObject::callMethodAsync(const QString& authToken,
 {
     if (!callback) return;
     if (!m_conn || !m_conn->isOpen()) {
-        callback(QVariant());
+        // Defer even the failure path — LogosObject's contract requires
+        // callbacks on a subsequent event-loop iteration, never inline.
+        postToQtEventLoop(std::move(callback), QVariant());
         return;
     }
 
@@ -73,17 +105,20 @@ void PlainLogosObject::callMethodAsync(const QString& authToken,
     auto fut = std::make_shared<std::future<ResultMessage>>(
         m_conn->sendCall(std::move(msg)));
 
-    // Simple waiter thread. Acceptable here because callMethodAsync is
-    // already an infrequent path and spawns no-ops if the caller never
-    // awaits. A future iteration can fold this into the io_context.
+    // Waiter thread is per-call but the callback hops back to the Qt
+    // event loop before running, so it never races with Qt objects. A
+    // future iteration can fold this wait into the shared Asio
+    // io_context (the connection already runs on it) so we don't spin
+    // up a thread per pending RPC.
     std::thread([fut, timeoutMs, callback = std::move(callback)]() mutable {
         if (fut->wait_for(std::chrono::milliseconds(timeoutMs))
             != std::future_status::ready) {
-            callback(QVariant());
+            postToQtEventLoop(std::move(callback), QVariant());
             return;
         }
         auto res = fut->get();
-        callback(res.ok ? rpcValueToQVariant(res.value) : QVariant());
+        QVariant value = res.ok ? rpcValueToQVariant(res.value) : QVariant();
+        postToQtEventLoop(std::move(callback), std::move(value));
     }).detach();
 }
 

@@ -11,7 +11,10 @@
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl/context.hpp>
+#include <boost/asio/ssl/host_name_verification.hpp>
 #include <boost/asio/ssl/stream.hpp>
+
+#include <openssl/ssl.h>
 
 namespace logos::plain {
 
@@ -77,6 +80,25 @@ bool PlainTransportConnection::connectToHost()
         if (m_cfg.protocol == LogosProtocol::TcpSsl) {
             auto ctx = buildClientSslCtx(m_cfg);
             SslStream stream(ioc, ctx);
+            // Set SNI: TLS clients must advertise the target host name
+            // in the ClientHello so the server picks the right cert
+            // (and so any intermediate proxy can route correctly). Without
+            // this, vhost-style deployments would terminate the handshake.
+            // Cast through the OpenSSL macro because Asio doesn't expose
+            // SNI configuration at the wrapper level.
+            if (!SSL_set_tlsext_host_name(stream.native_handle(),
+                                          m_cfg.host.c_str())) {
+                qWarning() << "PlainTransportConnection: SSL_set_tlsext_host_name failed";
+            }
+            // Verify the peer's certificate name matches the host we
+            // dialed when verifyPeer is on. verify_peer alone only
+            // validates the chain — without host-name verification a
+            // valid cert for a *different* name would still pass, which
+            // is exactly the MITM hole verify_peer is meant to close.
+            if (m_cfg.verifyPeer) {
+                stream.set_verify_callback(
+                    boost::asio::ssl::host_name_verification(m_cfg.host));
+            }
             boost::asio::connect(stream.lowest_layer(), endpoints);
             stream.handshake(boost::asio::ssl::stream_base::client);
             auto conn = std::make_shared<SslConnection>(

@@ -27,19 +27,30 @@ class LogosAPIClient : public QObject
     Q_OBJECT
 
 public:
-    explicit LogosAPIClient(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent = nullptr);
     /**
-     * Explicit-transport overload. The client (and the consumer it
-     * owns) will use `transport` for its connection, bypassing
-     * `LogosTransportConfigGlobal::getDefault`. See
-     * `LogosAPIConsumer`'s explicit-transport constructor for the
-     * full rationale.
+     * @brief Construct a client (with its underlying consumer) using
+     * `transport`, honoring the process-wide LogosMode.
+     *
+     * Transport resolution is delegated to LogosAPIConsumer, which in
+     * turn goes through the single LogosTransportFactory rule combining
+     * LogosMode + LogosTransportConfig. See LogosAPIConsumer's explicit
+     * constructor doc-comment for the resolution table.
      */
     LogosAPIClient(const QString& module_to_talk_to,
                    const QString& origin_module,
                    TokenManager* token_manager,
                    const LogosTransportConfig& transport,
                    QObject *parent = nullptr);
+
+    /**
+     * @brief Convenience constructor that uses the process-global default
+     * LogosTransportConfig. Equivalent to the explicit constructor above
+     * with `LogosTransportConfigGlobal::getDefault()`.
+     */
+    explicit LogosAPIClient(const QString& module_to_talk_to,
+                            const QString& origin_module,
+                            TokenManager* token_manager,
+                            QObject *parent = nullptr);
     ~LogosAPIClient();
 
     /**

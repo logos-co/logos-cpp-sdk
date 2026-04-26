@@ -1,5 +1,7 @@
 #include "json_mapping.h"
 
+#include <type_traits>
+
 namespace logos::plain {
 
 using json = nlohmann::json;

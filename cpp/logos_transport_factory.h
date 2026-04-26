@@ -12,32 +12,47 @@ class LogosTransportConnection;
 namespace LogosTransportFactory {
 
     /**
-     * @brief Create the appropriate transport host for the current mode
-     * @param registryUrl The URL used by the remote transport (ignored in local mode)
-     * @return Owning pointer to the transport host
-     */
-    std::unique_ptr<LogosTransportHost> createHost(const QString& registryUrl);
-
-    /**
-     * @brief Create a transport host from an explicit config (bypasses the
-     * process-global default). Used by LogosAPIProvider when a per-instance
-     * transport override is supplied (e.g. daemon publishing core_service
-     * on TCP while modules stay on local sockets).
+     * @brief Create a transport host for `cfg`, honoring the process-wide
+     * LogosMode.
+     *
+     * Resolution rule:
+     *   - LogosMode::Mock                 → MockTransportHost   (cfg ignored)
+     *   - LogosMode::Local                → LocalTransportHost  (cfg ignored)
+     *   - LogosMode::Remote + LocalSocket → RemoteTransportHost (QRO)
+     *   - LogosMode::Remote + Tcp/TcpSsl  → PlainTransportHost(cfg)
+     *
+     * Mode wins over `cfg.protocol` so test fixtures that switch the
+     * process into Mock/Local always get the test transport, regardless
+     * of which overload (or which LogosAPIProvider constructor) was
+     * used. In Remote mode, `cfg` chooses the wire protocol and
+     * carries the bind/dial address + TLS material.
      */
     std::unique_ptr<LogosTransportHost>
         createHost(const LogosTransportConfig& cfg,
                    const QString& registryUrl);
 
     /**
-     * @brief Create the appropriate transport connection for the current mode
-     * @param registryUrl The URL to connect to (ignored in local mode)
-     * @return Owning pointer to the transport connection
+     * @brief Convenience: createHost using the process-global default
+     * LogosTransportConfig. Equivalent to
+     * `createHost(LogosTransportConfigGlobal::getDefault(), registryUrl)`.
      */
-    std::unique_ptr<LogosTransportConnection> createConnection(const QString& registryUrl);
+    std::unique_ptr<LogosTransportHost> createHost(const QString& registryUrl);
 
+    /**
+     * @brief Create a transport connection for `cfg`, honoring the
+     * process-wide LogosMode. Same resolution rule as createHost — see
+     * its doc-comment for the full table.
+     */
     std::unique_ptr<LogosTransportConnection>
         createConnection(const LogosTransportConfig& cfg,
                          const QString& registryUrl);
+
+    /**
+     * @brief Convenience: createConnection using the process-global default
+     * LogosTransportConfig. Equivalent to
+     * `createConnection(LogosTransportConfigGlobal::getDefault(), registryUrl)`.
+     */
+    std::unique_ptr<LogosTransportConnection> createConnection(const QString& registryUrl);
 
 }
 

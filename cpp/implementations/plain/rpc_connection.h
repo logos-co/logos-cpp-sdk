@@ -264,13 +264,19 @@ void RpcConnection<Stream>::dispatchIncoming(AnyMessage msg)
 
         } else if constexpr (std::is_same_v<T, SubscribeMessage>) {
             if (!m_handler) return;
-            auto self = this->shared_from_this();
-            m_handler->onSubscribe(m, [self](EventMessage evt) {
-                self->sendEvent(std::move(evt));
-            });
+            // weak_ptr capture so the host's stored sink doesn't keep the
+            // connection alive past its natural lifetime — without this,
+            // `[self]` would leak every subscribed connection until
+            // unsubscribe (which a crashing client never sends).
+            std::weak_ptr<RpcConnection<Stream>> weak = this->shared_from_this();
+            const void* connId = static_cast<const void*>(this);
+            m_handler->onSubscribe(m, [weak](EventMessage evt) {
+                if (auto self = weak.lock()) self->sendEvent(std::move(evt));
+            }, connId);
 
         } else if constexpr (std::is_same_v<T, UnsubscribeMessage>) {
-            if (m_handler) m_handler->onUnsubscribe(m);
+            if (m_handler)
+                m_handler->onUnsubscribe(m, static_cast<const void*>(this));
 
         } else if constexpr (std::is_same_v<T, TokenMessage>) {
             if (m_handler) m_handler->onToken(m);
@@ -419,6 +425,14 @@ void RpcConnection<Stream>::fail(const std::string& reason)
         // without needing protocol-specific shutdown sequences.
         m_stream.lowest_layer().close(ignore);
     } catch (...) {}
+
+    // Notify the dispatch handler so it can drop any subscriptions still
+    // keyed to this connection. Without this, a connection that drops
+    // without sending Unsubscribe leaks sinks in the host's per-event map.
+    if (m_handler) {
+        try { m_handler->onConnectionClosed(static_cast<const void*>(this)); }
+        catch (...) {}
+    }
 
     if (errCb) errCb(reason);
 }

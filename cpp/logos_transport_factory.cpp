@@ -8,45 +8,23 @@
 #include "implementations/plain/plain_transport_connection.h"
 #include "implementations/plain/plain_transport_host.h"
 
+#include <QDebug>
+
 namespace LogosTransportFactory {
 
-namespace {
-
-// Pick the remote-transport backend based on the process-global
-// LogosTransportConfig. A future iteration (full multi-transport publish)
-// threads a config per LogosAPI instance through createHost/createConnection.
-std::unique_ptr<LogosTransportHost> createRemoteHost(const QString& registryUrl)
-{
-    const auto& cfg = LogosTransportConfigGlobal::getDefault();
-    switch (cfg.protocol) {
-    case LogosProtocol::Tcp:
-    case LogosProtocol::TcpSsl: {
-        auto host = std::make_unique<logos::plain::PlainTransportHost>(cfg);
-        host->start();
-        return host;
-    }
-    case LogosProtocol::LocalSocket:
-    default:
-        return std::make_unique<RemoteTransportHost>(registryUrl);
-    }
-}
-
-std::unique_ptr<LogosTransportConnection> createRemoteConnection(const QString& registryUrl)
-{
-    const auto& cfg = LogosTransportConfigGlobal::getDefault();
-    switch (cfg.protocol) {
-    case LogosProtocol::Tcp:
-    case LogosProtocol::TcpSsl:
-        return std::make_unique<logos::plain::PlainTransportConnection>(cfg);
-    case LogosProtocol::LocalSocket:
-    default:
-        return std::make_unique<RemoteTransportConnection>(registryUrl);
-    }
-}
-
-} // anonymous namespace
-
-std::unique_ptr<LogosTransportHost> createHost(const QString& registryUrl)
+// Single resolution rule for both `createHost` overloads:
+//   LogosMode::Mock                 → MockTransportHost   (cfg ignored)
+//   LogosMode::Local                → LocalTransportHost  (cfg ignored)
+//   LogosMode::Remote + LocalSocket → RemoteTransportHost (QRO)
+//   LogosMode::Remote + Tcp/TcpSsl  → PlainTransportHost(cfg)
+//
+// Mode is consulted *first* so test fixtures setting Mock/Local always
+// get the right transport regardless of which createHost overload (or
+// LogosAPIProvider constructor) was used. The no-cfg overload below
+// just delegates with `LogosTransportConfigGlobal::getDefault()` so
+// there's exactly one path.
+std::unique_ptr<LogosTransportHost>
+createHost(const LogosTransportConfig& cfg, const QString& registryUrl)
 {
     if (LogosModeConfig::isLocal()) {
         return std::make_unique<LocalTransportHost>();
@@ -54,17 +32,14 @@ std::unique_ptr<LogosTransportHost> createHost(const QString& registryUrl)
     if (LogosModeConfig::isMock()) {
         return std::make_unique<MockTransportHost>();
     }
-    return createRemoteHost(registryUrl);
-}
-
-std::unique_ptr<LogosTransportHost>
-createHost(const LogosTransportConfig& cfg, const QString& registryUrl)
-{
     switch (cfg.protocol) {
     case LogosProtocol::Tcp:
     case LogosProtocol::TcpSsl: {
         auto host = std::make_unique<logos::plain::PlainTransportHost>(cfg);
-        host->start();
+        if (!host->start()) {
+            qCritical() << "LogosTransportFactory: PlainTransportHost::start() failed";
+            return nullptr;
+        }
         return host;
     }
     case LogosProtocol::LocalSocket:
@@ -73,7 +48,14 @@ createHost(const LogosTransportConfig& cfg, const QString& registryUrl)
     }
 }
 
-std::unique_ptr<LogosTransportConnection> createConnection(const QString& registryUrl)
+std::unique_ptr<LogosTransportHost> createHost(const QString& registryUrl)
+{
+    return createHost(LogosTransportConfigGlobal::getDefault(), registryUrl);
+}
+
+// Same resolution rule as createHost — see the comment block above.
+std::unique_ptr<LogosTransportConnection>
+createConnection(const LogosTransportConfig& cfg, const QString& registryUrl)
 {
     if (LogosModeConfig::isLocal()) {
         return std::make_unique<LocalTransportConnection>();
@@ -81,12 +63,6 @@ std::unique_ptr<LogosTransportConnection> createConnection(const QString& regist
     if (LogosModeConfig::isMock()) {
         return std::make_unique<MockTransportConnection>();
     }
-    return createRemoteConnection(registryUrl);
-}
-
-std::unique_ptr<LogosTransportConnection>
-createConnection(const LogosTransportConfig& cfg, const QString& registryUrl)
-{
     switch (cfg.protocol) {
     case LogosProtocol::Tcp:
     case LogosProtocol::TcpSsl:
@@ -95,6 +71,11 @@ createConnection(const LogosTransportConfig& cfg, const QString& registryUrl)
     default:
         return std::make_unique<RemoteTransportConnection>(registryUrl);
     }
+}
+
+std::unique_ptr<LogosTransportConnection> createConnection(const QString& registryUrl)
+{
+    return createConnection(LogosTransportConfigGlobal::getDefault(), registryUrl);
 }
 
 }

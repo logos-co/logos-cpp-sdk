@@ -32,11 +32,25 @@ public:
 
     virtual void onMethods(const MethodsMessage& req, MethodsReply reply) = 0;
 
-    // `sink` stays alive until onUnsubscribe fires or the connection dies.
-    // The handler must call `sink(evt)` on every matching emission.
-    virtual void onSubscribe(const SubscribeMessage& req, EventSink sink) = 0;
+    // `sink` stays alive until onUnsubscribe fires or the connection
+    // dies. The handler must call `sink(evt)` on every matching emission.
+    //
+    // `connectionId` is an opaque per-connection token (the rpc layer
+    // passes the connection's `this` pointer). The handler keys sinks
+    // by it so a subsequent onUnsubscribe / onConnectionClosed can
+    // remove only the sinks belonging to that connection — sub/unsub
+    // frames don't carry a subscriber identifier on the wire.
+    virtual void onSubscribe(const SubscribeMessage& req, EventSink sink,
+                             const void* connectionId) = 0;
 
-    virtual void onUnsubscribe(const UnsubscribeMessage& req) = 0;
+    virtual void onUnsubscribe(const UnsubscribeMessage& req,
+                               const void* connectionId) = 0;
+
+    // Called when a connection is torn down (graceful close or error)
+    // so the handler can drop any sinks still keyed to it. Without
+    // this, a dropped client leaks subscriptions and the host keeps
+    // fanning events into dead sinks.
+    virtual void onConnectionClosed(const void* connectionId) = 0;
 
     virtual void onToken(const TokenMessage& req) = 0;
 };

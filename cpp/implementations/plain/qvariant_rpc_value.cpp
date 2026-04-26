@@ -4,6 +4,9 @@
 
 #include <QMetaType>
 
+#include <cmath>
+#include <limits>
+
 namespace logos::plain {
 
 namespace {

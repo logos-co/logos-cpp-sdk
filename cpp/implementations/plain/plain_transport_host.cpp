@@ -10,6 +10,8 @@
 #include <QDebug>
 #include <QMetaObject>
 
+#include <atomic>
+
 #include <boost/asio/ssl/context.hpp>
 #include <boost/version.hpp>
 #include <openssl/ssl.h>
@@ -377,25 +379,49 @@ void PlainTransportHost::onMethods(const MethodsMessage& req, MethodsReply reply
     }, Qt::QueuedConnection);
 }
 
-void PlainTransportHost::onSubscribe(const SubscribeMessage& req, EventSink sink)
+void PlainTransportHost::onSubscribe(const SubscribeMessage& req, EventSink sink,
+                                     const void* connectionId)
 {
     std::lock_guard<std::mutex> g(m_mu);
     auto it = m_published.find(req.object);
     if (it == m_published.end()) return;
-    // Sinks are keyed by functor-shared-pointer address. The caller (RpcConnection)
-    // moves the sink in; we key by its move-captured lambda-object's address,
-    // which is unique per subscription.
-    static std::atomic<uint64_t> counter{0};
-    it->second.sinksByEvent[req.eventName][
-        reinterpret_cast<const void*>(counter.fetch_add(1) + 1)] = std::move(sink);
+    // Sinks are keyed by the originating connection so that
+    // onUnsubscribe / onConnectionClosed can remove only sinks
+    // belonging to that connection — sub/unsub frames don't carry a
+    // subscriber id on the wire.
+    it->second.sinksByEvent[req.eventName][connectionId] = std::move(sink);
 }
 
-void PlainTransportHost::onUnsubscribe(const UnsubscribeMessage& req)
+void PlainTransportHost::onUnsubscribe(const UnsubscribeMessage& req,
+                                       const void* connectionId)
 {
     std::lock_guard<std::mutex> g(m_mu);
     auto it = m_published.find(req.object);
     if (it == m_published.end()) return;
-    it->second.sinksByEvent.erase(req.eventName);
+    auto evtIt = it->second.sinksByEvent.find(req.eventName);
+    if (evtIt == it->second.sinksByEvent.end()) return;
+    // Only drop the requesting connection's sink — other clients
+    // subscribed to the same (object, event) keep theirs. Previously
+    // this erased the entire eventName entry, taking every other
+    // subscriber down with it.
+    evtIt->second.erase(connectionId);
+    if (evtIt->second.empty()) it->second.sinksByEvent.erase(evtIt);
+}
+
+void PlainTransportHost::onConnectionClosed(const void* connectionId)
+{
+    std::lock_guard<std::mutex> g(m_mu);
+    // Sweep every published object's per-event sink table and drop any
+    // entries belonging to the closed connection. Without this, a
+    // crashing/disconnecting client (which never sends Unsubscribe)
+    // leaves dead sinks in the table forever.
+    for (auto& [_name, pub] : m_published) {
+        for (auto evtIt = pub.sinksByEvent.begin(); evtIt != pub.sinksByEvent.end(); ) {
+            evtIt->second.erase(connectionId);
+            if (evtIt->second.empty()) evtIt = pub.sinksByEvent.erase(evtIt);
+            else ++evtIt;
+        }
+    }
 }
 
 void PlainTransportHost::onToken(const TokenMessage& req)
