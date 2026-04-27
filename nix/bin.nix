@@ -10,6 +10,12 @@ pkgs.stdenv.mkDerivation {
   
   # Skip default configure phase since we do it in buildPhase
   dontUseCmakeConfigure = true;
+
+  # The generator is a build-time CLI tool, not a runtime Qt app — it doesn't
+  # need QT_PLUGIN_PATH or other env vars injected by wrapQtApp. Skipping the
+  # wrap step avoids a segfault in wrapQtAppsNoGuiHook on some macOS versions
+  # where the Darwin binary wrapper tooling crashes (exit code 139).
+  dontWrapQtApps = true;
   
   buildPhase = ''
     runHook preBuild
