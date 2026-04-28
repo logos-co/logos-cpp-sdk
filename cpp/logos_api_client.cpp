@@ -1,4 +1,5 @@
 #include "logos_api_client.h"
+#include "logos_api.h"
 #include "logos_api_consumer.h"
 #include "logos_object.h"
 #include "token_manager.h"
@@ -8,11 +9,22 @@
 LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to,
                                const QString& origin_module,
                                TokenManager* token_manager,
-                               const LogosTransportConfig& transport,
+                               const LogosTransportConfig& target_transport,
+                               const LogosTransportConfig& capability_transport,
                                QObject *parent)
     : QObject(parent)
     , m_consumer(new LogosAPIConsumer(module_to_talk_to, origin_module,
-                                      token_manager, transport, this))
+                                      token_manager, target_transport, this))
+    // Pre-build the capability_module consumer once. We skip it for
+    // the capability_module client itself — the auto-`requestModule`
+    // path is gated by `objectName != "capability_module"` so we'd
+    // never use it, and constructing one would be a redundant
+    // self-connection.
+    , m_capability_consumer(module_to_talk_to == QStringLiteral("capability_module")
+        ? nullptr
+        : new LogosAPIConsumer(QStringLiteral("capability_module"),
+                                origin_module, token_manager,
+                                capability_transport, this))
     , m_token_manager(token_manager)
     , m_origin_module(origin_module)
 {
@@ -23,6 +35,7 @@ LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to,
                                TokenManager* token_manager,
                                QObject *parent)
     : LogosAPIClient(module_to_talk_to, origin_module, token_manager,
+                     LogosTransportConfigGlobal::getDefault(),
                      LogosTransportConfigGlobal::getDefault(), parent)
 {
 }
@@ -58,11 +71,12 @@ QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QSt
 
     QString token = getToken(objectName);
 
-    if (token.isEmpty() && objectName != "capability_module") {
+    if (token.isEmpty() && objectName != "capability_module" && m_capability_consumer) {
         qDebug() << "LogosAPIClient: calling requestModule for" << objectName;
-        LogosAPIConsumer* packageManagerConsumer = new LogosAPIConsumer("capability_module", m_origin_module, m_token_manager, this);
         QString capabilityToken = getToken("capability_module");
-        QVariant result = packageManagerConsumer->invokeRemoteMethod(capabilityToken, "capability_module", "requestModule", QVariantList() << m_origin_module << objectName, timeout);
+        QVariant result = m_capability_consumer->invokeRemoteMethod(
+            capabilityToken, "capability_module", "requestModule",
+            QVariantList() << m_origin_module << objectName, timeout);
         qDebug() << "LogosAPIClient: requestModule result for" << objectName << ":" << result.toString();
         token = result.toString();
     }
@@ -110,11 +124,32 @@ void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QS
 
     QString token = getToken(objectName);
 
-    if (token.isEmpty() && objectName != "capability_module") {
-        LogosAPIConsumer* packageManagerConsumer = new LogosAPIConsumer("capability_module", m_origin_module, m_token_manager, this);
-        QString capabilityToken = getToken("capability_module");
-        QVariant result = packageManagerConsumer->invokeRemoteMethod(capabilityToken, "capability_module", "requestModule", QVariantList() << m_origin_module << objectName, timeout);
-        token = result.toString();
+    if (token.isEmpty() && objectName != "capability_module" && m_capability_consumer) {
+        // Async-chain: dispatch the requestModule call asynchronously,
+        // and only fire the real method's invokeRemoteMethodAsync from
+        // its callback. The previous version called `requestModule`
+        // synchronously here, which made the "async" entry point
+        // block its caller for the full requestModule round-trip
+        // (a real perf hit when capability_module has any latency).
+        const QString capabilityToken = getToken("capability_module");
+        const QString origin = m_origin_module;
+        auto* consumer = m_consumer;
+        auto outerCallback = std::move(callback);
+        m_capability_consumer->invokeRemoteMethodAsync(
+            capabilityToken,
+            QStringLiteral("capability_module"),
+            QStringLiteral("requestModule"),
+            QVariantList() << origin << objectName,
+            [consumer, objectName, methodName, args, timeout,
+             outerCallback = std::move(outerCallback)]
+            (const QVariant& tokenResult) mutable {
+                consumer->invokeRemoteMethodAsync(
+                    tokenResult.toString(),
+                    objectName, methodName, args,
+                    std::move(outerCallback), timeout);
+            },
+            timeout);
+        return;
     }
 
     m_consumer->invokeRemoteMethodAsync(token, objectName, methodName, args, std::move(callback), timeout);

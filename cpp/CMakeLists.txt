@@ -41,6 +41,8 @@ set(SDK_SOURCES
     logos_transport.h
     logos_transport.cpp
     logos_transport_config.h
+    logos_transport_config_json.h
+    logos_transport_config_json.cpp
     logos_transport_factory.cpp
     logos_transport_factory.h
     logos_registry.h
@@ -100,13 +102,22 @@ target_link_libraries(logos_sdk PUBLIC
     nlohmann_json::nlohmann_json
 )
 
-# Include directories
+# Include directories — use BUILD_INTERFACE / INSTALL_INTERFACE generator
+# expressions so the path stored in the exported target points at the
+# install tree for downstream consumers and at the source tree only
+# while we're building the SDK itself. install(EXPORT ...) refuses
+# raw source-tree paths.
 target_include_directories(logos_sdk PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_local
-    ${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_remote
-    ${CMAKE_CURRENT_SOURCE_DIR}/implementations/mock
-    ${CMAKE_CURRENT_SOURCE_DIR}/implementations/plain
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_local>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/implementations/qt_remote>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/implementations/mock>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/implementations/plain>
+    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:include/implementations/qt_local>
+    $<INSTALL_INTERFACE:include/implementations/qt_remote>
+    $<INSTALL_INTERFACE:include/implementations/mock>
+    $<INSTALL_INTERFACE:include/implementations/plain>
 )
 
 # Set output directories for static library
@@ -114,11 +125,40 @@ set_target_properties(logos_sdk PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
-# Install the library
+# Install the library into an EXPORT set so we can ship a CMake Config
+# file that downstream consumers `find_package` to get an imported
+# target with all the right INTERFACE_LINK_LIBRARIES (OpenSSL, Boost,
+# nlohmann_json, Qt). Without this, every consumer that find_library's
+# liblogos_sdk.a has to manually link the SDK's transitive deps.
 install(TARGETS logos_sdk
+    EXPORT logos-cpp-sdkTargets
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
+    INCLUDES DESTINATION include
+)
+
+install(EXPORT logos-cpp-sdkTargets
+    FILE logos-cpp-sdkTargets.cmake
+    NAMESPACE logos-cpp-sdk::
+    DESTINATION lib/cmake/logos-cpp-sdk
+)
+
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/logos-cpp-sdkConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/logos-cpp-sdkConfig.cmake"
+    INSTALL_DESTINATION lib/cmake/logos-cpp-sdk
+)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/logos-cpp-sdkConfigVersion.cmake"
+    VERSION 0.1.0
+    COMPATIBILITY SameMajorVersion
+)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/logos-cpp-sdkConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/logos-cpp-sdkConfigVersion.cmake"
+    DESTINATION lib/cmake/logos-cpp-sdk
 )
 
 # Install headers
@@ -138,6 +178,7 @@ install(FILES
     qt_provider_object.h
     logos_transport.h
     logos_transport_config.h
+    logos_transport_config_json.h
     logos_transport_factory.h
     logos_registry.h
     logos_registry_factory.h

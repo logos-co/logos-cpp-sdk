@@ -11,6 +11,7 @@
 #include <QString>
 
 #include <functional>
+#include <optional>
 #include <string>
 
 class LogosAPIClient;
@@ -177,6 +178,28 @@ public:
      */
     TokenManager* getTokenManager() const;
 
+    /**
+     * @brief Set the transport used by the SDK's auto-`requestModule`
+     * token-fetch flow (inside LogosAPIClient::invokeRemoteMethod{,Async}).
+     *
+     * That flow always dials `capability_module` to fetch a per-target
+     * token, regardless of which module is the actual call target.
+     * Without an explicit transport it falls through to
+     * LogosTransportConfigGlobal::getDefault() (LocalSocket), which
+     * times out 20 s when capability_module is reachable only on TCP
+     * (e.g. CLI on host, daemon in container).
+     *
+     * Callers that have read the daemon's per-module advertised
+     * transports (e.g. from logoscore's daemon.json) should register
+     * capability_module's transport here so getClient builds each
+     * LogosAPIClient with the right capability_consumer.
+     *
+     * The setting only affects clients constructed *after* this call
+     * — clients already in the cache keep whatever capability transport
+     * they were built with.
+     */
+    void setCapabilityModuleTransport(const LogosTransportConfig& transport);
+
     using QObject::setProperty;
 
     /**
@@ -195,6 +218,10 @@ private:
     //    explicit caller passing LogosTransportConfigGlobal::getDefault()
     //  - mode switches don't return stale clients from the previous mode
     mutable QHash<LogosAPIClientCacheKey, LogosAPIClient*> m_clients;
+    // Optional override for the capability_module transport used by
+    // each LogosAPIClient's pre-built m_capability_consumer. Set via
+    // setCapabilityModuleTransport(). nullopt = use the global default.
+    std::optional<LogosTransportConfig> m_capabilityModuleTransport;
     TokenManager* m_token_manager;
 };
 

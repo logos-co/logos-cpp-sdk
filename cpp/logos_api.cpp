@@ -67,13 +67,26 @@ LogosAPIClient* LogosAPI::getClient(const QString& target_module,
     //   - Remote mode: every distinguishing field of cfg matters, so
     //     two callers with different TLS/codec settings get separate
     //     clients (no risk of silently reusing an insecure transport).
+    //
+    // The capability_module transport — used by the client's
+    // auto-`requestModule` flow — falls back to the registered
+    // override (if any) or the global default. Two-arg getClient
+    // intentionally doesn't expose a second transport here; callers
+    // that care register the capability_module transport once via
+    // setCapabilityModuleTransport() and the rest is plumbing.
     const LogosAPIClientCacheKey key{
         target_module, LogosModeConfig::getMode(), transport};
     auto it = m_clients.constFind(key);
     if (it != m_clients.constEnd()) return it.value();
 
+    const LogosTransportConfig capabilityTransport =
+        m_capabilityModuleTransport.has_value()
+            ? *m_capabilityModuleTransport
+            : LogosTransportConfigGlobal::getDefault();
+
     LogosAPIClient* client = new LogosAPIClient(
-        target_module, m_module_name, m_token_manager, transport,
+        target_module, m_module_name, m_token_manager,
+        transport, capabilityTransport,
         const_cast<LogosAPI*>(this));
     m_clients.insert(key, client);
     return client;
@@ -82,6 +95,11 @@ LogosAPIClient* LogosAPI::getClient(const QString& target_module,
 TokenManager* LogosAPI::getTokenManager() const
 {
     return m_token_manager;
+}
+
+void LogosAPI::setCapabilityModuleTransport(const LogosTransportConfig& transport)
+{
+    m_capabilityModuleTransport = transport;
 }
 
 bool LogosAPI::setProperty(const char* name, const std::string& value)
