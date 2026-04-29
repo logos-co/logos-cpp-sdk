@@ -151,13 +151,11 @@ void RpcServerSsl::doAccept()
                             << " (" << QString::fromStdString(hs.message()) << ")";
                         return;
                     }
-                    // Move the stream into a connection. SslStream is not
-                    // movable, so keep the shared_ptr and wrap a reference
-                    // — actually RpcConnection's Stream template needs a
-                    // concrete type it owns. Workaround: the Stream type
-                    // we use is SslStream itself; move out of shared ptr
-                    // via release-and-reconstruct. Simpler: store SslStream
-                    // directly in RpcConnection; use std::move here.
+                    // Hand the SslStream off to a connection that owns
+                    // it. We held it in a shared_ptr only for the
+                    // duration of async_handshake (so the buffer
+                    // outlives the dispatch); now move the underlying
+                    // stream into the connection by value.
                     auto conn = std::make_shared<SslConnection>(
                         std::move(*stream), self->m_codec, self->m_handler);
                     {

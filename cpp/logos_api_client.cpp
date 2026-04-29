@@ -4,6 +4,7 @@
 #include "logos_object.h"
 #include "token_manager.h"
 #include <QMetaObject>
+#include <QPointer>
 #include <string>
 
 LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to,
@@ -131,9 +132,16 @@ void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QS
         // synchronously here, which made the "async" entry point
         // block its caller for the full requestModule round-trip
         // (a real perf hit when capability_module has any latency).
+        //
+        // Lifetime: the inner callback captures m_consumer through a
+        // QPointer guard. If the LogosAPIClient (and thus its
+        // QObject-parented m_consumer) is destroyed while the
+        // requestModule round-trip is still in flight, the QPointer
+        // goes null and the inner dispatch is suppressed instead of
+        // dereferencing dangling memory.
         const QString capabilityToken = getToken("capability_module");
         const QString origin = m_origin_module;
-        auto* consumer = m_consumer;
+        QPointer<LogosAPIConsumer> consumer = m_consumer;
         auto outerCallback = std::move(callback);
         m_capability_consumer->invokeRemoteMethodAsync(
             capabilityToken,
@@ -143,6 +151,14 @@ void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QS
             [consumer, objectName, methodName, args, timeout,
              outerCallback = std::move(outerCallback)]
             (const QVariant& tokenResult) mutable {
+                if (!consumer) {
+                    // Client was destroyed mid-flight. Honour the
+                    // contract by firing the outer callback with an
+                    // invalid QVariant so callers don't deadlock
+                    // waiting for a result that'll never come.
+                    if (outerCallback) outerCallback(QVariant{});
+                    return;
+                }
                 consumer->invokeRemoteMethodAsync(
                     tokenResult.toString(),
                     objectName, methodName, args,

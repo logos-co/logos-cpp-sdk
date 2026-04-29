@@ -186,12 +186,30 @@ PlainTransportHost::PlainTransportHost(LogosTransportConfig cfg)
 
 PlainTransportHost::~PlainTransportHost()
 {
-    std::lock_guard<std::mutex> g(m_mu);
-    for (auto& [name, pub] : m_published) {
+    // The two stop() calls below are blocking: they tear down all
+    // open RpcConnection sessions, each of which calls
+    // IncomingCallHandler::onConnectionClosed() — which re-acquires
+    // `m_mu` to remove its publisher mapping. Holding m_mu across
+    // stop() therefore self-deadlocks.
+    //
+    // Move the published map and the listeners out under the lock,
+    // then drop it before driving the shutdowns. Once we've moved
+    // them, no other thread can reach this object's data through
+    // m_published / m_tcp / m_ssl.
+    decltype(m_published) published;
+    decltype(m_tcp) tcp;
+    decltype(m_ssl) ssl;
+    {
+        std::lock_guard<std::mutex> g(m_mu);
+        published = std::move(m_published);
+        tcp = std::move(m_tcp);
+        ssl = std::move(m_ssl);
+    }
+    for (auto& [name, pub] : published) {
         QObject::disconnect(pub.eventConn);
     }
-    if (m_tcp) m_tcp->stop();
-    if (m_ssl) m_ssl->stop();
+    if (tcp) tcp->stop();
+    if (ssl) ssl->stop();
 }
 
 bool PlainTransportHost::start()

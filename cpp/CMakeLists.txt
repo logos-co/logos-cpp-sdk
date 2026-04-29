@@ -9,8 +9,10 @@ set(CMAKE_AUTOMOC ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core RemoteObjects)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core RemoteObjects)
 
-# Plain-C++ transport dependencies (no Qt)
-find_package(Boost REQUIRED)
+# Plain-C++ transport dependencies (no Qt). The `system` component is
+# required for boost::system::error_code (Boost.Asio); without it
+# Boost::system isn't an exported imported target on Boost 1.87+.
+find_package(Boost REQUIRED COMPONENTS system)
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
@@ -92,11 +94,18 @@ set(SDK_SOURCES
 # Create the SDK library as STATIC instead of SHARED
 add_library(logos_sdk STATIC ${SDK_SOURCES})
 
-# Link Qt + plain-C++ transport deps
+# Link Qt + plain-C++ transport deps. Boost.Asio is header-only
+# *except* for `boost::system::error_code` (and friends), which lives
+# in libboost_system. Without that, downstream consumers linking the
+# static archive get "undefined reference to
+# boost::system::detail::system_category()" at link time on most
+# Linux toolchains. nixpkgs' Boost CMake config exposes Boost::system
+# as a separate target; pull it in explicitly.
 target_link_libraries(logos_sdk PUBLIC
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::RemoteObjects
     Boost::headers
+    Boost::system
     OpenSSL::SSL
     OpenSSL::Crypto
     nlohmann_json::nlohmann_json

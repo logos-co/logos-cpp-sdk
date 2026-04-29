@@ -18,22 +18,43 @@ LogosAPIProvider::LogosAPIProvider(const QString& module_name,
     , m_moduleProxy(nullptr)
     , m_qtProviderObject(nullptr)
 {
+    // Helper: defer-construct one host and only retain it if the
+    // factory actually returned something. createHost() can return
+    // nullptr — e.g. PlainTransportHost::start() failure (TCP bind,
+    // SSL cert load) — and we don't want to leave a null entry that
+    // would crash the publish/unpublish paths later.
+    auto pushHost = [&](auto&& host, const char* label) {
+        if (host) {
+            m_transports.push_back(std::forward<decltype(host)>(host));
+        } else {
+            qWarning() << "LogosAPIProvider: createHost returned null"
+                       << "for" << module_name << label
+                       << "— transport disabled";
+        }
+    };
+
     if (transports.empty()) {
         // Back-compat: one host, chosen by the global mode + transport config.
-        m_transports.push_back(LogosTransportFactory::createHost(m_registryUrl));
+        pushHost(LogosTransportFactory::createHost(m_registryUrl), "(default)");
     } else {
         // One host per configured transport — lets a single provider serve
         // its object on several endpoints simultaneously (local-socket +
         // TCP, TCP + TCP+SSL, etc.).
         for (const auto& cfg : transports)
-            m_transports.push_back(LogosTransportFactory::createHost(cfg, m_registryUrl));
+            pushHost(LogosTransportFactory::createHost(cfg, m_registryUrl), "(per-cfg)");
     }
 }
 
 LogosAPIProvider::~LogosAPIProvider()
 {
     if (!m_registeredObjectName.isEmpty()) {
-        for (auto& t : m_transports) t->unpublishObject(m_registeredObjectName);
+        // Defensive: m_transports should never contain nullptr (the
+        // ctor filters them out via pushHost), but guard here too —
+        // a future code path that pushes directly without going
+        // through pushHost would otherwise crash on shutdown.
+        for (auto& t : m_transports) {
+            if (t) t->unpublishObject(m_registeredObjectName);
+        }
     }
 }
 
@@ -113,6 +134,7 @@ bool LogosAPIProvider::publishProvider(const QString& name, LogosProviderObject*
     // accepted the publish (follow-up: surface per-transport failures).
     bool success = false;
     for (auto& t : m_transports) {
+        if (!t) continue;  // see ~LogosAPIProvider — defensive null-skip.
         if (t->publishObject(name, m_moduleProxy)) success = true;
     }
     if (success) {

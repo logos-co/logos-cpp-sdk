@@ -12,7 +12,9 @@
 include(CMakeFindDependencyMacro)
 
 find_dependency(Qt6 REQUIRED COMPONENTS Core RemoteObjects)
-find_dependency(Boost REQUIRED)
+# `system` for boost::system::error_code (Boost.Asio) — see the
+# matching note in cpp/CMakeLists.txt next to target_link_libraries.
+find_dependency(Boost REQUIRED COMPONENTS system)
 find_dependency(OpenSSL REQUIRED)
 find_dependency(nlohmann_json REQUIRED)
 
