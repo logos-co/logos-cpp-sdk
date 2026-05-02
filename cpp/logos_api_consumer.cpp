@@ -7,6 +7,8 @@
 #include "logos_instance.h"
 #include "logos_transport.h"
 #include "logos_transport_factory.h"
+#include <chrono>
+#include <thread>
 #include <QDebug>
 #include <QUrl>
 #include <QMetaObject>
@@ -29,7 +31,26 @@ LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to,
     // this consumer only — any LogosAPIProvider in the same LogosAPI
     // still constructs its host from the global default.
     m_transport = LogosTransportFactory::createConnection(transport, m_registryUrl);
-    m_transport->connectToHost();
+
+    // Initial connect with deadline-driven retry. The target module's
+    // listener may not be ready yet — particularly for TCP/TLS, where
+    // the child subprocess's QTcpServer::listen() lags the runtime
+    // returning from its load callback. QLocalSocket internally
+    // tolerates this (it retries connect until a deadline), but
+    // boost::asio::connect on TCP fails fast with "connection refused"
+    // and we'd surface a warning + return nullptr for any subsequent
+    // requestObject before the listener even came up.
+    //
+    // 50ms × up-to-100 attempts ≈ 5s budget — same shape as
+    // logos-liblogos's sendTokenToProcess loop and generous enough to
+    // cover cold-start child Qt initialisation under load.
+    using clock = std::chrono::steady_clock;
+    const auto deadline = clock::now() + std::chrono::milliseconds(5000);
+    while (true) {
+        if (m_transport->connectToHost()) break;
+        if (clock::now() >= deadline) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
 }
 
 LogosAPIConsumer::LogosAPIConsumer(const QString& module_to_talk_to,
