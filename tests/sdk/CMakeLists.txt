@@ -40,6 +40,15 @@ add_executable(sdk_tests
     test_async_calls.cpp
     test_provider_dispatch.cpp
     test_std_string_overloads.cpp
+    test_rpc_framing.cpp
+    test_json_codec.cpp
+    test_cbor_codec.cpp
+    # test_plain_transport_tcp.cpp — entirely #if 0 in this iteration
+    # (in-process Qt-event-loop deadlock between consumer + provider
+    # under nix's test sandbox). The plain transport is exercised
+    # cross-process by the logos-logoscore-py integration matrix
+    # instead. Re-add once the in-process scaffold runs host + consumer
+    # in separate QCoreApplication instances / processes.
     fixtures/sample_provider.cpp
     ${GENERATED_DISPATCH}
 )

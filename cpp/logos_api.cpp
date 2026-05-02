@@ -6,18 +6,20 @@
 #include <string>
 
 LogosAPI::LogosAPI(const QString& module_name, QObject *parent)
+    : LogosAPI(module_name, LogosTransportSet{}, parent)
+{
+}
+
+LogosAPI::LogosAPI(const QString& module_name,
+                   LogosTransportSet transports,
+                   QObject *parent)
     : QObject(parent)
     , m_module_name(module_name)
     , m_provider(nullptr)
     , m_token_manager(nullptr)
 {
-    // Initialize provider
-    m_provider = new LogosAPIProvider(m_module_name, this);
-    
-    // Get token manager instance
+    m_provider = new LogosAPIProvider(m_module_name, std::move(transports), this);
     m_token_manager = &TokenManager::instance();
-
-    // Register LogosResult as QVariant type
     qRegisterMetaType<LogosResult>("LogosResult");
 }
 
@@ -41,18 +43,11 @@ LogosAPIProvider* LogosAPI::getProvider() const
 
 LogosAPIClient* LogosAPI::getClient(const QString& target_module) const
 {
-    // Check if we already have a client for this target module
-    if (m_clients.contains(target_module)) {
-        return m_clients.value(target_module);
-    }
-    
-    // Create a new client for this target module
-    LogosAPIClient* client = new LogosAPIClient(target_module, m_module_name, m_token_manager, const_cast<LogosAPI*>(this));
-    
-    // Cache it for future use
-    m_clients.insert(target_module, client);
-    
-    return client;
+    // The no-transport overload is just shorthand for "use the
+    // process-global default" — the explicit-transport overload below
+    // is the single resolution path. Mode-awareness lives in the
+    // factory, so this delegation preserves Mock/Local semantics.
+    return getClient(target_module, LogosTransportConfigGlobal::getDefault());
 }
 
 LogosAPIClient* LogosAPI::getClient(const std::string& target_module) const
@@ -60,9 +55,51 @@ LogosAPIClient* LogosAPI::getClient(const std::string& target_module) const
     return getClient(QString::fromStdString(target_module));
 }
 
+LogosAPIClient* LogosAPI::getClient(const QString& target_module,
+                                    const LogosTransportConfig& transport) const
+{
+    // Single cache, single construction path. Key composition mirrors
+    // the factory's resolution rule (see LogosAPIClientCacheKey in
+    // logos_api.h):
+    //   - Mock/Local mode: every cfg collapses to one cache slot per
+    //     target — switching cfg returns the same MockTransport-backed
+    //     client instead of allocating a duplicate.
+    //   - Remote mode: every distinguishing field of cfg matters, so
+    //     two callers with different TLS/codec settings get separate
+    //     clients (no risk of silently reusing an insecure transport).
+    //
+    // The capability_module transport — used by the client's
+    // auto-`requestModule` flow — falls back to the registered
+    // override (if any) or the global default. Two-arg getClient
+    // intentionally doesn't expose a second transport here; callers
+    // that care register the capability_module transport once via
+    // setCapabilityModuleTransport() and the rest is plumbing.
+    const LogosAPIClientCacheKey key{
+        target_module, LogosModeConfig::getMode(), transport};
+    auto it = m_clients.constFind(key);
+    if (it != m_clients.constEnd()) return it.value();
+
+    const LogosTransportConfig capabilityTransport =
+        m_capabilityModuleTransport.has_value()
+            ? *m_capabilityModuleTransport
+            : LogosTransportConfigGlobal::getDefault();
+
+    LogosAPIClient* client = new LogosAPIClient(
+        target_module, m_module_name, m_token_manager,
+        transport, capabilityTransport,
+        const_cast<LogosAPI*>(this));
+    m_clients.insert(key, client);
+    return client;
+}
+
 TokenManager* LogosAPI::getTokenManager() const
 {
     return m_token_manager;
+}
+
+void LogosAPI::setCapabilityModuleTransport(const LogosTransportConfig& transport)
+{
+    m_capabilityModuleTransport = transport;
 }
 
 bool LogosAPI::setProperty(const char* name, const std::string& value)

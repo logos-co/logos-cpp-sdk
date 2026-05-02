@@ -14,9 +14,12 @@
   ];
   
   # Common runtime dependencies
-  buildInputs = [ 
-    pkgs.qt6.qtbase 
-    pkgs.qt6.qtremoteobjects 
+  buildInputs = [
+    pkgs.qt6.qtbase
+    pkgs.qt6.qtremoteobjects
+    pkgs.boost                # Boost.Asio for plain-C++ TCP transports
+    pkgs.openssl              # TLS for TcpSsl
+    pkgs.nlohmann_json        # Wire message JSON codec
   ];
   
   # Common CMake flags

@@ -4,35 +4,45 @@
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-lib";
   version = common.version;
-  
+
   inherit src;
-  inherit (common) nativeBuildInputs buildInputs cmakeFlags meta;
-  
+  inherit (common) nativeBuildInputs cmakeFlags meta;
+  buildInputs = common.buildInputs;
+
+  # Propagate the SDK's transitive deps so downstream Nix derivations
+  # that depend on the SDK automatically get OpenSSL / Boost /
+  # nlohmann_json / Qt6 in their own configure-time `CMAKE_PREFIX_PATH`
+  # and link-time search path. Without this, every consumer would have
+  # to list pkgs.openssl etc. itself just to satisfy
+  # find_dependency(OpenSSL) inside our own Config file.
+  propagatedBuildInputs = common.buildInputs;
+
   # Skip default configure phase since we do it in buildPhase
   dontUseCmakeConfigure = true;
-  
+
   buildPhase = ''
     runHook preBuild
-    
+
     # Build SDK library
     mkdir -p build-sdk
     cd build-sdk
-    cmake ../cpp -GNinja $cmakeFlags
+    cmake ../cpp -GNinja -DCMAKE_INSTALL_PREFIX=$out $cmakeFlags
     ninja
     cd ..
-    
+
     runHook postBuild
   '';
-  
+
   installPhase = ''
     runHook preInstall
-    
-    # Install SDK library
-    mkdir -p $out/lib
-    if [ -d build-sdk/lib ]; then
-      cp -r build-sdk/lib/* $out/lib/ || true
-    fi
-    
+
+    # Run cmake's install rules so the EXPORT set + generated
+    # logos-cpp-sdkConfig.cmake / Targets.cmake land under
+    # $out/lib/cmake/logos-cpp-sdk/. This is what makes
+    # `find_package(logos-cpp-sdk)` work in consumers and gives them
+    # an imported target carrying all transitive link interface info.
+    cmake --install build-sdk
+
     runHook postInstall
   '';
 }

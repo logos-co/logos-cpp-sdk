@@ -194,7 +194,17 @@ TEST_F(AsyncCallsTest, AsyncCallNoExpectationReturnsInvalidVariant)
     m_client->invokeRemoteMethodAsync("other", "nonexistent", QVariantList(),
         [&](QVariant v) { called = true; received = v; });
 
-    QCoreApplication::processEvents();
+    // Two-stage drain: with no token saved for "other" and no
+    // capability_module expectation set, invokeRemoteMethodAsync
+    // chains an async requestModule call before the real one — so
+    // the outer callback only fires after both queued events have
+    // run. processEvents() processes only events present at call
+    // time, so a single call drains the requestModule callback but
+    // leaves the chained invokeRemoteMethodAsync to a second
+    // iteration. Bounded loop keeps a misbehaving test from
+    // hanging forever.
+    for (int i = 0; i < 10 && !called; ++i)
+        QCoreApplication::processEvents();
     EXPECT_TRUE(called);
     EXPECT_FALSE(received.isValid());
 }
