@@ -27,12 +27,15 @@
           # Combined SDK package. We re-declare propagatedBuildInputs on
           # the join so downstream Nix derivations that depend on the
           # combined `sdk` (rather than the nested `lib`) still inherit
-          # OpenSSL / Boost / nlohmann_json / Qt — symlinkJoin doesn't
-          # forward propagation from its `paths` attribute.
+          # OpenSSL / Boost / nlohmann_json — symlinkJoin doesn't
+          # forward propagation from its `paths` attribute. Qt is
+          # excluded for the same setup-hook ordering reason as in
+          # `nix/lib.nix`; consumers must list qt6.qtbase +
+          # qt6.wrapQtAppsNoGuiHook themselves.
           sdk = pkgs.symlinkJoin {
             name = "logos-cpp-sdk";
             paths = [ bin lib include ];
-            propagatedBuildInputs = common.buildInputs;
+            propagatedBuildInputs = common.propagatedBuildInputs;
           };
         in
         {

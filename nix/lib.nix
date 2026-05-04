@@ -9,13 +9,18 @@ pkgs.stdenv.mkDerivation {
   inherit (common) nativeBuildInputs cmakeFlags meta;
   buildInputs = common.buildInputs;
 
-  # Propagate the SDK's transitive deps so downstream Nix derivations
-  # that depend on the SDK automatically get OpenSSL / Boost /
-  # nlohmann_json / Qt6 in their own configure-time `CMAKE_PREFIX_PATH`
-  # and link-time search path. Without this, every consumer would have
-  # to list pkgs.openssl etc. itself just to satisfy
-  # find_dependency(OpenSSL) inside our own Config file.
-  propagatedBuildInputs = common.buildInputs;
+  # Propagate the SDK's transitive non-Qt deps so downstream Nix
+  # derivations that depend on the SDK automatically get OpenSSL /
+  # Boost / nlohmann_json in their own configure-time
+  # `CMAKE_PREFIX_PATH` and link-time search path. Without this, every
+  # consumer would have to list pkgs.openssl etc. itself just to
+  # satisfy find_dependency(OpenSSL) inside our own Config file.
+  #
+  # Qt is intentionally excluded — see the `propagatedBuildInputs`
+  # comment in default.nix for the setup-hook ordering reason. Every
+  # consumer of this SDK must list `pkgs.qt6.qtbase` (+ any other
+  # qt6.* it needs) and `pkgs.qt6.wrapQtAppsNoGuiHook` itself.
+  propagatedBuildInputs = common.propagatedBuildInputs;
 
   # Skip default configure phase since we do it in buildPhase
   dontUseCmakeConfigure = true;
