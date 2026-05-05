@@ -16,18 +16,20 @@ LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to,
     : QObject(parent)
     , m_consumer(new LogosAPIConsumer(module_to_talk_to, origin_module,
                                       token_manager, target_transport, this))
+    , m_token_manager(token_manager)
+    , m_origin_module(origin_module)
     // Pre-build the capability_module consumer once. We skip it for
     // the capability_module client itself — the auto-`requestModule`
     // path is gated by `objectName != "capability_module"` so we'd
     // never use it, and constructing one would be a redundant
-    // self-connection.
+    // self-connection. Init-list order matches the declaration order
+    // in the header — `m_capability_consumer` is appended at the end
+    // for ABI stability (see header comment).
     , m_capability_consumer(module_to_talk_to == QStringLiteral("capability_module")
         ? nullptr
         : new LogosAPIConsumer(QStringLiteral("capability_module"),
                                 origin_module, token_manager,
                                 capability_transport, this))
-    , m_token_manager(token_manager)
-    , m_origin_module(origin_module)
 {
 }
 

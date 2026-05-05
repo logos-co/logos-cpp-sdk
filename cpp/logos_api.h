@@ -218,11 +218,20 @@ private:
     //    explicit caller passing LogosTransportConfigGlobal::getDefault()
     //  - mode switches don't return stale clients from the previous mode
     mutable QHash<LogosAPIClientCacheKey, LogosAPIClient*> m_clients;
+    TokenManager* m_token_manager;
+    // ABI note: this private layout is consumed by every plugin that
+    // statically links libsdk. Inserting a field above m_token_manager
+    // shifts its offset and SILENTLY breaks plugins compiled before
+    // the change — they read garbage where m_token_manager used to
+    // live, getClient() then constructs LogosAPIClients with a bogus
+    // TokenManager*, and the first cross-process call segfaults.
+    // Append new private members at the END only. (Long-term cure:
+    // pimpl this class so sizeof / offsets become opaque.)
+    //
     // Optional override for the capability_module transport used by
     // each LogosAPIClient's pre-built m_capability_consumer. Set via
     // setCapabilityModuleTransport(). nullopt = use the global default.
     std::optional<LogosTransportConfig> m_capabilityModuleTransport;
-    TokenManager* m_token_manager;
 };
 
 #endif // LOGOS_API_H

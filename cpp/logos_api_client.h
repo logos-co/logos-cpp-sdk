@@ -152,17 +152,27 @@ public:
     QString getToken(const QString& module_name);
 
 private:
+    // ABI note: this private layout is consumed by every plugin that
+    // statically links libsdk. Adding a new field in the middle of
+    // this section shifts the offsets of subsequent fields and
+    // SILENTLY breaks any plugin compiled before the change — it
+    // reads m_token_manager at the wrong offset and segfaults on
+    // the first cross-process call. New private members MUST be
+    // appended to the end. (Long-term cure: pimpl this class so
+    // sizeof / offsets become opaque to consumers.)
     LogosAPIConsumer* m_consumer;
+    QMap<QString, QString> m_tokens;
+    TokenManager* m_token_manager;
+    QString m_origin_module;
     // Pre-built consumer for the auto-`requestModule` token-fetch path
     // in invokeRemoteMethod{,Async}. Constructed once with the right
     // transport (see the two-transport ctor) so the hot path doesn't
     // chase a back-pointer to LogosAPI just to look up the transport
     // registry. Null only when `m_consumer` itself is for
-    // capability_module (no recursion).
-    LogosAPIConsumer* m_capability_consumer;
-    QMap<QString, QString> m_tokens;
-    TokenManager* m_token_manager;
-    QString m_origin_module;
+    // capability_module (no recursion). In-class default to nullptr
+    // so any old constructor that doesn't list this field still
+    // leaves a defined value.
+    LogosAPIConsumer* m_capability_consumer = nullptr;
 };
 
 #endif // LOGOS_API_CLIENT_H
