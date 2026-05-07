@@ -30,12 +30,12 @@
 
 ## 1. Overview and Goals
 
-The Logos C++ SDK (`logos-cpp-sdk`) provides a client-side library and code generation tools for building Logos modules and applications. It wraps and abstracts Qt Remote Objects and token management, enabling modules to register themselves and call other modules without dealing with sockets or the remote registry directly. The SDK also provides functionality for code generation.
+The Logos C++ SDK (`logos-cpp-sdk`) provides a client-side library and code generation tools for building Logos modules and applications. It abstracts the underlying transport (Qt Remote Objects over local sockets, or a plain-C++ TCP / TCP+TLS RPC stack built on Boost.Asio) and token management, enabling modules to register themselves and call other modules without dealing with sockets or the remote registry directly. The SDK also provides functionality for code generation.
 
 ### Purpose
 
 The SDK abstracts away the complexity of:
-- Inter-process communication via Qt Remote Objects
+- Inter-process communication over Qt Remote Objects (in-host) or plain TCP / TCP+TLS (cross-host, container-to-host)
 - Authentication token management
 - Remote method invocation
 - Event subscription and handling
@@ -93,7 +93,9 @@ The code generator (`logos-cpp-generator`) is a build-time tool that:
 ## 3. API Description
 
 
-The C++ SDK (logos-cpp-sdk/cpp) wraps Qt Remote Objects and token management so that modules can register themselves and call other modules without dealing with sockets or the remote registry. The SDK exposes `LogosAPI` that owns a provider (`LogosAPIProvider`) and a cache of clients (`LogosAPIClient`) for different target modules. Internally it relies on a TokenManager to authenticate remote calls. The SDK is asynchronous: calls return immediately and results are delivered via callbacks/signals.
+The C++ SDK (logos-cpp-sdk/cpp) abstracts the transport layer (Qt Remote Objects for local sockets, plain Boost.Asio for TCP / TCP+TLS) and token management so that modules can register themselves and call other modules without dealing with sockets or the remote registry. The SDK exposes `LogosAPI` that owns a provider (`LogosAPIProvider`) and a cache of clients (`LogosAPIClient`) for different target modules. Internally it relies on a TokenManager to authenticate remote calls. The SDK is asynchronous: calls return immediately and results are delivered via callbacks/signals.
+
+Transports are described by `LogosTransportConfig` (protocol = `LocalSocket | Tcp | TcpSsl`, host/port, optional CA/cert/key, codec = `Json | Cbor`). A `LogosTransportSet` (= `std::vector<LogosTransportConfig>`) lets a single provider publish on multiple endpoints simultaneously — e.g. a daemon binding both `LocalSocket` (for in-host modules) and `TcpSsl` (for remote clients). `LogosTransportFactory::createHost(cfg, registryUrl)` chooses between `RemoteTransportHost` (Qt LocalSocket) and `PlainTransportHost` (TCP / TCP+SSL) based on `cfg.protocol`; it returns nullptr on failure (e.g. SSL cert load, TCP bind), and `LogosAPIProvider` skips that transport. `LogosTransportConfigGlobal::setDefault()`/`getDefault()` lets a process override the SDK-wide default.
 
 ### 3.1.0 Basic Interaction
 
@@ -143,27 +145,30 @@ flowchart LR
 
 | Method                                                                    | Purpose                                                                                                                     |
 | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `explicit LogosAPI(const QString& moduleName, QObject *parent = nullptr)` | Constructs an API for `moduleName` and initialises a provider and token manager.                                            |
+| `explicit LogosAPI(const QString& moduleName, QObject *parent = nullptr)` | Constructs an API for `moduleName` using the process-global default transport. Initialises a provider and token manager.    |
+| `LogosAPI(const QString& moduleName, LogosTransportSet transports, QObject *parent = nullptr)` | Constructs an API whose provider publishes on every transport in `transports` (one host per entry). Empty set = use the global default. |
 | `~LogosAPI()`                                                             | Destructor; child objects (provider, clients) are deleted automatically.                                                    |
 | `LogosAPIProvider* getProvider() const`                                   | Returns the provider that modules use to register themselves for remote access.                                             |
 | `LogosAPIClient* getClient(const QString& targetModule) const`            | Returns a client for calling `targetModule`.  If a client for that module does not yet exist, it creates one and caches it. |
+| `LogosAPIClient* getClient(const QString& targetModule, const LogosTransportConfig& transport) const` | Returns a client that dials `targetModule` over an explicit transport instead of the global default. Cached per `(target, transport)`. |
+| `void setCapabilityModuleTransport(const LogosTransportConfig& transport)` | Sets the transport used by the SDK's auto-`requestModule` flow (which dials `capability_module` to fetch a per-target token). Required when the daemon advertises `capability_module` on a non-default transport. |
 | `TokenManager* getTokenManager() const`                                   | Returns the token manager used to store and validate authentication tokens.(note: this is meant to be internal but it's exposed for debug purposes)                                                |
 
 ### 3.1.2 LogosAPIProvider
 
-`LogosAPIProvider` runs on the module’s side and exposes local objects over the Qt Remote Objects registry. It owns a `QRemoteObjectRegistryHost` and a `ModuleProxy` that wraps the actual module instance. When a module calls `registerObject(name, object)`, the provider optionally calls `object->initLogos(LogosAPI*)` if that method exists, then wraps the object in a `ModuleProxy` and publishes it over the registry. Only one object can be registered per provider; additional attempts return false
+`LogosAPIProvider` runs on the module’s side and exposes local objects through one or more transports. It owns one `LogosTransportHost` per configured transport (created via `LogosTransportFactory::createHost`) plus a `ModuleProxy` wrapping the actual module instance. When a module calls `registerObject(name, object)`, the provider optionally calls `object->initLogos(LogosAPI*)` if that method exists, then wraps the object in a `ModuleProxy` and publishes it over every host. Only one object can be registered per provider; additional attempts return false
 
 **Responsibilities**:
 
-- Create a registry host bound to `local:logos_<moduleName>` when the first object is registered. For example if the module name is `chat` then the registry host will be at `local:logos_chat`.
+- For each configured `LogosTransportConfig`, create a transport host (`RemoteTransportHost` for `LocalSocket` — bound to `local:logos_<moduleName>`; `PlainTransportHost` for `Tcp`/`TcpSsl`). Hosts that fail to bind (e.g. SSL cert load failure) are skipped.
 - Wrap the module in a `ModuleProxy` to enforce token validation and to forward events
-- Enable remoting via Qt (enableRemoting) so that other modules can acquire a replica
+- Publish the wrapped object on each host so other modules can acquire a replica/connection
 - Forward event responses to remote subscribers by invoking `eventResponse` on their replica
 - Save tokens received from other modules by delegating to the `ModuleProxy`
 
 | Method                                                                                       | Purpose                                                                                                                                                                                                                                                        |
 | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `explicit LogosAPIProvider(const QString& moduleName, QObject *parent = nullptr)`            | Constructs a provider; initialises registry URL `local:logos_<moduleName>`.                                                                                                                                                                                    |
+| `explicit LogosAPIProvider(const QString& moduleName, LogosTransportSet transports = {}, QObject *parent = nullptr)` | Constructs a provider. `transports` empty ⇒ use the process-global default. Non-empty ⇒ publish on every configured transport. Registry URL is `local:logos_<moduleName>` for `LocalSocket`. |
 | `~LogosAPIProvider()`                                                                        | Destructor; `QRemoteObjectRegistryHost` and `ModuleProxy` are deleted as children.                                                                                                                                                                             |
 | `bool registerObject(const QString& name, QObject *object)`                                  | Registers `object` under `name`.  If the object defines `initLogos(LogosAPI*)` it is invoked first, then the object is wrapped in a `ModuleProxy` and exposed via the registry.  Only one registration per provider is allowed; subsequent calls return false. |
 | `QString registryUrl() const`                                                                | Returns the provider’s registry URL.                                                                                                                                                                                                                           |
@@ -225,7 +230,7 @@ QJsonArray methods = pending.returnValue().toJsonArray();
 
 ### 3.1.3 LogosAPIClient
 
-`LogosAPIClient` provides a high‑level, asynchronous interface for invoking methods on remote modules and subscribing to events. Each client is bound to a single target module and holds a `LogosAPIConsumer` to manage the underlying connection. The constructor takes the name of the module to talk to, the origin module name and a `TokenManager` pointer
+`LogosAPIClient` provides a high‑level, asynchronous interface for invoking methods on remote modules and subscribing to events. Each client is bound to a single target module and holds two `LogosAPIConsumer`s: one for the target module (`m_consumer`) and one pre-built for `capability_module` (`m_capability_consumer`). The second is needed because the SDK's auto-`requestModule` flow inside `invokeRemoteMethod{,Async}` dials `capability_module` to fetch a per-target token, and the daemon may advertise `capability_module` on a different transport than the target (e.g. target on TCP, capability_module on TCP at a sibling port). Pre-building both consumers in the constructor keeps the hot path free of per-call lookups.
 
 `LogosAPIClient` should be used by modules to perform calls and event subscriptions. It hides the details of connecting, reconnection, token lookup, argument packaging and result deserialization.
 
@@ -238,12 +243,14 @@ QJsonArray methods = pending.returnValue().toJsonArray();
 
 | Method                                                                                                                                                                                                                                          | Purpose                                                                                                                                                                      |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `explicit LogosAPIClient(const QString& moduleToTalkTo, const QString& originModule, TokenManager* tokenManager, QObject *parent = nullptr)`                                                                                                    | Constructs a client bound to `moduleToTalkTo`; internally creates a `LogosAPIConsumer`.                                                                                      |
+| `explicit LogosAPIClient(const QString& moduleToTalkTo, const QString& originModule, TokenManager* tokenManager, QObject *parent = nullptr)`                                                                                                    | Constructs a client bound to `moduleToTalkTo`. Both target and `capability_module` consumers use the process-global default transport.                                       |
+| `LogosAPIClient(const QString& moduleToTalkTo, const QString& originModule, TokenManager* tokenManager, const LogosTransportConfig& targetTransport, const LogosTransportConfig& capabilityTransport, QObject *parent = nullptr)`              | Two-transport constructor: explicit transports for the target module *and* `capability_module`. Use this when the daemon advertises them on different endpoints.             |
 | `QObject* requestObject(const QString& objectName, int timeoutMs = 20000)`                                                                                                                                                                      | Acquires a remote object replica by name through the consumer.                                                                                                               |
 | `bool isConnected() const`                                                                                                                                                                                                                      | Returns whether the client’s consumer is connected to the registry.                                                                                                          |
 | `QString registryUrl() const`                                                                                                                                                                                                                   | Returns the URL of the registry the client is connected to.                                                                                                                  |
 | `bool reconnect()`                                                                                                                                                                                                                              | Reconnects to the registry by creating a new consumer node.                                                                                                                  |
-| `QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, const QVariantList& args = {}, int timeoutMs = 20000)` and overloads for 1–5 arguments                                                                       | Calls `methodName` on `objectName` asynchronously.  Looks up the caller’s auth token and passes it to the consumer.  Returns the result or an invalid `QVariant` on failure. |
+| `QVariant invokeRemoteMethod(const QString& objectName, const QString& methodName, const QVariantList& args = {}, Timeout timeout = Timeout())` and overloads for 1–5 arguments                                                                | Synchronous call: looks up the caller’s auth token and passes it to the consumer. Returns the result or an invalid `QVariant` on failure.                                  |
+| `void invokeRemoteMethodAsync(..., AsyncResultCallback callback, Timeout timeout = Timeout())` and overloads for 0–5 arguments                                                                                                                  | Truly async call: chains an async `requestModule` (to `capability_module` via `m_capability_consumer`) → in its callback, an async invoke of the real method. Returns immediately; the callback delivers the result. |
 | `void onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)`                                                                                  | Subscribes to `eventName` emitted by `originObject` and invokes `callback` when triggered.                                                                                   |
 | `void onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName)`                                                                                                                                                     | Subscribes to an event by connecting `originObject`’s `eventResponse` signal to `destinationObject`’s `onEventResponse` slot.                                                |
 | `void onEventResponse(QObject* replica, const QString& eventName, const QVariantList& data)`                                                                                                                                                    | Internal helper; emits `eventResponse` on the replica when events arrive.                                                                                                    |
@@ -311,15 +318,15 @@ logos.chat.trigger("chatMessage", data);
 
 ### 3.1.3.1 LogosAPIConsumer (internal)
 
-`LogosAPIConsumer` is the low‑level component used by `LogosAPIClient`. It manages the connection to the registry, acquires remote object replicas and invokes methods via Qt Remote Objects. It also handles event subscription and token propagation. The constructor stores the registry URL `local:logos_<targetModule>` and attempts to connect immediately. A `LogosAPIClient` will have multiple `LogosAPIConsumer` instances.
+`LogosAPIConsumer` is the low‑level component used by `LogosAPIClient`. It owns a `LogosTransportConnection` (built via `LogosTransportFactory::createConnection`) which abstracts over the underlying wire protocol — Qt Remote Objects for `LocalSocket`, plain Boost.Asio for `Tcp`/`TcpSsl`. It acquires remote object handles, invokes methods, and handles event subscription and token propagation. For `LocalSocket` the registry URL is `local:logos_<targetModule>`; for TCP transports it's the host:port from the `LogosTransportConfig`.
 
-`LogosAPIConsumer` should not be used directly by most developers; it is an implementation detail of `LogosAPIClient`. It provides fine‑grained control over remote calls and event handling and encapsulates the complexity of `QRemoteObjectNode`, replicas and pending calls.
+`LogosAPIConsumer` should not be used directly by most developers; it is an implementation detail of `LogosAPIClient`. It provides fine‑grained control over remote calls and event handling and encapsulates the chosen transport implementation.
 
 **Responsibilities**:
-- Manage a `QRemoteObjectNode` connection to the registry and reconnect when needed
-- Acquire dynamic replicas of remote objects and wait for them to be ready within a timeout
-- Invoke remote methods either via a `ModuleProxy` (if the replica is a proxy) or directly on the remote object using Qt’s `invokeMethod` and `QRemoteObjectPendingCall`
-- Register event listeners: store callbacks per event and connect to the remote object’s `eventResponse` signal. When events arrive, `invokeCallback()`` iterates through all registered callbacks and invokes them
+- Manage a `LogosTransportConnection` to the registry and reconnect when needed
+- Acquire dynamic handles to remote objects and wait for them to be ready within a timeout
+- Invoke remote methods through the transport (via `ModuleProxy` for QRO, or RPC framing for Tcp/TcpSsl)
+- Register event listeners: store callbacks per event and connect to the remote object’s `eventResponse` signal. When events arrive, `invokeCallback()` iterates through all registered callbacks and invokes them
 - Register simple event subscriptions by connecting the remote `eventResponse` signal directly to a destination slot
 - Forward tokens to another module through a remote `informModuleToken` call on the module’s proxy and support informing tokens for modules loaded by the origin module
 
@@ -330,9 +337,9 @@ logos.chat.trigger("chatMessage", data);
 | `QObject* requestObject(const QString& objectName, int timeoutMs = 20000)`                                                                                          | Acquires a remote object replica and waits for it to be ready.  Returns `nullptr` on failure.                                                                                                                                        |
 | `bool isConnected() const`                                                                                                                                          | Reports whether the consumer is connected to the registry.                                                                                                                                                                           |
 | `QString registryUrl() const`                                                                                                                                       | Returns the registry URL.                                                                                                                                                                                                            |
-| `bool reconnect()`                                                                                                                                                  | Reconnects by creating a new `QRemoteObjectNode` and calling `connectToRegistry()`.                                                                                                                                                  |
-| `bool connectToRegistry()` (private)                                                                                                                                | Connects to the registry URL using `QRemoteObjectNode::connectToNode` and updates `m_connected`.                                                                                                                                     |
-| `QVariant invokeRemoteMethod(const QString& authToken, const QString& objectName, const QString& methodName, const QVariantList& args = {}, int timeoutMs = 20000)` | Invokes a remote method.  If the replica is a `ModuleProxy`, calls its `callRemoteMethod()` with the provided token.  Otherwise it invokes `callRemoteMethod` on the replica and waits for the `QRemoteObjectPendingCall` to finish. |
+| `bool reconnect()`                                                                                                                                                  | Reconnects by rebuilding the underlying `LogosTransportConnection` and calling `connectToRegistry()`.                                                                                                                                |
+| `bool connectToRegistry()` (private)                                                                                                                                | Opens the transport connection (QRO `connectToNode` for LocalSocket, TCP/TLS handshake for plain transports) and updates `m_connected`.                                                                                              |
+| `QVariant invokeRemoteMethod(const QString& authToken, const QString& objectName, const QString& methodName, const QVariantList& args = {}, int timeoutMs = 20000)` | Invokes a remote method through the transport with the provided token. For QRO this dispatches via the replica's `ModuleProxy::callRemoteMethod`; for plain transports it serializes via the configured wire codec and waits for the response. |
 | `void onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)`      | Registers a callback for `eventName` by storing it and ensuring the connection to the origin object’s `eventResponse` signal.                                                                                                        |
 | `void onEvent(QObject* originObject, QObject* destinationObject, const QString& eventName)`                                                                         | Registers an event listener without a callback by connecting `originObject->eventResponse` to the `destinationObject->onEventResponse` slot.                                                                                         |
 | `void invokeCallback(const QString& eventName, const QVariantList& data)` (slot)                                                                                    | Invokes all callbacks registered for `eventName`.                                                                                                                                                                                    |
@@ -527,13 +534,23 @@ The SDK has the following directory structure:
 ```
 logos-cpp-sdk/
 ├── cpp/                          # SDK library source
-│   ├── logos_api.h/cpp          # LogosAPI class
-│   ├── logos_api_provider.h/cpp  # Provider implementation
-│   ├── logos_api_client.h/cpp    # Client implementation
-│   ├── logos_api_consumer.h/cpp  # Consumer implementation
-│   ├── token_manager.h/cpp       # Token manager
-│   ├── module_proxy.h/cpp        # Module proxy
-│   └── CMakeLists.txt           # SDK build config
+│   ├── logos_api.h/cpp                    # LogosAPI class
+│   ├── logos_api_provider.h/cpp           # Provider implementation
+│   ├── logos_api_client.h/cpp             # Client implementation
+│   ├── logos_api_consumer.h/cpp           # Consumer implementation
+│   ├── logos_transport.h/cpp              # Transport host/connection abstract base
+│   ├── logos_transport_config.h           # LogosTransportConfig + LogosTransportSet (Qt-free)
+│   ├── logos_transport_factory.h/cpp      # Picks backend based on cfg.protocol + LogosMode
+│   ├── token_manager.h/cpp                # Token manager
+│   ├── module_proxy.h/cpp                 # Module proxy
+│   ├── implementations/qt_remote/         # QRemoteObjects backend (LocalSocket)
+│   ├── implementations/plain/             # Boost.Asio + OpenSSL backend (Tcp/TcpSsl)
+│   │   ├── plain_transport_host.{h,cpp}, plain_transport_connection.{h,cpp}
+│   │   ├── rpc_server.{h,cpp}, rpc_connection.h, rpc_message.{h,cpp}, rpc_framing.{h,cpp}
+│   │   ├── wire_codec.h, json_codec.{h,cpp}, cbor_codec.{h,cpp}
+│   │   └── rpc_value.h, qvariant_rpc_value.{h,cpp}, transport_io_context.{h,cpp}
+│   ├── logos-cpp-sdkConfig.cmake.in       # Installed CMake package config
+│   └── CMakeLists.txt                     # SDK build config
 ├── cpp-generator/                # Code generator source
 │   ├── main.cpp                  # Generator entry point
 │   └── CMakeLists.txt           # Generator build config
@@ -611,6 +628,17 @@ cd cpp-generator
 ./compile.sh
 ```
 
+**Consuming the SDK from another CMake project:**
+
+The SDK installs as a CMake package; consumers use `find_package`:
+
+```cmake
+find_package(logos-cpp-sdk REQUIRED)
+target_link_libraries(my_target PRIVATE logos-cpp-sdk::logos_sdk)
+```
+
+The installed `logos-cpp-sdkConfig.cmake` calls `find_dependency(Qt6 COMPONENTS Core RemoteObjects)`, `find_dependency(Boost COMPONENTS system)`, `find_dependency(OpenSSL)` and `find_dependency(nlohmann_json)` before importing the target, so consumers don't have to wire transitive dependencies themselves. (The static archive references OpenSSL `SSL_CTX_*`/`X509_*` and Boost `system::error_code`; without the imported target the link step fails.)
+
 ### 4.3 Code Generator Implementation
 
 The code generator (`logos-cpp-generator`) works as follows:
@@ -668,6 +696,36 @@ chatClient->onEvent(chatObject, this, "chatMessage",
         // Handle event
     }
 );
+```
+
+**Publishing on multiple transports:**
+
+```c++
+LogosTransportConfig local;  // protocol = LocalSocket (default)
+
+LogosTransportConfig tls;
+tls.protocol = LogosProtocol::TcpSsl;
+tls.host     = "0.0.0.0";
+tls.port     = 7443;
+tls.caFile   = "/etc/logos/ca.pem";
+tls.certFile = "/etc/logos/server.pem";
+tls.keyFile  = "/etc/logos/server.key";
+
+LogosAPI* api = new LogosAPI("core_service",
+                             LogosTransportSet{local, tls},
+                             this);
+api->getProvider()->registerObject("core_service", this);
+```
+
+**Calling a module over an explicit transport** (e.g. a CLI dialing `core_service` over TCP+SSL while the daemon advertises `capability_module` on a sibling port):
+
+```c++
+LogosTransportConfig coreCfg = /* read from daemon.json */;
+LogosTransportConfig capCfg  = /* sibling port for capability_module */;
+
+api->setCapabilityModuleTransport(capCfg);
+LogosAPIClient* client = api->getClient("core_service", coreCfg);
+QVariant r = client->invokeRemoteMethod("core_service", "ping");
 ```
 
 ### 5.2 Generated Wrappers

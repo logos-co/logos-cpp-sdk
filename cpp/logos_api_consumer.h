@@ -11,6 +11,7 @@
 #include <memory>
 
 #include "logos_mode.h"
+#include "logos_transport_config.h"
 
 class LogosTransportConnection;
 class LogosObject;
@@ -30,7 +31,38 @@ class LogosAPIConsumer : public QObject
     Q_OBJECT
 
 public:
-    explicit LogosAPIConsumer(const QString& module_to_talk_to, const QString& origin_module, TokenManager* token_manager, QObject *parent = nullptr);
+    /**
+     * @brief Construct a consumer connected via `transport`, honoring the
+     * process-wide LogosMode.
+     *
+     * Transport resolution is done in one place — LogosTransportFactory —
+     * by combining LogosMode + the supplied LogosTransportConfig:
+     *   - LogosMode::Mock  → MockTransportConnection  (transport ignored)
+     *   - LogosMode::Local → LocalTransportConnection (transport ignored)
+     *   - LogosMode::Remote → wire protocol picked by `transport.protocol`
+     *
+     * Use this overload when the caller wants a specific transport for
+     * this consumer without side-effecting the rest of the process
+     * (e.g. the logoscore CLI dialing `core_service` over tcp_ssl
+     * without also flipping the in-process LogosAPIProvider into
+     * binding TLS).
+     */
+    LogosAPIConsumer(const QString& module_to_talk_to,
+                     const QString& origin_module,
+                     TokenManager* token_manager,
+                     const LogosTransportConfig& transport,
+                     QObject *parent = nullptr);
+
+    /**
+     * @brief Convenience constructor that uses the process-global default
+     * LogosTransportConfig. Equivalent to passing
+     * `LogosTransportConfigGlobal::getDefault()` to the explicit-transport
+     * constructor above.
+     */
+    explicit LogosAPIConsumer(const QString& module_to_talk_to,
+                              const QString& origin_module,
+                              TokenManager* token_manager,
+                              QObject *parent = nullptr);
     ~LogosAPIConsumer();
 
     /**

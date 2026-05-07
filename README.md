@@ -301,6 +301,45 @@ if (result.success) {
 }
 ```
 
+### Consuming the SDK
+
+The SDK installs a CMake package. Consumers use `find_package`:
+
+```cmake
+find_package(logos-cpp-sdk REQUIRED)
+target_link_libraries(my_target PRIVATE logos-cpp-sdk::logos_sdk)
+```
+
+The package config re-resolves transitive dependencies (`Qt6 Core/RemoteObjects`, `Boost system`, `OpenSSL`, `nlohmann_json`), so consumers don't have to wire them up manually. The static archive references OpenSSL `SSL_CTX_*`/`X509_*` and Boost `system::error_code`; without `find_package`'s imported target the link step fails.
+
+### Transports
+
+The SDK supports multiple transports, selected via `LogosTransportConfig`:
+
+| Protocol | Backend | Use case |
+|----------|---------|----------|
+| `LocalSocket` | Qt Remote Objects over `QLocalSocket` | In-host, module-to-module (default) |
+| `Tcp` | Boost.Asio + JSON/CBOR framing | Cross-host or container-to-host |
+| `TcpSsl` | Boost.Asio + OpenSSL + JSON/CBOR framing | Same as TCP, with TLS |
+
+A `LogosTransportSet` (= `std::vector<LogosTransportConfig>`) lets a single provider publish on multiple endpoints simultaneously (e.g. local socket for in-process clients + TCP+SSL for remote ones):
+
+```cpp
+LogosTransportConfig local;  // protocol = LocalSocket (default)
+
+LogosTransportConfig tls;
+tls.protocol = LogosProtocol::TcpSsl;
+tls.host     = "0.0.0.0";
+tls.port     = 7443;
+tls.caFile   = "/etc/logos/ca.pem";
+tls.certFile = "/etc/logos/server.pem";
+tls.keyFile  = "/etc/logos/server.key";
+
+LogosAPI* api = new LogosAPI("core_service", LogosTransportSet{local, tls}, this);
+```
+
+For processes that want to override the SDK-wide default, use `LogosTransportConfigGlobal::setDefault()` once at startup before any `LogosAPI` is constructed.
+
 ### Requirements
 
 #### Build Tools
@@ -311,6 +350,9 @@ if (result.success) {
 #### Dependencies
 - Qt6 (qtbase)
 - Qt6 Remote Objects (qtremoteobjects)
+- Boost (system)
+- OpenSSL
+- nlohmann_json
 
 ## Supported Platforms
 

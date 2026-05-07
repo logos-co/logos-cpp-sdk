@@ -31,6 +31,19 @@ public:
      * @param name The name the object was published under
      */
     virtual void unpublishObject(const QString& name) = 0;
+
+    /**
+     * @brief URL this backend will (or does) listen on for the named object.
+     *
+     * Used by LogosAPIProvider so it doesn't need to bake the URL scheme
+     * into LogosInstance — each backend owns its own addressing.
+     *
+     * Default implementation returns the deterministic local-socket URL
+     * ("local:logos_<mod>_<instance>") for back-compat with existing
+     * qt_remote code; network-transport backends override.
+     */
+    virtual QString bindUrl(const QString& instanceId,
+                            const QString& moduleName);
 };
 
 /**
@@ -72,6 +85,16 @@ public:
      * @return LogosObject* handle, or nullptr on failure.
      */
     virtual LogosObject* requestObject(const QString& objectName, int timeoutMs) = 0;
+
+    /**
+     * @brief URL this backend expects to connect to for the named object.
+     *
+     * Mirror of LogosTransportHost::bindUrl on the consumer side. Default
+     * returns the deterministic local-socket URL; network-transport
+     * backends override.
+     */
+    virtual QString endpointUrl(const QString& instanceId,
+                                const QString& moduleName);
 };
 
 #endif // LOGOS_TRANSPORT_H
