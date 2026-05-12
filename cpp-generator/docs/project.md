@@ -88,6 +88,8 @@ Converts `ModuleDecl` back to LIDL text. Used for roundtrip testing (parse → s
 - `lidlMakeProviderHeader(ModuleDecl, implClass, implHeader)` — generates Qt glue header
   - Emits `nlohmannToQVariant()` helper when any method has `jsonReturn = true`
   - Wires `m_impl.emitEvent` → `LogosProviderBase::emitEvent` when `hasEmitEvent` or `events` are present
+  - Always emits an `onInit(LogosAPI*) override` that, via SFINAE'd helpers in `logos_module_context.h`, (a) copies the three runtime-injected properties (`modulePath`, `instanceId`, `instancePersistencePath`) into the impl and (b) constructs a per-module `LogosModules` aggregate and threads its pointer through the same base. Impls that don't inherit `LogosModuleContext` compile unchanged — the helper overloads collapse to no-ops. The full `LogosAPI` is never exposed past the provider boundary.
+  - Always emits `#include "logos_sdk.h"` and a `std::unique_ptr<LogosModules> m_logosModules` member; ownership lives on the provider, the context base sees only a non-owning `void*` reinterpreted in `LogosModuleContext::logos<T>()`.
 - `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods dispatch
 - `lidlGenerateProviderGlue(lidlPath, ...)` — full pipeline from .lidl file
 

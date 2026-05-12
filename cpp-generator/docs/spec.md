@@ -180,6 +180,7 @@ Contains two classes:
   - C++ std return → Qt return (e.g., `QString::fromStdString(result)`)
   - For `jsonReturn` methods (returning `LogosMap`/`LogosList`), the glue calls a generated `nlohmannToQVariant()` recursive helper to convert `nlohmann::json` → `QVariant`/`QVariantMap`/`QVariantList`
   - If the impl declares an `emitEvent` callback (`hasEmitEvent`), the constructor wires it to `LogosProviderBase::emitEvent`
+  - Always overrides `onInit(LogosAPI*)` to (a) copy the three runtime-injected properties (`modulePath`, `instanceId`, `instancePersistencePath`) into the impl when it inherits from `LogosModuleContext`, and (b) construct a per-module `LogosModules` (from `generated_code/logos_sdk.h`) owned by the provider, threading its pointer through the same context base. Both wire-ups go through SFINAE'd helpers in `logos_module_context.h` (`_logos_codegen_::maybeSetContext` / `maybeSetLogosModules`), so non-inheriting impls compile unchanged and the `LogosAPI` never escapes the provider.
 2. **Plugin** — `QObject` subclass implementing `PluginInterface` and `LogosProviderPlugin`. Carries `Q_PLUGIN_METADATA` and `Q_INTERFACES`. Its `createProviderObject()` factory returns a new ProviderObject instance.
 
 #### Dispatch (`<name>_dispatch.cpp`)

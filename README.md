@@ -192,6 +192,51 @@ logos-cpp-generator --metadata metadata.json --general-only --output-dir ./gener
 
 This approach gives you fine-grained control over which modules to include and allows rebuilding just the umbrella headers without regenerating all module wrappers.
 
+### Universal modules: LogosModuleContext
+
+Universal (codegen-driven) modules — those built from a `package_xxx_impl.h` header rather than a handcrafted `QObject` plugin — don't see the raw `LogosAPI` at all. Instead, the codegen-generated provider populates a narrow `LogosModuleContext` base class with everything an impl typically needs:
+
+- Three host-injected properties exposed as typed getters
+- A `LogosModules` aggregate for calling other modules
+
+An impl opts in by inheriting from `LogosModuleContext` (defined in `logos_module_context.h`):
+
+```cpp
+#include <logos_module_context.h>
+#include <logos_json.h>
+#include "logos_sdk.h"      // generated at build time; defines LogosModules
+
+class MyModuleImpl : public LogosModuleContext {
+public:
+    LogosMap doWork(const std::string& input) {
+        // Call into a declared dependency — no LogosAPI in sight.
+        auto reply = logos<LogosModules>().some_dep.somethingAsync(input);
+        // ...
+    }
+
+protected:
+    void onContextReady() override {
+        // One-time setup: the getters below are now readable.
+        // Fires exactly once, before any method dispatch.
+        std::string dataDir = instancePersistencePath();
+        // open files, prime caches, etc.
+    }
+};
+```
+
+Available getters:
+
+| Getter | Description |
+|---|---|
+| `modulePath()` | Directory containing the module's plugin file. Useful for loading bundled resources (icons, QML files, schema docs). |
+| `instanceId()` | Stable per-instance ID assigned by the host. Two side-by-side instances of the same module get distinct IDs. |
+| `instancePersistencePath()` | Per-instance writable data directory the host owns the lifecycle of. The canonical place for module state (config, caches, small databases). Wiped on uninstall; survives upgrades. |
+| `logos<LogosModules>()` | Typed access to the module's `LogosModules` aggregate (one accessor per declared dependency in `metadata.json`, plus the always-present `core_manager`). |
+
+All getters return empty / null values when the module is loaded outside a host that provisions a context (CLI tests, unit tests using the impl directly). The `onContextReady()` hook still fires once at framework load time; tests that bypass the framework can call `_logosCoreSetContext_` / `_logosCoreSetLogosModulesPtr_` directly to simulate.
+
+Codegen does NOT require inheritance — modules that don't inherit `LogosModuleContext` compile unchanged. The generator emits a single `onInit` override per provider that delegates to SFINAE'd helpers (`_logos_codegen_::maybeSet*`), and the non-inheriting overloads collapse to no-ops.
+
 ### API
 
 #### LogosResult
