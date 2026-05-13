@@ -128,7 +128,13 @@ static QString stdParamToQVariant(const QString& qtType, const QString& argName)
                                        : base == "QVariantMap"  ? ".toMap()"
                                        : "");
     if (base == "int")
-        return "static_cast<int>(" + argName + ")";
+        // The std signature exposes `int64_t`; widen the QVariant
+        // payload to qlonglong so the wire carries the full 64-bit
+        // value instead of silently truncating to 32 bits on the way
+        // through `static_cast<int>`. (Reported by Copilot review on
+        // PR #61 — the std-typed surface and the wire payload were
+        // disagreeing for any value outside the int32 range.)
+        return "static_cast<qlonglong>(" + argName + ")";
     return argName;
 }
 
@@ -175,9 +181,17 @@ static bool isStdRefType(const QString& t)
 
 static bool isQtRefType(const QString& t)
 {
-    return t == "QString" || t == "QByteArray" || t == "QStringList"
-        || t == "QJsonArray" || t == "QVariantList" || t == "QVariantMap"
-        || t == "LogosResult";
+    // Matches the pre-refactor Qt-style by-ref set exactly. `QByteArray`
+    // and `LogosResult` are intentionally NOT included — the original
+    // generator emitted those parameter types by value, and the goal
+    // of routing existing Qt-style wrappers through this predicate is
+    // to keep the generated signatures bit-for-bit unchanged. Adding
+    // them to the set would have broken downstream code that took
+    // the address-of, overloaded on the parameter type, or relied on
+    // the by-value signature in shipped headers. (Reported by Copilot
+    // review on PR #61.)
+    return t == "QString" || t == "QStringList"
+        || t == "QJsonArray" || t == "QVariantList" || t == "QVariantMap";
 }
 
 QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events)

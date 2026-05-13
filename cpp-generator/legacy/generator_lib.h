@@ -44,8 +44,8 @@ QString toQVariantConversion(const QString& type, const QString& argExpr);
 // event next to the existing generic `onEvent(name, callback)` channel.
 // The accessor signature uses the apiStyle's type surface for the
 // callback's argument types.
-QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events = {});
-QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events = {});
+QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle = ApiStyle::Qt, const QJsonArray& events = {});
+QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle = ApiStyle::Qt, const QJsonArray& events = {});
 QVector<ParsedMethod> parseProviderHeader(const QString& headerPath, QTextStream& err);
 
 #endif // GENERATOR_LIB_H

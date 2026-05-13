@@ -265,11 +265,20 @@ TEST(LidlGenProvider, EventEmitters)
     m.events.append(ed);
 
     QString h = lidlMakeProviderHeader(m, "EventedImpl", "evented_impl.h");
+    // The provider class still gains a protected `emit<EventName>(...)`
+    // helper per declared event (callable from custom provider code,
+    // unused by the standard impl flow which goes via the typed
+    // `logos_events:` path).
     EXPECT_TRUE(h.contains("emitOnupdate"));
     EXPECT_TRUE(h.contains("emitEvent(\"onUpdate\""));
-    // Events in metadata (or hasEmitEvent) wire m_impl.emitEvent in the ctor
-    EXPECT_TRUE(h.contains("m_impl.emitEvent ="));
+    // Events declared in ModuleDecl.events flow through the
+    // `_logos_codegen_::maybeSetEmitEvent` SFINAE helper invoked from
+    // the generated `onInit` — NOT the legacy `m_impl.emitEvent = …`
+    // constructor wiring (that's gated on `hasEmitEvent` for back-compat
+    // with un-migrated modules — see ConstructorWiresEmitEventWhenHasEmitEventOnly).
+    EXPECT_TRUE(h.contains("_logos_codegen_::maybeSetEmitEvent(m_impl"));
     EXPECT_TRUE(h.contains("emitEvent(QString::fromStdString(name)"));
+    EXPECT_FALSE(h.contains("m_impl.emitEvent ="));
 }
 
 TEST(LidlGenProvider, ConstructorWiresEmitEventWhenHasEmitEventOnly)
