@@ -142,31 +142,63 @@ The parser uses a state machine to find the target class, track access specifier
 
 Module metadata (name, version, description, dependencies) comes from `metadata.json`, not from the header.
 
-### Event Emission via Header Detection
+### Event Emission via `logos_events:`
 
-Universal modules can emit named events to the host/runtime by declaring a public `emitEvent` callback in their impl header:
+Universal modules declare events in a Qt-`signals:`-style section parsed by the codegen. The same method name appears on both sides — declared in `logos_events:`, called directly to emit:
 
 ```cpp
-class MyModuleImpl {
+#include <logos_module_context.h>
+
+class MyModuleImpl : public LogosModuleContext {
 public:
-    std::function<void(const std::string& eventName, const std::string& data)> emitEvent;
-    // ... methods ...
+    void doWork() {
+        userLoggedIn("alice", 12345);            // typed emit, same name
+    }
+
+logos_events:                                     // expands to `public:`; recognised by impl_header_parser
+    void userLoggedIn(const std::string& userId, int64_t timestamp);
+    void messageReceived(const std::string& from, const std::string& body);
 };
 ```
 
-The parser detects this `std::function` member by name and sets `ModuleDecl.hasEmitEvent = true`. The generator then wires the callback in the provider constructor:
+`impl_header_parser.cpp` recognises the raw `logos_events:` token (before preprocessing) and populates `ModuleDecl.events` with one `EventDecl` per prototype. Three artifacts get emitted from this:
 
-```cpp
-MyModuleProviderObject() {
-    m_impl.emitEvent = [this](const std::string& name, const std::string& data) {
-        QVariantList args;
-        if (!data.empty()) args << QString::fromStdString(data);
-        emitEvent(QString::fromStdString(name), args);
-    };
-}
-```
+1. **`<name>_events.cpp`** — Qt-MOC-style definitions of each declared event method on the impl class. Bodies marshal typed args into a `QVariantList` and call `this->emitEventImpl_("<event>", &args)`, a protected helper on `LogosModuleContext`:
 
-This replaces the previous approach of declaring events in `metadata.json`. The `events` array in metadata.json is still supported for backward compatibility (e.g., LIDL-defined modules), but header detection is the preferred approach for universal modules since it keeps event information co-located with the implementation.
+   ```cpp
+   void MyModuleImpl::userLoggedIn(const std::string& userId, int64_t timestamp) {
+       QVariantList _args{
+           QVariant(QString::fromStdString(userId)),
+           QVariant(static_cast<qlonglong>(timestamp))
+       };
+       this->emitEventImpl_("userLoggedIn", &_args);
+   }
+   ```
+
+2. **Provider `onInit` wiring** — `<name>_qt_glue.h` adds a `_logos_codegen_::maybeSetEmitEvent` call alongside the existing `maybeSetContext` / `maybeSetLogosModules`. The lambda casts the void* back to QVariantList and forwards to `LogosProviderBase::emitEvent(QString, QVariantList)` (same wire as before):
+
+   ```cpp
+   _logos_codegen_::maybeSetEmitEvent(m_impl,
+       [this](const std::string& name, void* args) {
+           emitEvent(QString::fromStdString(name),
+                     *static_cast<QVariantList*>(args));
+       });
+   ```
+
+3. **`<name>.lidl` sidecar** — a serialised view of the module's declared events (using the existing `lidlSerialize` from `lidl_serializer.cpp`):
+
+   ```
+   module my_module {
+     event userLoggedIn(userId: tstr, timestamp: int)
+     event messageReceived(from: tstr, body: tstr)
+   }
+   ```
+
+   `buildPlugin.nix` ships this at `$out/share/logos/<name>.lidl`. `buildHeaders.nix` passes it to the consumer-side codegen via `--events-from`, which adds typed `on<EventName>(callback)` accessors to the generated `<Module>` wrapper (one per declared event, callback-arg types respect `--api-style`).
+
+**Legacy backward-compat**: the older `std::function<void(const std::string&, const std::string&)> emitEvent` member is still detected by the parser and wired in the provider constructor — un-migrated modules (e.g. logos-package-manager-module) keep working through their existing `emitEvent("name", "json")` call sites. New code should prefer `logos_events:`.
+
+Module metadata (name, version, description, dependencies) still comes from `metadata.json`, not from the header.
 
 ### Generated Output
 
@@ -180,6 +212,7 @@ Contains two classes:
   - C++ std return → Qt return (e.g., `QString::fromStdString(result)`)
   - For `jsonReturn` methods (returning `LogosMap`/`LogosList`), the glue calls a generated `nlohmannToQVariant()` recursive helper to convert `nlohmann::json` → `QVariant`/`QVariantMap`/`QVariantList`
   - If the impl declares an `emitEvent` callback (`hasEmitEvent`), the constructor wires it to `LogosProviderBase::emitEvent`
+  - Always overrides `onInit(LogosAPI*)` to (a) copy the three runtime-injected properties (`modulePath`, `instanceId`, `instancePersistencePath`) into the impl when it inherits from `LogosModuleContext`, and (b) construct a per-module `LogosModules` (from `generated_code/logos_sdk.h`) owned by the provider, threading its pointer through the same context base. Both wire-ups go through SFINAE'd helpers in `logos_module_context.h` (`_logos_codegen_::maybeSetContext` / `maybeSetLogosModules`), so non-inheriting impls compile unchanged and the `LogosAPI` never escapes the provider.
 2. **Plugin** — `QObject` subclass implementing `PluginInterface` and `LogosProviderPlugin`. Carries `Q_PLUGIN_METADATA` and `Q_INTERFACES`. Its `createProviderObject()` factory returns a new ProviderObject instance.
 
 #### Dispatch (`<name>_dispatch.cpp`)
@@ -191,12 +224,32 @@ Implements two methods on the ProviderObject:
 
 #### Client Stubs (`<name>_api.h` + `<name>_api.cpp`)
 
-Generated from LIDL (not from `--from-header`). Provides:
+Generated from LIDL (not from `--from-header`). Each module gets **one** `<Module>` wrapper class whose signature shape is picked by the consumer's build via `--api-style`:
 
-- Typed sync methods that call `invokeRemoteMethod()` and convert the `QVariant` result
-- Async overloads with callback + timeout
-- Event subscription (`on()`) and emission (`trigger()`)
-- Umbrella `logos_sdk.h` / `logos_sdk.cpp` aggregating all module wrappers
+| `--api-style` | Wrapper signatures |
+|---|---|
+| `qt` (default) | QString / QStringList / QVariantList / QVariantMap / int / LogosResult |
+| `std` | std::string / std::vector<std::string> / LogosMap / LogosList / int64_t / StdLogosResult |
+
+Both styles provide:
+
+- Typed sync methods that call `invokeRemoteMethod()` and convert the `QVariant` result.
+- Async overloads with callback + timeout.
+- The Qt style additionally exposes event subscription (`on()`) and emission (`trigger()`); the std style omits these — universal modules that need cross-module events can be addressed in a follow-up.
+
+The std wrappers call the same underlying `invokeRemoteMethod`; the Qt↔std conversion is generated inline in their `.cpp` so the calling translation unit needs zero Qt headers. Both styles emit the **same filename** (`<name>_api.h` / `<name>_api.cpp`) and the **same class name** (`<Module>`) — the two are mutually exclusive at build time. No `_api_std.{h,cpp}` files are ever produced.
+
+Umbrella files (`logos_sdk.h` / `logos_sdk.cpp`) aggregate every dep into a flat `LogosModules` struct — one accessor per `metadata.json#dependencies` entry, nothing else:
+
+```cpp
+struct LogosModules {
+    LogosAPI*    api;
+    SomeDep      some_dep;       // one per declared dependency
+    // ...
+};
+```
+
+Only the modules explicitly listed as dependencies appear. The runtime's `core_manager` is intentionally NOT exposed here — apps that need to manage the core (basecamp, logoscore) use liblogos' C API directly, not a typed RPC wrapper.
 
 ## Features & Requirements
 

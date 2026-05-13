@@ -192,6 +192,116 @@ logos-cpp-generator --metadata metadata.json --general-only --output-dir ./gener
 
 This approach gives you fine-grained control over which modules to include and allows rebuilding just the umbrella headers without regenerating all module wrappers.
 
+### Universal modules: LogosModuleContext
+
+Universal (codegen-driven) modules — those built from a `package_xxx_impl.h` header rather than a handcrafted `QObject` plugin — don't see the raw `LogosAPI` at all. Instead, the codegen-generated provider populates a narrow `LogosModuleContext` base class with everything an impl typically needs:
+
+- Three host-injected properties exposed as typed getters
+- A `LogosModules` aggregate for calling other modules
+
+An impl opts in by inheriting from `LogosModuleContext` (defined in `logos_module_context.h`):
+
+```cpp
+#include <logos_module_context.h>
+#include <logos_json.h>
+#include "logos_sdk.h"      // generated at build time; defines LogosModules
+
+class MyModuleImpl : public LogosModuleContext {
+public:
+    LogosMap doWork(const std::string& input) {
+        // Cross-module call through the flat LogosModules aggregator.
+        // Because this module is `interface: "universal"`, mkLogosModule.nix
+        // passed -DLOGOS_API_STYLE=std to the codegen, so every <Dep>
+        // wrapper takes/returns std types — no Qt at the call site.
+        std::string reply = modules().some_dep.echo(input);
+        // ...
+    }
+
+protected:
+    void onContextReady() override {
+        // One-time setup: the getters below are now readable.
+        // Fires exactly once, before any method dispatch.
+        std::string dataDir = instancePersistencePath();
+        // open files, prime caches, etc.
+    }
+};
+```
+
+Available getters:
+
+| Getter | Description |
+|---|---|
+| `modulePath()` | Directory containing the module's plugin file. Useful for loading bundled resources (icons, QML files, schema docs). |
+| `instanceId()` | Stable per-instance ID assigned by the host. Two side-by-side instances of the same module get distinct IDs. |
+| `instancePersistencePath()` | Per-instance writable data directory the host owns the lifecycle of. The canonical place for module state (config, caches, small databases). Wiped on uninstall; survives upgrades. |
+| `modules()` | The module's flat `LogosModules` aggregate — one accessor per `metadata.json#dependencies` entry (nothing else; apps that need to manage the core do so via liblogos' C API). `LogosModules` is forward-declared in the SDK header and made complete by the impl's `#include "logos_sdk.h"`, so the call site just writes `modules().some_dep.someMethod(...)`. Each accessor's wrapper class signatures use the type surface picked at THIS module's build time (see "API style" below). |
+
+#### API style: Qt vs std
+
+Each module's build picks **one** API style for the generated `<Module>` client wrappers and the `LogosModules` umbrella — they're mutually exclusive, no composite output:
+
+| `metadata.json#interface` | `LOGOS_API_STYLE` | Wrapper signatures |
+|---|---|---|
+| `"universal"` | `std` | `std::string`, `std::vector<std::string>`, `LogosMap`, `LogosList`, `int64_t`, `StdLogosResult` |
+| `"legacy"` / `"provider"` / absent | `qt` (default) | `QString`, `QStringList`, `QVariantList`, `QVariantMap`, `int`, `LogosResult` |
+
+`mkLogosModule.nix` reads `interface` and threads `-DLOGOS_API_STYLE=std` through to the codegen for universal modules; everyone else defaults to Qt and stays bit-for-bit backward compatible. Inside the universal module's `.cpp`, the call site is:
+
+```cpp
+// Universal module (api-style=std):
+std::string reply = modules().some_dep.echo("hi");
+```
+
+…and in a handcrafted Qt module the same call is:
+
+```cpp
+// Legacy / provider module (api-style=qt):
+QString reply = modules().some_dep.echo(QString("hi"));
+```
+
+The wire is identical (`QVariant` under the hood); for std mode the Qt↔std conversion is inlined in the generated wrapper's `.cpp`, so the calling translation unit needs zero Qt headers.
+
+> **Migrating to std types**: The choice is driven entirely by `interface`. A handcrafted module that wants std types should switch to `interface: "universal"` — there's no per-flag override on `metadata.json`.
+
+All getters return empty / null values when the module is loaded outside a host that provisions a context (CLI tests, unit tests using the impl directly). The `onContextReady()` hook still fires once at framework load time; tests that bypass the framework can call `_logosCoreSetContext_` / `_logosCoreSetLogosModulesPtr_` directly to simulate.
+
+Codegen does NOT require inheritance — modules that don't inherit `LogosModuleContext` compile unchanged. The generator emits a single `onInit` override per provider that delegates to SFINAE'd helpers (`_logos_codegen_::maybeSet*`), and the non-inheriting overloads collapse to no-ops.
+
+#### Events: `logos_events:`
+
+Universal modules declare events in a Qt-`signals:`-style `logos_events:` section. The codegen parses each prototype, emits the matching method bodies in a sidecar `<name>_events.cpp` (Qt-MOC style), and ships a `<name>.lidl` file describing them so consumer-side codegen can produce typed subscribers:
+
+```cpp
+#include <logos_module_context.h>
+
+class MyModuleImpl : public LogosModuleContext {
+public:
+    void doWork() {
+        userLoggedIn("alice", 12345);              // typed emit — same name as the declaration
+    }
+
+logos_events:                                       // expands to `public:`; parsed by the codegen
+    void userLoggedIn(const std::string& userId, int64_t timestamp);
+    void messageReceived(const std::string& from, const std::string& body);
+};
+```
+
+The author writes only the declarations; the codegen supplies the bodies (analogous to Qt MOC for `signals:`). Each call marshals typed args into a `QVariantList` and routes them through `LogosModuleContext::emitEventImpl_` → `LogosProviderBase::emitEvent` → the existing QRO `eventResponse` channel. No wire-format change.
+
+**Consumer side** — typed `on<EventName>(...)` accessors are generated on the dep's `<Module>` wrapper. The generic `onEvent(name, cb)` channel stays available as a forward-compat escape hatch:
+
+```cpp
+// From any module that depends on the one declaring the events:
+modules().my_module.onUserLoggedIn(
+    [](const std::string& userId, int64_t timestamp) {
+        // typed args, no manual QVariantList unpacking
+    });
+```
+
+The accessor's parameter types follow the consumer's own `--api-style` (so a `universal` consumer sees `const std::string&` / `int64_t`, a handcrafted Qt consumer sees `const QString&` / `int`).
+
+**Legacy** — modules that haven't migrated keep the old `std::function<void(const std::string&, const std::string&)> emitEvent` member working. The codegen still detects it and wires the lambda in the provider constructor. New code should prefer `logos_events:`.
+
 ### API
 
 #### LogosResult

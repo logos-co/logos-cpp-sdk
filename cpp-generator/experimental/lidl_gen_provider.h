@@ -19,6 +19,15 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
 // Generate callMethod() + getMethods() dispatch source
 QString lidlMakeProviderDispatch(const ModuleDecl& module);
 
+// Generate the `<name>_events.cpp` source: Qt-MOC-style definitions of
+// methods declared in the impl's `logos_events:` section. Each body
+// marshals typed args into a QVariantList and calls
+// LogosModuleContext::emitEventImpl_, which the provider's onInit wires
+// to the QRO wire via LogosProviderBase::emitEvent.
+QString lidlMakeEventsSource(const ModuleDecl& module,
+                              const QString& implClass,
+                              const QString& implHeader);
+
 // Full pipeline: parse .lidl, generate provider glue + dispatch + metadata
 // Returns 0 on success, non-zero on error
 int lidlGenerateProviderGlue(const QString& lidlPath,
