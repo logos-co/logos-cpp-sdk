@@ -6,8 +6,11 @@
 //
 //   1. The opt-in base class itself: getters default-empty, the
 //      framework setter populates them in one shot and fires
-//      onContextReady() exactly once, the typed `logos<T>()` accessor
-//      reinterprets the stored void* correctly.
+//      onContextReady() exactly once, the typed `modules()` accessor
+//      reinterprets the stored void* correctly against a translation-
+//      unit-local `struct LogosModules` (mirroring how each real
+//      module's codegen-emitted `logos_sdk.h` defines that struct
+//      at global scope).
 //
 //   2. The SFINAE-dispatched helpers (`_logos_codegen_::maybeSetContext`
 //      and `maybeSetLogosModules`): the inheriting overload writes
@@ -27,6 +30,16 @@
 
 #include <string>
 #include <type_traits>
+
+// Stand-in for a module-specific `LogosModules` struct. The real one
+// is generated per-module in `generated_code/logos_sdk.h` at global
+// scope (one accessor per dep). Defined here at global scope so it
+// matches the forward declaration in `logos_module_context.h` and
+// makes the inline `modules()` accessor compile against this TU's
+// translation-unit-local definition.
+struct LogosModules {
+    int sentinel = 42;
+};
 
 namespace {
 
@@ -48,13 +61,6 @@ protected:
         seenInstanceId               = instanceId();
         seenInstancePersistencePath  = instancePersistencePath();
     }
-};
-
-// Stand-in for a module-specific `LogosModules` struct. The real one
-// is generated per-module (one accessor per dep) — for the SDK-side
-// pointer plumbing we only need a type whose address we can compare.
-struct FakeLogosModules {
-    int sentinel = 42;
 };
 
 // Impl that intentionally does NOT inherit LogosModuleContext, used
@@ -121,14 +127,17 @@ TEST(LogosModuleContextTest, SetContextCalledTwiceFiresHookTwice)
 TEST(LogosModuleContextTest, SetLogosModulesPtrAndTypedAccessor)
 {
     ContextInherit ctx;
-    FakeLogosModules modules;
-    modules.sentinel = 7;
+    LogosModules mods;
+    mods.sentinel = 7;
 
     // Type-erased framework write…
-    ctx._logosCoreSetLogosModulesPtr_(&modules);
-    // …typed read on the way out.
-    FakeLogosModules& got = ctx.logos<FakeLogosModules>();
-    EXPECT_EQ(&got, &modules);
+    ctx._logosCoreSetLogosModulesPtr_(&mods);
+    // …typed read on the way out via the non-template `modules()`
+    // accessor. The accessor's inline body static_casts the stored
+    // void* to this TU's `struct LogosModules` (forward-declared in
+    // logos_module_context.h, defined at file scope above).
+    LogosModules& got = ctx.modules();
+    EXPECT_EQ(&got, &mods);
     EXPECT_EQ(got.sentinel, 7);
 
     // Pointer aliasing: mutating through the original object is
@@ -136,8 +145,8 @@ TEST(LogosModuleContextTest, SetLogosModulesPtrAndTypedAccessor)
     // copy). Demonstrates the generator's lifetime model — the
     // provider owns the LogosModules and the context holds a non-
     // owning pointer for the impl's lifetime.
-    modules.sentinel = 99;
-    EXPECT_EQ(ctx.logos<FakeLogosModules>().sentinel, 99);
+    mods.sentinel = 99;
+    EXPECT_EQ(ctx.modules().sentinel, 99);
 }
 
 TEST(LogosModuleContextTest, LogosModulesPointerIndependentOfContext)
@@ -148,12 +157,12 @@ TEST(LogosModuleContextTest, LogosModulesPointerIndependentOfContext)
     // don't want a future re-ordering or refactor to silently couple
     // them.
     ContextInherit ctx;
-    FakeLogosModules modules;
+    LogosModules mods;
 
-    ctx._logosCoreSetLogosModulesPtr_(&modules);
+    ctx._logosCoreSetLogosModulesPtr_(&mods);
     ctx._logosCoreSetContext_("/m", "id", "/p");
 
-    EXPECT_EQ(&ctx.logos<FakeLogosModules>(), &modules);
+    EXPECT_EQ(&ctx.modules(), &mods);
     EXPECT_EQ(ctx.modulePath(), "/m");
 }
 
@@ -184,17 +193,17 @@ TEST(LogosModuleContextHelpersTest, MaybeSetContextNoOpForNonInheritingImpl)
 TEST(LogosModuleContextHelpersTest, MaybeSetLogosModulesWritesForInheritingImpl)
 {
     ContextInherit impl;
-    FakeLogosModules modules;
-    _logos_codegen_::maybeSetLogosModules(impl, &modules);
-    EXPECT_EQ(&impl.logos<FakeLogosModules>(), &modules);
+    LogosModules mods;
+    _logos_codegen_::maybeSetLogosModules(impl, &mods);
+    EXPECT_EQ(&impl.modules(), &mods);
 }
 
 TEST(LogosModuleContextHelpersTest, MaybeSetLogosModulesNoOpForNonInheritingImpl)
 {
     NonInheritingImpl impl;
-    FakeLogosModules modules;
+    LogosModules mods;
     // Same compile-time test as above, separate helper.
-    _logos_codegen_::maybeSetLogosModules(impl, &modules);
+    _logos_codegen_::maybeSetLogosModules(impl, &mods);
     EXPECT_EQ(impl.touched, 0);
 }
 

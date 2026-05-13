@@ -1,6 +1,7 @@
 #include "lidl_gen_provider.h"
 #include "lidl_gen_client.h"  // lidlToPascalCase, lidlTypeToQt
 #include "lidl_parser.h"
+#include "lidl_serializer.h"
 #include "lidl_validator.h"
 
 #include <QFile>
@@ -269,10 +270,15 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
       << module.name << "\", \"" << (module.version.isEmpty() ? "0.0.0" : module.version) << "\")\n\n";
     s << "public:\n";
 
-    // Wire m_impl.emitEvent → LogosProviderBase::emitEvent when the impl
-    // declares a public emitEvent callback (detected from header) or when
-    // events are declared in metadata.json (legacy path).
-    if (module.hasEmitEvent || !module.events.isEmpty()) {
+    // Legacy backward-compat: if the impl still declares a
+    // `std::function<…> emitEvent` member (the old text-pattern path),
+    // wire it in the provider's constructor so existing modules
+    // (e.g. logos-package-manager-module) keep working through their
+    // `emitEvent("name", "json")` call sites. New universal modules
+    // should declare events in a typed `logos_events:` section — that
+    // path goes through `maybeSetEmitEvent` in onInit (below) and
+    // doesn't touch this constructor.
+    if (module.hasEmitEvent) {
         s << "    " << providerObjectClass << "() {\n";
         s << "        m_impl.emitEvent = [this](const std::string& name, const std::string& data) {\n";
         s << "            QVariantList args;\n";
@@ -354,7 +360,7 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
     //      codegen's umbrella pass — `generated_code/logos_sdk.h`)
     //      from the LogosAPI and threads its pointer into the same
     //      context base, giving the impl typed access to its
-    //      declared dependencies via `logos<LogosModules>().<dep>...`.
+    //      declared dependencies via `modules().<dep>...`.
     //
     // Both wire-ups go through SFINAE'd helpers
     // (`_logos_codegen_::maybeSet*`) so impls that don't inherit
@@ -375,6 +381,15 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
     s << "            api->property(\"instancePersistencePath\").toString().toStdString());\n";
     s << "        m_logosModules = std::make_unique<LogosModules>(api);\n";
     s << "        _logos_codegen_::maybeSetLogosModules(m_impl, m_logosModules.get());\n";
+    // Wire the impl's `logos_events:` declarations to LogosProviderBase's
+    // emitEvent. Codegen-emitted `<name>_events.cpp` bodies call
+    // `this->emitEventImpl_(name, &args)`; the lambda below casts the
+    // void* back to QVariantList and routes through the existing wire.
+    s << "        _logos_codegen_::maybeSetEmitEvent(m_impl,\n";
+    s << "            [this](const std::string& name, void* args) {\n";
+    s << "                emitEvent(QString::fromStdString(name),\n";
+    s << "                          *static_cast<QVariantList*>(args));\n";
+    s << "            });\n";
     s << "    }\n\n";
 
     if (!module.events.isEmpty()) {
@@ -522,6 +537,100 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
 }
 
 // ---------------------------------------------------------------------------
+// Events source generation — Qt-MOC-style bodies for `logos_events:` decls
+// ---------------------------------------------------------------------------
+//
+// The impl header declares typed event prototypes in a `logos_events:`
+// section. The compiler sees them as ordinary public-method declarations
+// (the macro expands to `public:`). This generator emits the matching
+// definitions in a sidecar `<name>_events.cpp` — exactly the role that
+// `moc_*.cpp` plays for Qt's `signals:`. Each body marshals typed args
+// into a `QVariantList` and calls `LogosModuleContext::emitEventImpl_`,
+// which the provider's onInit wired to LogosProviderBase::emitEvent (and
+// onward over QRO).
+
+// Returns a C++ expression of static type QVariant for the given
+// std-typed parameter. Mirrors the type-mapping table in lidlTypeToStd.
+static QString stdParamToQVariantExpr(const TypeExpr& te, const QString& pn)
+{
+    if (te.kind == TypeExpr::Primitive) {
+        if (te.name == "tstr")
+            return "QVariant(QString::fromStdString(" + pn + "))";
+        if (te.name == "bstr")
+            return "QVariant(QByteArray(reinterpret_cast<const char*>(" + pn
+                 + ".data()), static_cast<int>(" + pn + ".size())))";
+        if (te.name == "int")
+            return "QVariant(static_cast<qlonglong>(" + pn + "))";
+        if (te.name == "uint")
+            return "QVariant(static_cast<qulonglong>(" + pn + "))";
+        if (te.name == "float64") return "QVariant(" + pn + ")";
+        if (te.name == "bool")    return "QVariant(" + pn + ")";
+    }
+    if (te.kind == TypeExpr::Array && te.elements.size() == 1
+        && te.elements[0].kind == TypeExpr::Primitive
+        && te.elements[0].name == "tstr") {
+        // std::vector<std::string> -> QStringList wrapped in QVariant
+        return "QVariant([&](){ QStringList _l; _l.reserve(static_cast<int>(" + pn
+             + ".size())); for (const auto& _e : " + pn
+             + ") _l.append(QString::fromStdString(_e)); return _l; }())";
+    }
+    // Fallback — let QVariant::fromValue figure it out (works for primitives
+    // and any QMetaType-registered user type).
+    return "QVariant::fromValue(" + pn + ")";
+}
+
+QString lidlMakeEventsSource(const ModuleDecl& module,
+                              const QString& implClass,
+                              const QString& implHeader)
+{
+    QString c;
+    QTextStream s(&c);
+    s << "// AUTO-GENERATED by logos-cpp-generator -- do not edit\n";
+    s << "//\n";
+    s << "// Bodies for `logos_events:` methods declared in " << implHeader << ".\n";
+    s << "// Each call marshals typed args into a QVariantList and routes\n";
+    s << "// them through LogosModuleContext::emitEventImpl_, which the\n";
+    s << "// generated provider wires to LogosProviderBase::emitEvent.\n";
+    s << "#include \"" << implHeader << "\"\n";
+    s << "#include <QString>\n";
+    s << "#include <QByteArray>\n";
+    s << "#include <QStringList>\n";
+    s << "#include <QVariant>\n";
+    s << "#include <QVariantList>\n";
+    s << "#include <cstdint>\n";
+    s << "#include <string>\n";
+    s << "#include <vector>\n\n";
+
+    for (const EventDecl& ed : module.events) {
+        // Signature — mirrors the prototype the impl declared.
+        s << "void " << implClass << "::" << ed.name << "(";
+        for (int i = 0; i < ed.params.size(); ++i) {
+            QString stdType = lidlTypeToStd(ed.params[i].type);
+            const TypeExpr& te = ed.params[i].type;
+            // Pass-by-const-ref for non-trivial std types; by-value for
+            // primitives. Mirrors the existing method-signature shape.
+            bool byRef = (te.kind == TypeExpr::Array)
+                || (te.kind == TypeExpr::Primitive
+                    && (te.name == "tstr" || te.name == "bstr"));
+            if (byRef) s << "const " << stdType << "& " << ed.params[i].name;
+            else       s << stdType << " " << ed.params[i].name;
+            if (i + 1 < ed.params.size()) s << ", ";
+        }
+        s << ") {\n";
+        s << "    QVariantList _args{";
+        for (int i = 0; i < ed.params.size(); ++i) {
+            s << stdParamToQVariantExpr(ed.params[i].type, ed.params[i].name);
+            if (i + 1 < ed.params.size()) s << ", ";
+        }
+        s << "};\n";
+        s << "    this->emitEventImpl_(\"" << ed.name << "\", &_args);\n";
+        s << "}\n\n";
+    }
+
+    return c;
+}
+
+// ---------------------------------------------------------------------------
 // Full pipeline (from .lidl file)
 // ---------------------------------------------------------------------------
 
@@ -586,6 +695,35 @@ int lidlGenerateProviderGlue(const QString& lidlPath,
 
     out << "Generated: " << glueHeaderAbs << "\n";
     out << "Generated: " << dispatchAbs << "\n";
+
+    // Events bodies + LIDL sidecar: emitted whenever the module declares
+    // any events. The sidecar gets shipped in the dep's headers-* output
+    // by buildPlugin.nix's installPhase so consumer-side codegen can
+    // discover events without reintrospecting the .dylib.
+    if (!mod.events.isEmpty()) {
+        QString eventsAbs = QDir(genDirPath).filePath(mod.name + "_events.cpp");
+        {
+            QFile f(eventsAbs);
+            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                err << "Failed to write events source: " << eventsAbs << "\n";
+                return 8;
+            }
+            f.write(lidlMakeEventsSource(mod, implClass, implHeader).toUtf8());
+        }
+        out << "Generated: " << eventsAbs << "\n";
+
+        QString lidlAbs = QDir(genDirPath).filePath(mod.name + ".lidl");
+        {
+            QFile f(lidlAbs);
+            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                err << "Failed to write LIDL sidecar: " << lidlAbs << "\n";
+                return 9;
+            }
+            f.write(lidlSerialize(mod).toUtf8());
+        }
+        out << "Generated: " << lidlAbs << "\n";
+    }
+
     out.flush();
     return 0;
 }

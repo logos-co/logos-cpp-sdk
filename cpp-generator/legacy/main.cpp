@@ -16,6 +16,74 @@
 #include <QtGlobal>
 #include "logos_provider_object.h"
 #include "generator_lib.h"
+#include "../experimental/lidl_parser.h"
+
+// Convert a TypeExpr → Qt-typed string name (same surface the
+// metaobject-introspection path produces for methods, so generator_lib
+// can consume both via one code path).
+static QString lidlTypeExprToQtTypeName(const TypeExpr& te)
+{
+    if (te.kind == TypeExpr::Primitive) {
+        if (te.name == "tstr")    return "QString";
+        if (te.name == "bstr")    return "QByteArray";
+        if (te.name == "int")     return "int";
+        if (te.name == "uint")    return "int";       // wire-as-int for now
+        if (te.name == "float64") return "double";
+        if (te.name == "bool")    return "bool";
+        if (te.name == "result")  return "LogosResult";
+        if (te.name == "any")     return "QVariant";
+        return "QVariant";
+    }
+    if (te.kind == TypeExpr::Array && te.elements.size() == 1) {
+        const TypeExpr& elem = te.elements[0];
+        if (elem.kind == TypeExpr::Primitive && elem.name == "tstr")
+            return "QStringList";
+        return "QVariantList";
+    }
+    if (te.kind == TypeExpr::Map)      return "QVariantMap";
+    if (te.kind == TypeExpr::Optional) return "QVariant";
+    if (te.kind == TypeExpr::Named)    return "QVariant";
+    return "QVariant";
+}
+
+// Load events from a `.lidl` sidecar shipped alongside a module's
+// pre-built headers. Returns a JSON array of
+//   { name, params: [ { name, type } ] }
+// using Qt-typed type names — same shape generator_lib's makeHeader /
+// makeSource already consume for methods.
+static QJsonArray loadEventsFromLidl(const QString& lidlPath, QTextStream& err)
+{
+    QJsonArray result;
+    QFile f(lidlPath);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        err << "Failed to open events sidecar: " << lidlPath << "\n";
+        return result;
+    }
+    QString source = QString::fromUtf8(f.readAll());
+    f.close();
+
+    LidlParseResult pr = lidlParse(source);
+    if (pr.hasError()) {
+        err << lidlPath << ":" << pr.errorLine << ":" << pr.errorColumn
+            << ": " << pr.error << "\n";
+        return result;
+    }
+
+    for (const EventDecl& ed : pr.module.events) {
+        QJsonObject obj;
+        obj["name"] = ed.name;
+        QJsonArray params;
+        for (const ParamDecl& pd : ed.params) {
+            QJsonObject p;
+            p["name"] = pd.name;
+            p["type"] = lidlTypeExprToQtTypeName(pd.type);
+            params.append(p);
+        }
+        obj["params"] = params;
+        result.append(obj);
+    }
+    return result;
+}
 
 static QJsonArray enumerateMethods(QObject* moduleInstance)
 {
@@ -69,232 +137,37 @@ static QJsonArray enumerateMethods(QObject* moduleInstance)
 
 // makeSource -> generator_lib.h/cpp
 
-static QString makeCoreManagerHeader()
-{
-    QString h;
-    QTextStream s(&h);
-    s << "#pragma once\n";
-    s << "#include <QString>\n";
-    s << "#include <QVariant>\n";
-    s << "#include <QStringList>\n";
-    s << "#include <QJsonArray>\n";
-    s << "#include <functional>\n";
-    s << "#include <utility>\n";
-    s << "#include \"logos_api.h\"\n";
-    s << "#include \"logos_api_client.h\"\n";
-    s << "#include \"logos_object.h\"\n\n";
-    s << "class CoreManager {\n";
-    s << "public:\n";
-    s << "    explicit CoreManager(LogosAPI* api);\n\n";
-    s << "    using RawEventCallback = std::function<void(const QString&, const QVariantList&)>;\n";
-    s << "    using EventCallback = std::function<void(const QVariantList&)>;\n\n";
-    s << "    bool on(const QString& eventName, RawEventCallback callback);\n";
-    s << "    bool on(const QString& eventName, EventCallback callback);\n";
-    s << "    void setEventSource(LogosObject* source);\n";
-    s << "    LogosObject* eventSource() const;\n";
-    s << "    void trigger(const QString& eventName);\n";
-    s << "    void trigger(const QString& eventName, const QVariantList& data);\n";
-    s << "    template<typename... Args>\n";
-    s << "    void trigger(const QString& eventName, Args&&... args) {\n";
-    s << "        trigger(eventName, packVariantList(std::forward<Args>(args)...));\n";
-    s << "    }\n";
-    s << "    void trigger(const QString& eventName, LogosObject* source, const QVariantList& data);\n";
-    s << "    template<typename... Args>\n";
-    s << "    void trigger(const QString& eventName, LogosObject* source, Args&&... args) {\n";
-    s << "        trigger(eventName, source, packVariantList(std::forward<Args>(args)...));\n";
-    s << "    }\n\n";
-    s << "    void initialize(int argc, char* argv[]);\n";
-    s << "    void setPluginsDirectory(const QString& directory);\n";
-    s << "    void start();\n";
-    s << "    void cleanup();\n";
-    s << "    QStringList getLoadedPlugins();\n";
-    s << "    QJsonArray getKnownPlugins();\n";
-    s << "    QJsonArray getPluginMethods(const QString& pluginName);\n";
-    s << "    void helloWorld();\n";
-    s << "    bool loadPlugin(const QString& pluginName);\n";
-    s << "    bool unloadPlugin(const QString& pluginName);\n";
-    s << "    QString processPlugin(const QString& filePath);\n\n";
-    s << "private:\n";
-    s << "    LogosObject* ensureReplica();\n";
-    s << "    template<typename... Args>\n";
-    s << "    static QVariantList packVariantList(Args&&... args) {\n";
-    s << "        QVariantList list;\n";
-    s << "        list.reserve(sizeof...(Args));\n";
-    s << "        using Expander = int[];\n";
-    s << "        (void)Expander{0, (list.append(QVariant::fromValue(std::forward<Args>(args))), 0)...};\n";
-    s << "        return list;\n";
-    s << "    }\n";
-    s << "    LogosAPI* m_api;\n";
-    s << "    LogosAPIClient* m_client;\n";
-    s << "    QString m_moduleName;\n";
-    s << "    LogosObject* m_eventReplica = nullptr;\n";
-    s << "    LogosObject* m_eventSource = nullptr;\n";
-    s << "};\n";
-    return h;
-}
-
-static QString makeCoreManagerSource(const QString& headerBaseName)
-{
-    QString c;
-    QTextStream s(&c);
-    s << "#include \"" << headerBaseName << "\"\n\n";
-    s << "#include <QDebug>\n";
-    s << "#include <QStringList>\n\n";
-    s << "CoreManager::CoreManager(LogosAPI* api) : m_api(api), m_client(api->getClient(\"core_manager\")), m_moduleName(QStringLiteral(\"core_manager\")) {}\n\n";
-    s << "LogosObject* CoreManager::ensureReplica() {\n";
-    s << "    if (!m_eventReplica) {\n";
-    s << "        LogosObject* replica = m_client->requestObject(m_moduleName);\n";
-    s << "        if (!replica) {\n";
-    s << "            qWarning() << \"CoreManager: failed to acquire remote object for events on\" << m_moduleName;\n";
-    s << "            return nullptr;\n";
-    s << "        }\n";
-    s << "        m_eventReplica = replica;\n";
-    s << "    }\n";
-    s << "    return m_eventReplica;\n";
-    s << "}\n\n";
-    s << "bool CoreManager::on(const QString& eventName, RawEventCallback callback) {\n";
-    s << "    if (!callback) {\n";
-    s << "        qWarning() << \"CoreManager: ignoring empty event callback for\" << eventName;\n";
-    s << "        return false;\n";
-    s << "    }\n";
-    s << "    LogosObject* origin = ensureReplica();\n";
-    s << "    if (!origin) {\n";
-    s << "        return false;\n";
-    s << "    }\n";
-    s << "    m_client->onEvent(origin, eventName, callback);\n";
-    s << "    return true;\n";
-    s << "}\n\n";
-    s << "bool CoreManager::on(const QString& eventName, EventCallback callback) {\n";
-    s << "    if (!callback) {\n";
-    s << "        qWarning() << \"CoreManager: ignoring empty event callback for\" << eventName;\n";
-    s << "        return false;\n";
-    s << "    }\n";
-    s << "    return on(eventName, [callback](const QString&, const QVariantList& data) {\n";
-    s << "        callback(data);\n";
-    s << "    });\n";
-    s << "}\n\n";
-    s << "void CoreManager::setEventSource(LogosObject* source) {\n";
-    s << "    m_eventSource = source;\n";
-    s << "}\n\n";
-    s << "LogosObject* CoreManager::eventSource() const {\n";
-    s << "    return m_eventSource;\n";
-    s << "}\n\n";
-    s << "void CoreManager::trigger(const QString& eventName) {\n";
-    s << "    trigger(eventName, QVariantList{});\n";
-    s << "}\n\n";
-    s << "void CoreManager::trigger(const QString& eventName, const QVariantList& data) {\n";
-    s << "    if (!m_eventSource) {\n";
-    s << "        qWarning() << \"CoreManager: no event source set for trigger\" << eventName;\n";
-    s << "        return;\n";
-    s << "    }\n";
-    s << "    m_client->onEventResponse(m_eventSource, eventName, data);\n";
-    s << "}\n\n";
-    s << "void CoreManager::trigger(const QString& eventName, LogosObject* source, const QVariantList& data) {\n";
-    s << "    if (!source) {\n";
-    s << "        qWarning() << \"CoreManager: cannot trigger\" << eventName << \"with null source\";\n";
-    s << "        return;\n";
-    s << "    }\n";
-    s << "    m_client->onEventResponse(source, eventName, data);\n";
-    s << "}\n\n";
-    s << "void CoreManager::initialize(int argc, char* argv[]) {\n";
-    s << "    QStringList args;\n";
-    s << "    if (argv) {\n";
-    s << "        for (int i = 0; i < argc; ++i) {\n";
-    s << "            args << QString::fromUtf8(argv[i] ? argv[i] : \"\");\n";
-    s << "        }\n";
-    s << "    }\n";
-    s << "    m_client->invokeRemoteMethod(\"core_manager\", \"initialize\", argc, args);\n";
-    s << "}\n\n";
-    s << "void CoreManager::setPluginsDirectory(const QString& directory) {\n";
-    s << "    m_client->invokeRemoteMethod(\"core_manager\", \"setPluginsDirectory\", directory);\n";
-    s << "}\n\n";
-    s << "void CoreManager::start() {\n";
-    s << "    m_client->invokeRemoteMethod(\"core_manager\", \"start\");\n";
-    s << "}\n\n";
-    s << "void CoreManager::cleanup() {\n";
-    s << "    m_client->invokeRemoteMethod(\"core_manager\", \"cleanup\");\n";
-    s << "}\n\n";
-    s << "QStringList CoreManager::getLoadedPlugins() {\n";
-    s << "    QVariant _result = m_client->invokeRemoteMethod(\"core_manager\", \"getLoadedPlugins\");\n";
-    s << "    return _result.toStringList();\n";
-    s << "}\n\n";
-    s << "QJsonArray CoreManager::getKnownPlugins() {\n";
-    s << "    QVariant _result = m_client->invokeRemoteMethod(\"core_manager\", \"getKnownPlugins\");\n";
-    s << "    return qvariant_cast<QJsonArray>(_result);\n";
-    s << "}\n\n";
-    s << "QJsonArray CoreManager::getPluginMethods(const QString& pluginName) {\n";
-    s << "    QVariant _result = m_client->invokeRemoteMethod(\"core_manager\", \"getPluginMethods\", pluginName);\n";
-    s << "    return qvariant_cast<QJsonArray>(_result);\n";
-    s << "}\n\n";
-    s << "void CoreManager::helloWorld() {\n";
-    s << "    m_client->invokeRemoteMethod(\"core_manager\", \"helloWorld\");\n";
-    s << "}\n\n";
-    s << "bool CoreManager::loadPlugin(const QString& pluginName) {\n";
-    s << "    QVariant _result = m_client->invokeRemoteMethod(\"core_manager\", \"loadPlugin\", pluginName);\n";
-    s << "    return _result.toBool();\n";
-    s << "}\n\n";
-    s << "bool CoreManager::unloadPlugin(const QString& pluginName) {\n";
-    s << "    QVariant _result = m_client->invokeRemoteMethod(\"core_manager\", \"unloadPlugin\", pluginName);\n";
-    s << "    return _result.toBool();\n";
-    s << "}\n\n";
-    s << "QString CoreManager::processPlugin(const QString& filePath) {\n";
-    s << "    QVariant _result = m_client->invokeRemoteMethod(\"core_manager\", \"processPlugin\", filePath);\n";
-    s << "    return _result.toString();\n";
-    s << "}\n\n";
-    return c;
-}
-
-static bool ensureCoreManagerWrapper(const QString& genDirPath, QTextStream& err)
-{
-    const QString headerRel = QStringLiteral("core_manager_api.h");
-    const QString sourceRel = QStringLiteral("core_manager_api.cpp");
-    const QString headerAbs = QDir(genDirPath).filePath(headerRel);
-    const QString sourceAbs = QDir(genDirPath).filePath(sourceRel);
-
-    QString header = makeCoreManagerHeader();
-    QString source = makeCoreManagerSource(headerRel);
-
-    QFile headerFile(headerAbs);
-    if (!headerFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        err << "Failed to write core manager header: " << headerAbs << "\n";
-        return false;
-    }
-    headerFile.write(header.toUtf8());
-    headerFile.close();
-
-    QFile sourceFile(sourceAbs);
-    if (!sourceFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        err << "Failed to write core manager source: " << sourceAbs << "\n";
-        return false;
-    }
-    sourceFile.write(source.toUtf8());
-    sourceFile.close();
-
-    return true;
-}
-
 static bool writeUmbrellaHeader(const QString& genDirPath, QTextStream& err)
 {
-    // Generate logos-cpp-sdk/cpp/generated/logos_sdk.h that includes all *_api.h in this dir
+    // Generate logos_sdk.h: include every per-module wrapper header in
+    // the gen dir and aggregate them into a flat `LogosModules` struct.
+    // The wrappers may be Qt-typed or Std-typed depending on the
+    // --api-style picked for this build; the umbrella shape doesn't
+    // change because either flavor produces the same accessor name
+    // (`<dep>`) on the same class name (`<Dep>`).
+    //
+    // `core_manager_api.h` (if present in the gen dir from an older
+    // run) is intentionally filtered out — universal modules access
+    // only the deps they explicitly declared in `metadata.json#
+    // dependencies`. Apps that need to manage the core use the C API
+    // in liblogos directly, not the typed `LogosModules` aggregate.
     QDir genDir(genDirPath);
     QStringList headers = genDir.entryList(QStringList() << "*_api.h", QDir::Files | QDir::Readable);
+    headers.removeAll(QStringLiteral("core_manager_api.h"));
+
     QString content;
     QTextStream s(&content);
     s << "#pragma once\n";
     s << "#include \"logos_api.h\"\n";
     s << "#include \"logos_api_client.h\"\n\n";
-    // Includes
-    for (const QString& h : headers) {
-        s << "#include \"" << h << "\"\n";
-    }
+    for (const QString& h : headers) s << "#include \"" << h << "\"\n";
     s << "\n";
-    // Convenience aggregator exposing module wrappers
+
     s << "struct LogosModules {\n";
     s << "    explicit LogosModules(LogosAPI* api) : api(api)";
     for (const QString& h : headers) {
         QString base = h;
         base.chop(QString("_api.h").size());
-        QString className = toPascalCase(base);
         s << ", \n        " << base << "(api)";
     }
     s << " {}\n";
@@ -319,24 +192,31 @@ static bool writeUmbrellaHeader(const QString& genDirPath, QTextStream& err)
 
 static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonArray& deps, QTextStream& err)
 {
-    // Generate logos-cpp-sdk/cpp/generated/logos_sdk.h based on dependencies list
+    // Generate logos_sdk.h from metadata.json's dependencies list. The
+    // shape doesn't depend on apiStyle — each dep emits a single
+    // `<name>_api.h` whose class signature shape was already decided
+    // at codegen time. The umbrella just `#include`s and aggregates
+    // each wrapper into the flat `LogosModules` struct.
+    //
+    // Only the modules explicitly listed in `metadata.json#
+    // dependencies` are exposed. Apps that need to manage the core
+    // (basecamp, logoscore) use liblogos' C API directly rather than
+    // the typed `LogosModules` aggregate.
     QDir genDir(genDirPath);
     QString content;
     QTextStream s(&content);
     s << "#pragma once\n";
     s << "#include \"logos_api.h\"\n";
     s << "#include \"logos_api_client.h\"\n\n";
-    // Includes
-    s << "#include \"core_manager_api.h\"\n";
     for (const QJsonValue& v : deps) {
         if (!v.isString()) continue;
         QString depName = v.toString();
         s << "#include \"" << depName << "_api.h\"\n";
     }
     s << "\n";
-    // Convenience aggregator exposing module wrappers
+
     s << "struct LogosModules {\n";
-    s << "    explicit LogosModules(LogosAPI* api) : api(api), \n        core_manager(api)";
+    s << "    explicit LogosModules(LogosAPI* api) : api(api)";
     for (const QJsonValue& v : deps) {
         if (!v.isString()) continue;
         QString depName = v.toString();
@@ -344,7 +224,6 @@ static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonAr
     }
     s << " {}\n";
     s << "    LogosAPI* api;\n";
-    s << "    CoreManager core_manager;\n";
     for (const QJsonValue& v : deps) {
         if (!v.isString()) continue;
         QString depName = v.toString();
@@ -365,15 +244,23 @@ static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonAr
 
 static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
 {
-    // Generate logos-cpp-sdk/cpp/generated/logos_sdk.cpp that includes all *_api.cpp in this dir
+    // Generate logos_sdk.cpp: one #include per per-module wrapper
+    // `.cpp` in the gen dir. There's now exactly one wrapper file per
+    // module (Qt or std, picked at generation time), so no de-dup or
+    // twin-file filtering is needed.
+    //
+    // `core_manager_api.cpp` (if present from an older run) is
+    // filtered out — the umbrella header no longer declares
+    // `CoreManager core_manager;` so including its definitions would
+    // produce dead code.
     QDir genDir(genDirPath);
     QStringList sources = genDir.entryList(QStringList() << "*_api.cpp", QDir::Files | QDir::Readable);
+    sources.removeAll(QStringLiteral("core_manager_api.cpp"));
+
     QString content;
     QTextStream s(&content);
     s << "#include \"logos_sdk.h\"\n\n";
-    for (const QString& c : sources) {
-        s << "#include \"" << c << "\"\n";
-    }
+    for (const QString& c : sources) s << "#include \"" << c << "\"\n";
     s << "\n";
 
     QFile outFile(genDir.filePath("logos_sdk.cpp"));
@@ -388,12 +275,13 @@ static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
 
 static bool writeUmbrellaSourceFromDeps(const QString& genDirPath, const QJsonArray& deps, QTextStream& err)
 {
-    // Generate logos-cpp-sdk/cpp/generated/logos_sdk.cpp based on dependencies list
+    // Generate logos_sdk.cpp from metadata.json's dependencies list.
+    // Each dep emits one wrapper `.cpp` (Qt or std — decided at codegen
+    // time, file name is the same either way), `#include`'d here.
     QDir genDir(genDirPath);
     QString content;
     QTextStream s(&content);
     s << "#include \"logos_sdk.h\"\n\n";
-    s << "#include \"core_manager_api.cpp\"\n";
     for (const QJsonValue& v : deps) {
         if (!v.isString()) continue;
         QString depName = v.toString();
@@ -557,7 +445,7 @@ static int generateProviderDispatch(const QString& headerPath, const QString& ou
     return 0;
 }
 
-static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, bool moduleOnly, QTextStream& out, QTextStream& err)
+static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, bool moduleOnly, ApiStyle apiStyle, const QJsonArray& events, QTextStream& out, QTextStream& err)
 {
     QFileInfo fi(pluginInputPath);
     if (!fi.exists()) {
@@ -572,9 +460,6 @@ static int generateFromPlugin(const QString& pluginInputPath, const QString& out
 
     QString genDirPath = outputDir.isEmpty() ? QDir::current().filePath("logos-cpp-sdk/cpp/generated") : outputDir;
     QDir().mkpath(genDirPath);
-    if (!moduleOnly && !ensureCoreManagerWrapper(genDirPath, err)) {
-        return 9;
-    }
 
     QPluginLoader loader(resolvedPath);
     if (!loader.load()) {
@@ -620,8 +505,16 @@ static int generateFromPlugin(const QString& pluginInputPath, const QString& out
     QString headerAbs = QDir(genDirPath).filePath(headerRel);
     QString sourceAbs = QDir(genDirPath).filePath(sourceRel);
 
-    QString header = makeHeader(moduleName, className, methods);
-    QString source = makeSource(moduleName, className, headerRel, methods);
+    // Single per-module wrapper file pair. apiStyle decides the
+    // signature shape: Qt-typed for legacy / handcrafted callers
+    // (default), std-typed when the consuming module's build passed
+    // --api-style=std (typically because it's `interface: "universal"`).
+    // Both produce the same filename and class name, so the umbrella
+    // doesn't need to know which style was picked. `events` (loaded
+    // from a sibling `.lidl` sidecar via --events-from) adds typed
+    // `on<EventName>(callback)` accessors next to the existing methods.
+    QString header = makeHeader(moduleName, className, methods, apiStyle, events);
+    QString source = makeSource(moduleName, className, headerRel, methods, apiStyle, events);
 
     {
         QFile f(headerAbs);
@@ -689,6 +582,36 @@ int legacy_main(int argc, char* argv[])
     // Parse --general-only option
     bool generalOnly = args.contains("--general-only");
 
+    // Parse --api-style option (qt | std). Picks which type surface
+    // the generated `<Module>` wrapper exposes. Default is qt for
+    // backward compatibility — every existing module that doesn't
+    // declare `interface: "universal"` in its metadata.json keeps
+    // its Qt-typed LogosModules surface. Universal modules get
+    // -DLOGOS_API_STYLE=std threaded through by mkLogosModule.nix /
+    // LogosModule.cmake, which becomes `--api-style=std` here.
+    // Both forms accepted: `--api-style std` and `--api-style=std`.
+    ApiStyle apiStyle = ApiStyle::Qt;
+    {
+        QString apiVal;
+        for (int i = 0; i < args.size(); ++i) {
+            const QString& a = args.at(i);
+            if (a == "--api-style") {
+                if (i + 1 < args.size()) apiVal = args.at(i + 1);
+                break;
+            }
+            if (a.startsWith("--api-style=")) {
+                apiVal = a.section('=', 1);
+                break;
+            }
+        }
+        if (apiVal == "std") apiStyle = ApiStyle::Std;
+        else if (!apiVal.isEmpty() && apiVal != "qt") {
+            err << "Unknown --api-style value: " << apiVal
+                << " (expected 'qt' or 'std')\n";
+            return 1;
+        }
+    }
+
     // Support: extract dependencies from a metadata.json file
     {
         const int metaIdx = args.indexOf("--metadata");
@@ -726,16 +649,14 @@ int legacy_main(int argc, char* argv[])
             const QJsonObject obj = doc.object();
             const QJsonArray deps = obj.value("dependencies").toArray();
 
-            // If --general-only provided, generate only core manager and umbrella files
+            // If --general-only provided, generate only the umbrella files.
+            // `LogosModules` exposes ONLY the modules listed in
+            // `metadata.json#dependencies` — apps that need to manage the
+            // core use liblogos' C API directly.
             if (generalOnly) {
                 QString genDirPath = outputDir.isEmpty() ? QDir::current().filePath("logos-cpp-sdk/cpp/generated") : outputDir;
                 QDir().mkpath(genDirPath);
-                
-                // Generate core manager wrapper
-                if (!ensureCoreManagerWrapper(genDirPath, err)) {
-                    return 9;
-                }
-                
+
                 // Generate umbrella headers based on dependencies from metadata
                 if (!writeUmbrellaHeaderFromDeps(genDirPath, deps, err)) {
                     return 7;
@@ -743,8 +664,8 @@ int legacy_main(int argc, char* argv[])
                 if (!writeUmbrellaSourceFromDeps(genDirPath, deps, err)) {
                     return 8;
                 }
-                
-                out << "Generated core_manager_api.h, core_manager_api.cpp, logos_sdk.h, and logos_sdk.cpp\n";
+
+                out << "Generated logos_sdk.h and logos_sdk.cpp\n";
                 out.flush();
                 return 0;
             }
@@ -768,9 +689,6 @@ int legacy_main(int argc, char* argv[])
 
                 QString genDirPath = outputDir.isEmpty() ? QDir::current().filePath("logos-cpp-sdk/cpp/generated") : outputDir;
                 QDir().mkpath(genDirPath);
-                if (!moduleOnly && !ensureCoreManagerWrapper(genDirPath, err)) {
-                    return 9;
-                }
 
                 QString suffix;
 #if defined(Q_OS_MACOS)
@@ -794,7 +712,11 @@ int legacy_main(int argc, char* argv[])
                         continue;
                     }
                     out << "Running generator for dependency plugin: " << pluginPath << "\n";
-                    const int st = generateFromPlugin(pluginPath, outputDir, moduleOnly, out, err);
+                    // No --events-from sidecar in the multi-dep iteration
+                    // path (each dep would need its own sidecar — out of
+                    // scope here; --events-from is consumed by the
+                    // per-plugin path below, invoked from buildHeaders.nix).
+                    const int st = generateFromPlugin(pluginPath, outputDir, moduleOnly, apiStyle, QJsonArray(), out, err);
                     if (st != 0) {
                         overallStatus = st; // remember last non-zero
                     }
@@ -834,13 +756,37 @@ int legacy_main(int argc, char* argv[])
     }
 
     if (args.size() < 2) {
-        err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " /absolute/path/to/plugin [--output-dir /path/to/output] [--module-only]\n";
+        err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " /absolute/path/to/plugin [--output-dir /path/to/output] [--module-only] [--events-from /path/to/<name>.lidl]\n";
         err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only] [--general-only]\n";
         err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json --general-only [--output-dir /path/to/output]\n";
         err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --provider-header /path/to/impl.h [--output-dir /path/to/output]\n";
         return 1;
     }
 
+    // --events-from <path>: load typed event prototypes from a LIDL
+    // sidecar shipped alongside a dep's pre-built headers. When set,
+    // the consumer wrapper (<name>_api.{h,cpp}) gains typed
+    // `on<EventName>(callback)` accessors next to the existing
+    // generic `onEvent(name, callback)` channel.
+    QJsonArray eventsFromSidecar;
+    {
+        const int evIdx = args.indexOf("--events-from");
+        QString evPath;
+        if (evIdx != -1 && evIdx + 1 < args.size()) {
+            evPath = args.at(evIdx + 1);
+        } else {
+            for (const QString& a : args) {
+                if (a.startsWith("--events-from=")) {
+                    evPath = a.section('=', 1);
+                    break;
+                }
+            }
+        }
+        if (!evPath.isEmpty() && QFileInfo(evPath).exists()) {
+            eventsFromSidecar = loadEventsFromLidl(evPath, err);
+        }
+    }
+
     QString argPath = args.at(1);
-    return generateFromPlugin(argPath, outputDir, moduleOnly, out, err);
+    return generateFromPlugin(argPath, outputDir, moduleOnly, apiStyle, eventsFromSidecar, out, err);
 }
