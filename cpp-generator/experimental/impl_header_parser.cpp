@@ -253,6 +253,8 @@ ImplParseResult parseImplHeader(const QString& headerPath,
     enum State { LookingForClass, InClass, InPublic, InPrivate };
     State state = LookingForClass;
     int braceDepth = 0;
+    QString pending;
+
 
     QRegularExpression classRe("\\bclass\\s+" + QRegularExpression::escape(className) + "\\b");
     QRegularExpression accessRe("^\\s*(public|private|protected)\\s*:");
@@ -282,7 +284,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
 
             if (braceDepth <= 0) {
                 state = LookingForClass;
-                goto done;
+                break;
             }
 
             {
@@ -291,6 +293,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                     QString spec = am.captured(1);
                     if (spec == "public") state = InPublic;
                     else state = InPrivate;
+                    pending.clear();
                     break;
                 }
             }
@@ -300,6 +303,11 @@ ImplParseResult parseImplHeader(const QString& headerPath,
             if (line.isEmpty() || line.startsWith("//") || line.startsWith("#")
                 || line.startsWith("/*") || line.startsWith("*"))
                 break;
+
+            int commentIdx = line.indexOf("//");
+            if (commentIdx >= 0)
+                line = line.left(commentIdx).trimmed();
+
 
             if (ctorDtorRe.match(line).hasMatch())
                 break;
@@ -315,18 +323,21 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 break;
             }
 
-            if (line.endsWith(';')) {
-                QString decl = line.left(line.size() - 1).trimmed();
+            // Add line to pending and extract method when ';'
+            pending += (pending.isEmpty() ? "" : " ") + line;
+
+            if (pending.contains(';')) {
+                QString decl = pending.left(pending.indexOf(';')).trimmed();
+                pending.clear();
+
                 MethodDecl md;
-                if (parseMethodLine(decl, md)) {
+                if (parseMethodLine(decl, md))
                     result.module.methods.append(md);
-                }
             }
             break;
         }
     }
 
-done:
     if (result.module.methods.isEmpty()) {
         err << "Warning: no public methods found in class " << className
             << " in " << headerPath << "\n";
@@ -334,3 +345,4 @@ done:
 
     return result;
 }
+

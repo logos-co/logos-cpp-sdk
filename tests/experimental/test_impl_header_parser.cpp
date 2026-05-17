@@ -192,6 +192,8 @@ TEST_F(ImplHeaderParserTest, ComplexAccessSpecifiers)
 
     // First public section
     EXPECT_NE(findMethod("firstMethod"), nullptr);
+    EXPECT_NE(findMethod("trailingComment"), nullptr);
+    EXPECT_NE(findMethod("multilineMethod"), nullptr);
     // Second public section (after protected)
     EXPECT_NE(findMethod("secondMethod"), nullptr);
     EXPECT_NE(findMethod("thirdMethod"), nullptr);
