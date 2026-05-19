@@ -1,7 +1,12 @@
 cmake_minimum_required(VERSION 3.14)
 project(LogosCppSdkTests)
 
-set(CMAKE_CXX_STANDARD 14)
+# Match the SDK library's C++17 standard. Bumped from 14 because
+# logos_module_context.h (publicly included from the SDK) uses C++17
+# variable templates — std::is_base_of_v / std::enable_if_t — in its
+# tag-dispatched _logos_codegen_::maybeSet* helpers. Any consumer of
+# those headers, including the test binaries, has to compile at 17+.
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 

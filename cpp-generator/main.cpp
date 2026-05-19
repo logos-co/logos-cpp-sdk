@@ -1,6 +1,7 @@
 #include "legacy/legacy_main.h"
 #include "experimental/lidl_gen_client.h"
 #include "experimental/lidl_gen_provider.h"
+#include "experimental/lidl_serializer.h"
 #include "experimental/impl_header_parser.h"
 
 #include <QCoreApplication>
@@ -110,6 +111,36 @@ int main(int argc, char* argv[])
 
                 out << "Generated: " << glueHeaderAbs << "\n";
                 out << "Generated: " << dispatchAbs << "\n";
+
+                // Events bodies (Qt-MOC-style) and LIDL sidecar — emitted
+                // when the impl declares any `logos_events:` prototypes.
+                // The sidecar travels in the dep's headers-* output so
+                // consumer-side codegen can generate typed `on<X>()`
+                // accessors without reintrospecting the .dylib.
+                if (!mod.events.isEmpty()) {
+                    QString eventsAbs = QDir(genDirPath).filePath(mod.name + "_events.cpp");
+                    {
+                        QFile f(eventsAbs);
+                        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                            err << "Failed to write events source: " << eventsAbs << "\n";
+                            return 8;
+                        }
+                        f.write(lidlMakeEventsSource(mod, implClass, implHeader).toUtf8());
+                    }
+                    out << "Generated: " << eventsAbs << "\n";
+
+                    QString lidlAbs = QDir(genDirPath).filePath(mod.name + ".lidl");
+                    {
+                        QFile f(lidlAbs);
+                        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                            err << "Failed to write LIDL sidecar: " << lidlAbs << "\n";
+                            return 9;
+                        }
+                        f.write(lidlSerialize(mod).toUtf8());
+                    }
+                    out << "Generated: " << lidlAbs << "\n";
+                }
+
                 out.flush();
                 return 0;
             }

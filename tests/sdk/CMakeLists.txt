@@ -32,6 +32,7 @@ add_executable(sdk_tests
     test_plugin_registry.cpp
     test_logos_instance.cpp
     test_logos_provider_base.cpp
+    test_logos_module_context.cpp
     test_module_proxy.cpp
     test_logos_api_provider.cpp
     test_mock_transport.cpp

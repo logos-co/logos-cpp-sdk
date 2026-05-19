@@ -249,13 +249,17 @@ ImplParseResult parseImplHeader(const QString& headerPath,
 
     QStringList lines = source.split('\n');
 
-    // State machine: find "class <className>", then collect public methods
-    enum State { LookingForClass, InClass, InPublic, InPrivate };
+    // State machine: find "class <className>", then collect declarations.
+    // `InLogosEvents` is entered by the literal `logos_events:` token
+    // (mirrors Qt's `signals:`) — methods declared there are parsed as
+    // EventDecls and appended to ModuleDecl.events instead of .methods.
+    enum State { LookingForClass, InClass, InPublic, InPrivate, InLogosEvents };
     State state = LookingForClass;
     int braceDepth = 0;
 
     QRegularExpression classRe("\\bclass\\s+" + QRegularExpression::escape(className) + "\\b");
     QRegularExpression accessRe("^\\s*(public|private|protected)\\s*:");
+    QRegularExpression eventsRe("^\\s*logos_events\\s*:");
     QRegularExpression ctorDtorRe("^\\s*~?" + QRegularExpression::escape(className) + "\\s*\\(");
 
     for (const QString& rawLine : lines) {
@@ -275,6 +279,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
         case InClass:
         case InPublic:
         case InPrivate:
+        case InLogosEvents:
             for (QChar c : line) {
                 if (c == '{') braceDepth++;
                 else if (c == '}') braceDepth--;
@@ -283,6 +288,16 @@ ImplParseResult parseImplHeader(const QString& headerPath,
             if (braceDepth <= 0) {
                 state = LookingForClass;
                 goto done;
+            }
+
+            // `logos_events:` takes precedence over the standard access
+            // specifiers: it's a separate section that the codegen pulls
+            // event prototypes from. (At preprocess time, `logos_events`
+            // expands to `public`, but the raw source still carries the
+            // token we recognise here.)
+            if (eventsRe.match(line).hasMatch()) {
+                state = InLogosEvents;
+                break;
             }
 
             {
@@ -295,8 +310,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 }
             }
 
-            if (state != InPublic) break;
-
+            // Skip noise & non-declarations in any section.
             if (line.isEmpty() || line.startsWith("//") || line.startsWith("#")
                 || line.startsWith("/*") || line.startsWith("*"))
                 break;
@@ -309,7 +323,34 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 || line.startsWith("struct"))
                 break;
 
+            if (state == InLogosEvents) {
+                // Inside `logos_events:` — every bare prototype is an event.
+                // Events are always void-returning by definition, so we
+                // re-use parseMethodLine to extract name + params and
+                // discard the return type.
+                if (line.endsWith(';')) {
+                    QString decl = line.left(line.size() - 1).trimmed();
+                    MethodDecl md;
+                    if (parseMethodLine(decl, md)) {
+                        EventDecl ed;
+                        ed.name = md.name;
+                        ed.params = md.params;
+                        result.module.events.append(ed);
+                    }
+                }
+                break;
+            }
+
+            if (state != InPublic) break;
+
             if (line.contains("std::function<")) {
+                // Legacy `std::function<…> emitEvent` member — predates
+                // the typed `logos_events:` mechanism. Still recognised
+                // for backward compat: modules that haven't migrated yet
+                // (e.g. logos-package-manager-module) keep their existing
+                // emit("name", "json") call sites working through the
+                // provider constructor's lambda wiring. New code should
+                // prefer `logos_events:`.
                 if (line.contains("emitEvent"))
                     result.module.hasEmitEvent = true;
                 break;
