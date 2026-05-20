@@ -76,6 +76,22 @@ public:
         return MockStore::instance().when(module, method);
     }
 
+    /**
+     * @brief Simulate a torn-down peer / disconnected transport.
+     *
+     * Subsequent outbound RPC calls through LogosAPIConsumer
+     * (invokeRemoteMethod{,Async}, informModuleToken{,_module}) will
+     * short-circuit via the central peer-liveness guard without touching
+     * the transport, returning a default-constructed failure result.
+     * Use to exercise the guard from unit tests.
+     */
+    void disconnect() { MockStore::instance().setConnected(false); }
+
+    /**
+     * @brief Restore the mocked transport to "connected" after a disconnect().
+     */
+    void reconnect() { MockStore::instance().setConnected(true); }
+
     // ── Verification helpers (delegates to MockStore) ────────────────────────
 
     bool wasCalled(const QString& module, const QString& method) const

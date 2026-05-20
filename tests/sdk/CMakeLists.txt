@@ -25,6 +25,7 @@ add_executable(sdk_tests
     test_logos_mode.cpp
     test_logos_mock_setup.cpp
     test_logos_api_client_mock.cpp
+    test_peer_liveness_guard.cpp
     test_logos_api.cpp
     test_logos_api_client_overloads.cpp
     test_transport_factory.cpp

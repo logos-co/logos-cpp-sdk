@@ -105,6 +105,27 @@ public:
      */
     void setMockObjectReleaseProbe(std::atomic<int>* counter);
 
+    // ── Forced disconnect (for exercising peer-liveness guards in tests) ─────
+
+    /**
+     * @brief Return the current mocked connection state.
+     *
+     * MockTransportConnection::isConnected() consults this so tests can
+     * simulate a torn-down peer without having to inject a custom
+     * transport. Defaults to true; reset() restores true.
+     */
+    bool isConnected() const;
+
+    /**
+     * @brief Flip the mocked connection state.
+     *
+     * Pass false to simulate a transport whose peer has dropped — the
+     * central peer-liveness guard in LogosAPIConsumer will short-circuit
+     * subsequent outbound calls without touching the transport. Pass true
+     * to restore. reset() restores true.
+     */
+    void setConnected(bool connected);
+
 private:
     friend class MockLogosObject;
     void incrementMockObjectReleaseProbeIfSet();
@@ -117,6 +138,11 @@ private:
     QList<MockExpectation> m_expectations;
     QList<MockCallRecord> m_calls;
     std::atomic<int>* m_mockObjectReleaseProbe = nullptr;
+    // Mocked connection state. Atomic so MockTransportConnection::
+    // isConnected() (called on the SDK's outbound RPC hot path) can read
+    // it lock-free, matching the O(1) hot-path contract documented on
+    // LogosTransportConnection::isConnected().
+    std::atomic<bool> m_connected{true};
 
     friend class ExpectationBuilder;
 };

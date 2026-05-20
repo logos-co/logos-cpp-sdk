@@ -14,6 +14,17 @@ void MockStore::reset()
     m_expectations.clear();
     m_calls.clear();
     m_mockObjectReleaseProbe = nullptr;
+    m_connected.store(true, std::memory_order_relaxed);
+}
+
+bool MockStore::isConnected() const
+{
+    return m_connected.load(std::memory_order_relaxed);
+}
+
+void MockStore::setConnected(bool connected)
+{
+    m_connected.store(connected, std::memory_order_relaxed);
 }
 
 void MockStore::setMockObjectReleaseProbe(std::atomic<int>* counter)

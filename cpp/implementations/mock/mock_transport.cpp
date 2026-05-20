@@ -1,4 +1,5 @@
 #include "mock_transport.h"
+#include "mock_store.h"
 #include <QDebug>
 
 // ── MockTransportHost ────────────────────────────────────────────────────────
@@ -24,7 +25,12 @@ bool MockTransportConnection::connectToHost()
 
 bool MockTransportConnection::isConnected() const
 {
-    return true;
+    // Defaults to true; tests can flip via MockStore::setConnected(false)
+    // (exposed through LogosMockSetup::disconnect()) to exercise the
+    // central peer-liveness guard in LogosAPIConsumer. Implementation
+    // is a single std::atomic<bool> relaxed load, satisfying the O(1)
+    // hot-path contract on LogosTransportConnection::isConnected().
+    return MockStore::instance().isConnected();
 }
 
 bool MockTransportConnection::reconnect()

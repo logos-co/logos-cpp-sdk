@@ -14,6 +14,7 @@
     - [3.1.2.1 ModuleProxy (internal)](#3121-moduleproxy-internal)
   - [3.1.3 LogosAPIClient](#313-logosapiclient)
     - [3.1.3.1 LogosAPIConsumer (internal)](#3131-logosapiconsumer-internal)
+    - [3.1.3.2 Peer-liveness guard (LogosAPIConsumer)](#3132-peerliveness-guard-logosapiconsumer)
   - [3.1.4 Generated C++ wrappers (logos_sdk)](#314-generated-c-wrappers-logos_sdk)
   - [3.2 TokenManager](#32-tokenmanager)
   - [3.3 ModuleProxy](#33-moduleproxy)
@@ -345,6 +346,54 @@ logos.chat.trigger("chatMessage", data);
 | `void invokeCallback(const QString& eventName, const QVariantList& data)` (slot)                                                                                    | Invokes all callbacks registered for `eventName`.                                                                                                                                                                                    |
 | `bool informModuleToken(const QString& authToken, const QString& moduleName, const QString& token)`                                                                 | Informs the capability module’s proxy about a token for `moduleName`.                                                                                                                                                                |
 | `bool informModuleToken_module(const QString& authToken, const QString& originModule, const QString& moduleName, const QString& token)`                             | Informs a module loaded by `originModule` about a token via that module’s proxy.                                                                                                                                                     |
+
+### 3.1.3.2 Peer‑liveness guard (LogosAPIConsumer)
+
+Every outbound RPC the SDK exposes — `invokeRemoteMethod` (sync), `invokeRemoteMethodAsync`, `informModuleToken`, `informModuleToken_module` — funnels through `LogosAPIConsumer`, which holds the `LogosTransportConnection`. Each of those four methods consults `m_transport->isConnected()` **before** calling `m_transport->requestObject(...)` or dispatching on the returned `LogosObject*`. If the transport reports a known‑disconnected peer the call short‑circuits with a structured failure:
+
+| Method                       | Failure return on `!isConnected`                                                |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| `invokeRemoteMethod`         | default‑constructed `QVariant()`                                                |
+| `invokeRemoteMethodAsync`    | callback fires on next event‑loop turn with default‑constructed `QVariant()`    |
+| `informModuleToken`          | `false`                                                                         |
+| `informModuleToken_module`   | `false`                                                                         |
+
+Callers already have to handle these defaults — every RPC can fail for a dozen other reasons (timeout, marshalling error, peer rejects auth) — so the guard doesn't change the caller contract, just the failure shape from "potentially crashing" to "always default + log".
+
+**Motivation.** A synchronous outbound on a transport whose peer is mid‑teardown is the riskiest moment in the codebase. Observed once as a Qt‑Remote‑Objects source‑codec race that `SIGBUS`'d the entire `logos_host`: `CodecBase::send` dereferenced an invalidated metatype function pointer while the source side was being torn down by a peer SIGTERM. The crash was inside Qt internals — fault address covered by no loaded image, classic dangling‑function‑pointer signature. The guard prevents the SDK from initiating any outbound call once the transport has already observed the disconnect, which is by far the most common case.
+
+**Transport contract.** `LogosTransportConnection::isConnected()` is declared (in `logos_transport.h`) as a hot‑path call: implementations **must** return cached state and be O(1). No syscalls, no round‑trips, no contention with the I/O thread. The expected shape is "return a bool field (or atomic load) that the transport's own completion handlers flip when the underlying socket signals an error." All four current implementations satisfy this:
+
+| Transport     | Implementation of `isConnected()`                                  |
+| ------------- | ------------------------------------------------------------------ |
+| `qt_remote`   | `return m_connected;` — bool field updated by QRO connect events   |
+| `plain`       | `m_connected && m_conn && m_conn->isOpen()` — atomic<bool> load    |
+| `qt_local`    | `return true;` — in‑process registry, never disconnected           |
+| `mock`        | reads `MockStore::isConnected()` (atomic, default true)            |
+
+The `plain` transport goes further: its `RpcConnection::sendCall` self‑gates internally (returns a `TRANSPORT_CLOSED` promise on `m_stopped`), so the guard at the SDK layer is belt‑and‑suspenders for it. For the `qt_remote` transport, the guard is load‑bearing — there is no internal self‑gate inside Qt Remote Objects.
+
+**What the guard does *not* promise.** The check is racy with the send that follows it: the socket can still tear down between the `isConnected()` read and the wire write. The guard closes the window where the peer is already known‑gone (the common case), not the window where it dies inside the syscall. Closing the residual sliver requires either an upstream Qt fix (`CodecBase::send` checking device validity before dereferencing the metatype table) or a per‑replica `stateChanged`‑signal flag — the latter is tracked separately. Per‑call‑site guards in module code are not needed and should not be added; the central check covers every existing and future outbound call.
+
+**Testing.** Mock mode exposes a knob for exercising the guard:
+
+```cpp
+LogosMockSetup mock;
+mock.when("peer", "fn").thenReturn(QVariant(42));
+
+LogosAPI api("origin");
+auto* client = api.getClient("peer");
+
+mock.disconnect();                                   // flip the mocked transport to !isConnected
+QVariant r = client->invokeRemoteMethod("peer", "fn");
+EXPECT_FALSE(r.isValid());                           // structured failure
+EXPECT_FALSE(mock.wasCalled("peer", "fn"));          // transport was never touched
+
+mock.reconnect();                                    // restore
+EXPECT_EQ(client->invokeRemoteMethod("peer", "fn").toInt(), 42);
+```
+
+`LogosMockSetup::disconnect()` / `reconnect()` flip `MockStore::m_connected` (an `std::atomic<bool>`); `MockTransportConnection::isConnected()` reads it lock‑free. Full coverage of the four guarded methods lives in `tests/sdk/test_peer_liveness_guard.cpp`.
 
 ### 3.1.4 Generated C++ wrappers (logos_sdk)
 
