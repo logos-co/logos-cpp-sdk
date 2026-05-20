@@ -108,6 +108,26 @@ QVariant LogosAPIConsumer::invokeRemoteMethod(const QString& authToken, const QS
 {
     qDebug() << "LogosAPIConsumer: Calling invokeRemoteMethod:" << objectName << methodName << "args_count:" << args.size() << "timeout:" << timeout.ms;
 
+    // Centralised peer-liveness guard for outbound RPC.
+    //
+    // Every outbound call funnels through `m_transport->requestObject` +
+    // `plugin->callMethod` here. A synchronous outbound on a transport
+    // whose peer is mid-teardown is the riskiest moment in the codebase
+    // — observed once as a Qt-Remote-Objects source-codec race that
+    // SIGBUS'd the entire logos_host when capability_module talked to a
+    // ui-host child that had just received SIGTERM. The check is on
+    // cached state (every transport implements isConnected() as a
+    // single field read; see LogosTransportConnection contract) so it
+    // is O(1) on the hot path. It doesn't *eliminate* the race — the
+    // socket can still tear down between this line and the actual
+    // wire write — but it closes the window where the peer is already
+    // known-gone, which is by far the most likely failure mode.
+    if (!m_transport->isConnected()) {
+        qWarning() << "LogosAPIConsumer: Transport not connected; refusing outbound call to"
+                   << objectName << "::" << methodName;
+        return QVariant();
+    }
+
     LogosObject* plugin = m_transport->requestObject(objectName, timeout.ms);
     if (!plugin) {
         qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object:" << objectName;
@@ -127,6 +147,17 @@ void LogosAPIConsumer::invokeRemoteMethodAsync(const QString& authToken, const Q
 {
     if (!callback) {
         qWarning() << "LogosAPIConsumer: invokeRemoteMethodAsync called with null callback";
+        return;
+    }
+
+    // Same centralised peer-liveness guard as the sync overload above.
+    // The async path delivers failure via the callback (default-constructed
+    // QVariant on the next event-loop turn) so callers can't deadlock
+    // waiting for a result.
+    if (!m_transport->isConnected()) {
+        qWarning() << "LogosAPIConsumer: Transport not connected; refusing async outbound call to"
+                   << objectName << "::" << methodName;
+        QTimer::singleShot(0, this, [callback]() { callback(QVariant()); });
         return;
     }
 
@@ -175,6 +206,13 @@ bool LogosAPIConsumer::informModuleToken(const QString& authToken, const QString
 {
     qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
 
+    // Centralised peer-liveness guard (see invokeRemoteMethod for rationale).
+    if (!m_transport->isConnected()) {
+        qWarning() << "LogosAPIConsumer: Transport not connected; refusing informModuleToken for"
+                   << moduleName;
+        return false;
+    }
+
     LogosObject* plugin = m_transport->requestObject("capability_module", 20000);
     if (!plugin) {
         qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object: capability_module";
@@ -191,6 +229,16 @@ bool LogosAPIConsumer::informModuleToken(const QString& authToken, const QString
 bool LogosAPIConsumer::informModuleToken_module(const QString& authToken, const QString& originModule, const QString& moduleName, const QString& token)
 {
     qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
+
+    // Centralised peer-liveness guard (see invokeRemoteMethod for rationale).
+    // This is the specific call site that triggered the original SIGBUS
+    // when `originModule` was a ui-host child mid-SIGTERM — now caught
+    // here, not at every individual caller.
+    if (!m_transport->isConnected()) {
+        qWarning() << "LogosAPIConsumer: Transport not connected; refusing informModuleToken for"
+                   << moduleName << "on" << originModule;
+        return false;
+    }
 
     LogosObject* plugin = m_transport->requestObject(originModule, 20000);
     if (!plugin) {

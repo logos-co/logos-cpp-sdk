@@ -64,7 +64,18 @@ public:
     virtual bool connectToHost() = 0;
 
     /**
-     * @brief Check if currently connected
+     * @brief Check if currently connected.
+     *
+     * Hot-path contract: implementations MUST return cached state and
+     * be O(1). This is called from LogosAPIConsumer on every outbound
+     * RPC (sync + async invoke, informModuleToken{,_module}) as a
+     * peer-liveness guard to short-circuit calls to a transport whose
+     * peer is already known-gone. A blocking probe here would tax
+     * every cross-process call — never do a syscall, never do a
+     * round-trip, never do anything that can take a lock contended
+     * with the I/O thread. The expected shape is "return a bool field
+     * (or atomic load) that the transport's own completion handlers
+     * flip when the underlying socket signals an error."
      */
     virtual bool isConnected() const = 0;
 
