@@ -271,6 +271,13 @@ bool RemoteTransportHost::publishObject(const QString& name, QObject* object)
 
     bool success = m_registryHost->enableRemoting(object, name);
     if (success) {
+        // Remember the object so unpublishObject() can actually
+        // disable remoting for it later. Previously this was a no-op,
+        // which left QRO source-side state alive on the host node
+        // long after the provider thought it was gone — one of the
+        // hygiene gaps surfaced by the ui-host disconnect cascade in
+        // the logos_host SIGBUS investigation.
+        m_publishedObjects.insert(name, QPointer<QObject>(object));
         qDebug() << "RemoteTransportHost: Published object:" << name;
     } else {
         qCritical() << "RemoteTransportHost: Failed to publish object:" << name;
@@ -278,8 +285,49 @@ bool RemoteTransportHost::publishObject(const QString& name, QObject* object)
     return success;
 }
 
-void RemoteTransportHost::unpublishObject(const QString& /*name*/)
+void RemoteTransportHost::unpublishObject(const QString& name)
 {
+    // No registry host means publishObject never ran (or already torn
+    // down via the destructor) — nothing to disable.
+    if (!m_registryHost) {
+        m_publishedObjects.remove(name);
+        return;
+    }
+
+    auto it = m_publishedObjects.find(name);
+    if (it == m_publishedObjects.end()) {
+        // Either the provider double-unpublished, or the caller is
+        // using a name we never saw. Either way safe to ignore — log
+        // at debug since this is a benign idempotency case, not a bug.
+        qDebug() << "RemoteTransportHost: unpublishObject: no published object named"
+                 << name << "(no-op)";
+        return;
+    }
+
+    QObject* obj = it.value().data();
+    m_publishedObjects.erase(it);
+
+    if (!obj) {
+        // QPointer cleared — the underlying object was destroyed
+        // before we got here. QRO's host registers the source by
+        // QObject*, so without a live pointer we can't call
+        // disableRemoting; QtRemoteObjects cleans up its source-side
+        // entry on object destruction via its own destroyed()
+        // connection. Just log + move on.
+        qDebug() << "RemoteTransportHost: unpublishObject:" << name
+                 << "object already destroyed; QRO auto-cleanup applies";
+        return;
+    }
+
+    if (!m_registryHost->disableRemoting(obj)) {
+        // disableRemoting only returns false when the object isn't
+        // currently remoted (e.g. a previous teardown already ran).
+        // Not a fatal — treat as benign.
+        qDebug() << "RemoteTransportHost: disableRemoting returned false for"
+                 << name << "(already disabled?)";
+        return;
+    }
+    qDebug() << "RemoteTransportHost: Unpublished object:" << name;
 }
 
 // ── RemoteTransportConnection ────────────────────────────────────────────────
