@@ -116,9 +116,21 @@ public:
         : LogosAPI(QString(module_name), parent) {}
 
     /**
+     * @brief Construct with const char* and explicit transport set.
+     */
+    LogosAPI(const char* module_name, LogosTransportSet transports, QObject *parent = nullptr)
+        : LogosAPI(QString(module_name), std::move(transports), parent) {}
+
+    /**
      * @brief Construct a new LogosAPI instance (std::string overload)
      */
     explicit LogosAPI(const std::string& module_name, QObject *parent = nullptr);
+
+    /**
+     * @brief Construct with std::string and explicit transport set.
+     */
+    LogosAPI(const std::string& module_name, LogosTransportSet transports, QObject *parent = nullptr)
+        : LogosAPI(QString::fromStdString(module_name), std::move(transports), parent) {}
     
     /**
      * @brief Destructor
