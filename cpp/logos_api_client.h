@@ -89,6 +89,88 @@ public:
                              const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
                              const QVariant& arg4, const QVariant& arg5, Timeout timeout = Timeout());
 
+    // const char* overloads — resolve ambiguity for string literals
+    QVariant invokeRemoteMethod(const char* objectName, const char* methodName,
+                             const QVariantList& args = QVariantList(), Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString(objectName), QString(methodName), args, timeout); }
+
+    QVariant invokeRemoteMethod(const char* objectName, const char* methodName,
+                             const QVariant& arg, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString(objectName), QString(methodName), arg, timeout); }
+
+    QVariant invokeRemoteMethod(const char* objectName, const char* methodName,
+                             const QVariant& arg1, const QVariant& arg2, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString(objectName), QString(methodName), arg1, arg2, timeout); }
+
+    QVariant invokeRemoteMethod(const char* objectName, const char* methodName,
+                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString(objectName), QString(methodName), arg1, arg2, arg3, timeout); }
+
+    QVariant invokeRemoteMethod(const char* objectName, const char* methodName,
+                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                             const QVariant& arg4, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString(objectName), QString(methodName), arg1, arg2, arg3, arg4, timeout); }
+
+    QVariant invokeRemoteMethod(const char* objectName, const char* methodName,
+                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                             const QVariant& arg4, const QVariant& arg5, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString(objectName), QString(methodName), arg1, arg2, arg3, arg4, arg5, timeout); }
+
+    // std::string overloads — thin wrappers that convert internally
+    QVariant invokeRemoteMethod(const std::string& objectName, const std::string& methodName,
+                             const QVariantList& args = QVariantList(), Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString::fromStdString(objectName), QString::fromStdString(methodName), args, timeout); }
+
+    QVariant invokeRemoteMethod(const std::string& objectName, const std::string& methodName,
+                             const QVariant& arg, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString::fromStdString(objectName), QString::fromStdString(methodName), arg, timeout); }
+
+    QVariant invokeRemoteMethod(const std::string& objectName, const std::string& methodName,
+                             const QVariant& arg1, const QVariant& arg2, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString::fromStdString(objectName), QString::fromStdString(methodName), arg1, arg2, timeout); }
+
+    QVariant invokeRemoteMethod(const std::string& objectName, const std::string& methodName,
+                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString::fromStdString(objectName), QString::fromStdString(methodName), arg1, arg2, arg3, timeout); }
+
+    QVariant invokeRemoteMethod(const std::string& objectName, const std::string& methodName,
+                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                             const QVariant& arg4, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString::fromStdString(objectName), QString::fromStdString(methodName), arg1, arg2, arg3, arg4, timeout); }
+
+    QVariant invokeRemoteMethod(const std::string& objectName, const std::string& methodName,
+                             const QVariant& arg1, const QVariant& arg2, const QVariant& arg3,
+                             const QVariant& arg4, const QVariant& arg5, Timeout timeout = Timeout())
+    { return invokeRemoteMethod(QString::fromStdString(objectName), QString::fromStdString(methodName), arg1, arg2, arg3, arg4, arg5, timeout); }
+
+    // const char* onEvent overload
+    void onEvent(LogosObject* originObject, const char* eventName,
+                std::function<void(const QString&, const QVariantList&)> callback)
+    { onEvent(originObject, QString(eventName), callback); }
+
+    // std::string onEvent overloads
+    void onEvent(LogosObject* originObject, const std::string& eventName,
+                std::function<void(const QString&, const QVariantList&)> callback)
+    { onEvent(originObject, QString::fromStdString(eventName), callback); }
+
+    void onEvent(LogosObject* originObject, const std::string& eventName,
+                std::function<void(const std::string&, const QVariantList&)> callback)
+    {
+        onEvent(originObject, QString::fromStdString(eventName),
+            [cb = std::move(callback)](const QString& name, const QVariantList& args) {
+                cb(name.toStdString(), args);
+            });
+    }
+
+    void onEvent(LogosObject* originObject, const char* eventName,
+                std::function<void(const std::string&, const QVariantList&)> callback)
+    {
+        onEvent(originObject, QString(eventName),
+            [cb = std::move(callback)](const QString& name, const QVariantList& args) {
+                cb(name.toStdString(), args);
+            });
+    }
+
     using AsyncResultCallback = std::function<void(QVariant)>;
 
     void invokeRemoteMethodAsync(const QString& objectName, const QString& methodName,
