@@ -2,10 +2,100 @@
 #include "logos_api.h"
 #include "logos_api_consumer.h"
 #include "logos_object.h"
+#include "logos_types.h"
 #include "token_manager.h"
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonValue>
 #include <QMetaObject>
+#include <QMetaType>
 #include <QPointer>
 #include <string>
+
+// ---------------------------------------------------------------------------
+// Internal helpers: convert between nlohmann::json and Qt types
+// ---------------------------------------------------------------------------
+
+namespace {
+
+nlohmann::json qvariantToNlohmann(const QVariant& v)
+{
+    // LogosResult registered metatype
+    const int logosResultId = QMetaType::fromName("LogosResult").id();
+    if (logosResultId != QMetaType::UnknownType && v.userType() == logosResultId) {
+        const LogosResult lr = v.value<LogosResult>();
+        nlohmann::json obj;
+        obj["success"] = lr.success;
+        QJsonValue valJson = QJsonValue::fromVariant(lr.value);
+        if (valJson.isObject() || valJson.isArray()) {
+            QJsonDocument d = valJson.isObject() ? QJsonDocument(valJson.toObject())
+                                                 : QJsonDocument(valJson.toArray());
+            try { obj["value"] = nlohmann::json::parse(d.toJson(QJsonDocument::Compact).toStdString()); }
+            catch (...) { obj["value"] = nullptr; }
+        } else if (valJson.isString()) obj["value"] = valJson.toString().toStdString();
+        else if (valJson.isBool())     obj["value"] = valJson.toBool();
+        else if (valJson.isDouble())   obj["value"] = valJson.toDouble();
+        else                           obj["value"] = nullptr;
+        QJsonValue errJson = QJsonValue::fromVariant(lr.error);
+        obj["error"] = errJson.isString() ? nlohmann::json(errJson.toString().toStdString())
+                                           : nullptr;
+        return obj;
+    }
+
+    if (v.canConvert<QJsonObject>()) {
+        QJsonDocument doc(v.toJsonObject());
+        try { return nlohmann::json::parse(doc.toJson(QJsonDocument::Compact).toStdString()); }
+        catch (...) {}
+    }
+    if (v.canConvert<QJsonArray>()) {
+        QJsonDocument doc(qvariant_cast<QJsonArray>(v));
+        try { return nlohmann::json::parse(doc.toJson(QJsonDocument::Compact).toStdString()); }
+        catch (...) {}
+    }
+
+    QJsonValue jv = QJsonValue::fromVariant(v);
+    if (jv.isString())  return jv.toString().toStdString();
+    if (jv.isBool())    return jv.toBool();
+    if (jv.isDouble())  return jv.toDouble();
+    if (jv.isObject() || jv.isArray()) {
+        QJsonDocument doc = jv.isObject() ? QJsonDocument(jv.toObject())
+                                           : QJsonDocument(jv.toArray());
+        try { return nlohmann::json::parse(doc.toJson(QJsonDocument::Compact).toStdString()); }
+        catch (...) {}
+    }
+    return nullptr;
+}
+
+QVariantList nlohmannArgsToQVariantList(const nlohmann::json& args)
+{
+    QVariantList result;
+    if (!args.is_array()) return result;
+    for (const auto& arg : args) {
+        if (arg.is_string())
+            result.append(QString::fromStdString(arg.get<std::string>()));
+        else if (arg.is_boolean())
+            result.append(arg.get<bool>());
+        else if (arg.is_number_integer())
+            result.append(static_cast<qlonglong>(arg.get<int64_t>()));
+        else if (arg.is_number_float())
+            result.append(arg.get<double>());
+        else if (arg.is_null())
+            result.append(QVariant());
+        else if (arg.is_object() || arg.is_array()) {
+            QJsonDocument doc = QJsonDocument::fromJson(
+                QByteArray::fromStdString(arg.dump()));
+            result.append(arg.is_object()
+                ? QVariant::fromValue(doc.object())
+                : QVariant::fromValue(doc.array()));
+        } else {
+            result.append(QVariant());
+        }
+    }
+    return result;
+}
+
+} // namespace
 
 LogosAPIClient::LogosAPIClient(const QString& module_to_talk_to,
                                const QString& origin_module,
@@ -286,4 +376,33 @@ QString LogosAPIClient::getToken(const QString& module_name)
 
     qDebug() << "LogosAPIClient: No token found for module:" << module_name;
     return "";
+}
+
+// ---------------------------------------------------------------------------
+// nlohmann::json overloads
+// ---------------------------------------------------------------------------
+
+nlohmann::json LogosAPIClient::invokeRemoteMethod(const std::string& objectName,
+                                                   const std::string& methodName,
+                                                   const nlohmann::json& args,
+                                                   Timeout timeout)
+{
+    QVariantList qArgs = nlohmannArgsToQVariantList(args);
+    QVariant result = invokeRemoteMethod(
+        QString::fromStdString(objectName),
+        QString::fromStdString(methodName),
+        qArgs, timeout);
+    return qvariantToNlohmann(result);
+}
+
+void LogosAPIClient::onEvent(LogosObject* originObject, const std::string& eventName,
+                              std::function<void(const std::string&, const nlohmann::json&)> callback)
+{
+    onEvent(originObject, QString::fromStdString(eventName),
+        [cb = std::move(callback)](const QString& name, const QVariantList& data) {
+            nlohmann::json jData = nlohmann::json::array();
+            for (const QVariant& v : data)
+                jData.push_back(qvariantToNlohmann(v));
+            cb(name.toStdString(), jData);
+        });
 }
