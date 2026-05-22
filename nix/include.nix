@@ -34,6 +34,7 @@ pkgs.stdenv.mkDerivation {
                 token_manager.cpp token_manager.h module_proxy.cpp module_proxy.h logos_mode.h \
                 logos_instance.h logos_object.h \
                 logos_provider_object.h logos_provider_object.cpp \
+                logos_json_convert.h logos_json_convert.cpp \
                 qt_provider_object.h qt_provider_object.cpp \
                 logos_transport.h logos_transport.cpp logos_transport_config.h \
                 logos_transport_factory.h logos_transport_factory.cpp \
