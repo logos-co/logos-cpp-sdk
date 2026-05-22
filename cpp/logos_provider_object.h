@@ -5,7 +5,12 @@
 #include <QVariant>
 #include <QVariantList>
 #include <QJsonArray>
+#include <nlohmann/json.hpp>
 #include <functional>
+#include <string>
+#include <vector>
+
+#include "logos_json_convert.h"
 
 class LogosAPI;
 
@@ -15,13 +20,23 @@ class LogosAPI;
 // This is the provider-side counterpart of LogosObject (consumer side).
 // ModuleProxy wraps a LogosProviderObject* and publishes it via the transport.
 // Module authors do NOT implement this directly — they inherit LogosProviderBase.
+//
+// Two parallel virtual interfaces:
+//   Qt interface:        callMethod / getMethods / setEventListener (pure virtual)
+//   Universal interface: callMethodStd / getMethodsStd / setEventListenerStd (defaulted)
+//
+// Providers override ONE set. Those going Qt-free override the Std versions
+// and delegate the Qt ones via the provided callMethodStdBridge / getMethodsStdBridge
+// helpers (one-line overrides).
 // ---------------------------------------------------------------------------
 class LogosProviderObject {
 public:
     virtual ~LogosProviderObject() = default;
 
     using EventCallback = std::function<void(const QString&, const QVariantList&)>;
+    using UniversalEventCallback = std::function<void(const std::string&, const std::string&)>;
 
+    // --- Qt interface (pure virtual — existing providers override these) ---
     virtual QVariant callMethod(const QString& methodName, const QVariantList& args) = 0;
     virtual bool informModuleToken(const QString& moduleName, const QString& token) = 0;
     virtual QJsonArray getMethods() = 0;
@@ -29,6 +44,18 @@ public:
     virtual void init(void* apiInstance) = 0;
     virtual QString providerName() const = 0;
     virtual QString providerVersion() const = 0;
+
+    // --- Universal interface (override these to stay Qt-free) ---
+    virtual nlohmann::json callMethodStd(const std::string& methodName, const nlohmann::json& args);
+    virtual std::vector<LogosMethodMetadata> getMethodsStd();
+    virtual void setEventListenerStd(UniversalEventCallback callback);
+
+protected:
+    // Bridging helpers for Qt-free providers: override callMethod/getMethods
+    // with a one-liner delegating to these.
+    QVariant callMethodStdBridge(const QString& methodName, const QVariantList& args);
+    QJsonArray getMethodsStdBridge();
+    void setEventListenerStdBridge(EventCallback callback);
 };
 
 // ---------------------------------------------------------------------------
