@@ -9,7 +9,19 @@ ModuleProxy::ModuleProxy(LogosProviderObject* provider, QObject* parent)
     if (m_provider) {
         m_provider->setEventListener([this](const QString& eventName, const QVariantList& data) {
             qDebug() << "[LogosProviderObject] ModuleProxy: forwarding event" << eventName << "as Qt signal";
-            emit eventResponse(eventName, data);
+            // Module events fire on the module's worker/FFI thread, not on this
+            // QObject's (the remoting source's) thread. Emitting eventResponse
+            // directly here runs QtRemoteObjects' source serialization on that
+            // foreign thread, racing the source socket against a method reply
+            // being sent from the source thread — which silently drops the
+            // reply. That is why start(), which emits connectionStateChanged
+            // mid-call, never returns to the caller while createNode (no event)
+            // does. Marshal the emission onto this object's thread so events
+            // and replies are serialized on the single thread QtRemoteObjects
+            // expects to own the source.
+            QMetaObject::invokeMethod(this, [this, eventName, data]() {
+                emit eventResponse(eventName, data);
+            }, Qt::QueuedConnection);
         });
         qDebug() << "[LogosProviderObject] ModuleProxy: created, wrapping LogosProviderObject"
                  << m_provider->providerName();
