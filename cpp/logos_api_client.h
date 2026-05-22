@@ -65,6 +65,8 @@ public:
      * @return LogosObject* handle, or nullptr if failed
      */
     LogosObject* requestObject(const QString& objectName, Timeout timeout = Timeout());
+    LogosObject* requestObject(const std::string& objectName, Timeout timeout = Timeout())
+        { return requestObject(QString::fromStdString(objectName), timeout); }
 
     bool isConnected() const;
     QString registryUrl() const;
