@@ -11,6 +11,7 @@
 
 #include "logos_mode.h"
 #include "logos_transport_config.h"
+#include "logos_json.h"
 
 class LogosAPI;
 class LogosAPIConsumer;
@@ -232,6 +233,18 @@ public:
 
     TokenManager* getTokenManager() const;
     QString getToken(const QString& module_name);
+
+    // nlohmann::json overloads — args is a JSON array, result is a JSON value.
+    // These convert between nlohmann::json and QVariant internally so callers
+    // never need to touch Qt JSON types.
+    nlohmann::json invokeRemoteMethod(const std::string& objectName,
+                                      const std::string& methodName,
+                                      const nlohmann::json& args,
+                                      Timeout timeout = Timeout());
+
+    // nlohmann::json event callback overload — data arrives as a json array.
+    void onEvent(LogosObject* originObject, const std::string& eventName,
+                 std::function<void(const std::string&, const nlohmann::json&)> callback);
 
 private:
     // ABI note: this private layout is consumed by every plugin that
