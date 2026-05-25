@@ -9,7 +9,20 @@ ModuleProxy::ModuleProxy(LogosProviderObject* provider, QObject* parent)
     if (m_provider) {
         m_provider->setEventListener([this](const QString& eventName, const QVariantList& data) {
             qDebug() << "[LogosProviderObject] ModuleProxy: forwarding event" << eventName << "as Qt signal";
-            emit eventResponse(eventName, data);
+            // Events may be fired from any thread (e.g. a module's worker/FFI
+            // thread), but this object is the QtRemoteObjects source and must be
+            // driven from its own thread. Emitting directly from a foreign
+            // thread runs QtRO's source serialization there, racing the source
+            // socket against a reply being sent from the source thread, which
+            // can silently drop the reply. AutoConnection keeps same-thread
+            // callers synchronous (the common case) and only queues the
+            // emission when it arrives from another thread, so events and
+            // replies stay serialized on the thread QtRO expects to own the
+            // source. Passing `this` as the context also cancels a queued
+            // emission if this object is destroyed first.
+            QMetaObject::invokeMethod(this, [this, eventName, data]() {
+                emit eventResponse(eventName, data);
+            }, Qt::AutoConnection);
         });
         qDebug() << "[LogosProviderObject] ModuleProxy: created, wrapping LogosProviderObject"
                  << m_provider->providerName();
