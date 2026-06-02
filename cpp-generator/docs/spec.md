@@ -18,7 +18,7 @@ The goal is to decouple module business logic from the Qt framework. Module auth
 | **Dispatch**         | The generated `callMethod()` function that maps string method names to typed method calls on the provider object                         |
 | **Impl Header**      | The pure C++header file (`_impl.h`) that declares a module's public methods using standard C++ types                                     |
 | **TypeExpr**         | The AST node representing a type in the LIDL type system                                                                                 |
-| **ModuleDecl**       | The AST node representing a complete module declaration (name, version, methods, events, types, `hasEmitEvent` flag)                     |
+| **ModuleDecl**       | The AST node representing a complete module declaration (name, version, methods, events, types)                     |
 
 
 ## Domain Model
@@ -196,8 +196,6 @@ logos_events:                                     // expands to `public:`; recog
 
    `buildPlugin.nix` ships this at `$out/share/logos/<name>.lidl`. `buildHeaders.nix` passes it to the consumer-side codegen via `--events-from`, which adds typed `on<EventName>(callback)` accessors to the generated `<Module>` wrapper (one per declared event, callback-arg types respect `--api-style`).
 
-**Legacy backward-compat**: the older `std::function<void(const std::string&, const std::string&)> emitEvent` member is still detected by the parser and wired in the provider constructor — un-migrated modules (e.g. logos-package-manager-module) keep working through their existing `emitEvent("name", "json")` call sites. New code should prefer `logos_events:`.
-
 Module metadata (name, version, description, dependencies) still comes from `metadata.json`, not from the header.
 
 ### Generated Output
@@ -211,7 +209,6 @@ Contains two classes:
   - Call `m_impl.method(...)`
   - C++ std return → Qt return (e.g., `QString::fromStdString(result)`)
   - For `jsonReturn` methods (returning `LogosMap`/`LogosList`), the glue calls a generated `nlohmannToQVariant()` recursive helper to convert `nlohmann::json` → `QVariant`/`QVariantMap`/`QVariantList`
-  - If the impl declares an `emitEvent` callback (`hasEmitEvent`), the constructor wires it to `LogosProviderBase::emitEvent`
   - Always overrides `onInit(LogosAPI*)` to (a) copy the three runtime-injected properties (`modulePath`, `instanceId`, `instancePersistencePath`) into the impl when it inherits from `LogosModuleContext`, and (b) construct a per-module `LogosModules` (from `generated_code/logos_sdk.h`) owned by the provider, threading its pointer through the same context base. Both wire-ups go through SFINAE'd helpers in `logos_module_context.h` (`_logos_codegen_::maybeSetContext` / `maybeSetLogosModules`), so non-inheriting impls compile unchanged and the `LogosAPI` never escapes the provider.
 2. **Plugin** — `QObject` subclass implementing `PluginInterface` and `LogosProviderPlugin`. Carries `Q_PLUGIN_METADATA` and `Q_INTERFACES`. Its `createProviderObject()` factory returns a new ProviderObject instance.
 

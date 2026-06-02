@@ -39,7 +39,7 @@ Shared data model used by all pipelines:
 - **`EventDecl`** — event name + params
 - **`FieldDecl`** — struct field name, type, optional flag
 - **`TypeDecl`** — named struct type with fields
-- **`ModuleDecl`** — complete module: name, version, description, category, depends, types, methods, events, `hasEmitEvent` flag
+- **`ModuleDecl`** — complete module: name, version, description, category, depends, types, methods, events
 
 All types have `operator==` for testing.
 
@@ -125,7 +125,6 @@ Flag plumbing:
 - `lidlIsStdConvertible(TypeExpr)` — checks if a type has a pure C++ representation
 - `lidlMakeProviderHeader(ModuleDecl, implClass, implHeader)` — generates Qt glue header
   - Emits `nlohmannToQVariant()` helper when any method has `jsonReturn = true`
-  - Legacy path: wires `m_impl.emitEvent` → `LogosProviderBase::emitEvent` in the constructor when `hasEmitEvent` is set (un-migrated modules using the old `std::function emitEvent` member)
   - Always emits an `onInit(LogosAPI*) override` that, via SFINAE'd helpers in `logos_module_context.h`, (a) copies the three runtime-injected properties (`modulePath`, `instanceId`, `instancePersistencePath`) into the impl, (b) constructs a per-module `LogosModules` aggregate and threads its pointer through the same base, and (c) installs the typed-event callback (`maybeSetEmitEvent`) consumed by `<name>_events.cpp` method bodies. Impls that don't inherit `LogosModuleContext` compile unchanged — the helper overloads collapse to no-ops. The full `LogosAPI` is never exposed past the provider boundary.
   - Always emits `#include "logos_sdk.h"` and a `std::unique_ptr<LogosModules> m_logosModules` member; ownership lives on the provider, the context base sees only a non-owning `void*` reinterpreted in `LogosModuleContext::modules()` (which depends on the impl's TU having included `logos_sdk.h`).
 - `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods dispatch
@@ -138,7 +137,6 @@ Flag plumbing:
 - State machine: `LookingForClass` → `InClass` → `InPublic`/`InPrivate`/`InLogosEvents`
 - The literal `logos_events:` token (defined in `logos_module_context.h` as `#define logos_events public`) opens an events section; bare prototypes inside become `EventDecl{name, params}` entries appended to `ModuleDecl.events`
 - Skips: constructors, destructors, typedefs, using, friend, enum, struct, `std::function` declarations
-- Legacy: still detects `std::function<...> emitEvent` members and sets `ModuleDecl.hasEmitEvent = true` so un-migrated modules keep working through the provider constructor's lambda wiring
 - Recognizes `LogosMap` and `LogosList` return types (nlohmann::json aliases) and sets `MethodDecl.jsonReturn = true`
 - Template-aware parameter splitting (handles `std::vector<std::string>` correctly)
 
@@ -242,7 +240,7 @@ Fixture files in `tests/experimental/fixtures/`:
   - Method definitions in the header (only declarations ending with `;`)
   - Nested classes
   - Template methods
-  - `std::function` members other than `emitEvent` are silently skipped
+  - `std::function` members are silently skipped (never treated as methods)
 - LIDL does not support generic/parameterized types or inheritance
 - Only the `qt` backend is implemented for `--from-header`; future backends (CBOR, Rust) are planned
 - Client stub generation (`lidlMakeHeader`/`lidlMakeSource`) is only available from LIDL files, not from `--from-header`

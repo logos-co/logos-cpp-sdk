@@ -262,13 +262,16 @@ TEST_F(ImplHeaderParserTest, UniversalTypesAndMetadataEvents)
     EXPECT_EQ(r.module.events[0].params[0].name, "info");
     EXPECT_EQ(r.module.events[0].params[0].type.name, "tstr");
 
-    EXPECT_TRUE(r.module.hasEmitEvent);
-
     auto findMethod = [&](const QString& name) -> const MethodDecl* {
         for (const auto& m : r.module.methods)
             if (m.name == name) return &m;
         return nullptr;
     };
+
+    // The fixture declares a `std::function<…> emitEvent` member. The old
+    // legacy hook treated it specially; now such members are simply skipped
+    // and never mistaken for a callable method.
+    EXPECT_EQ(findMethod("emitEvent"), nullptr);
 
     auto fetchMap = findMethod("fetchMap");
     ASSERT_NE(fetchMap, nullptr);
