@@ -344,15 +344,11 @@ ImplParseResult parseImplHeader(const QString& headerPath,
             if (state != InPublic) break;
 
             if (line.contains("std::function<")) {
-                // Legacy `std::function<…> emitEvent` member — predates
-                // the typed `logos_events:` mechanism. Still recognised
-                // for backward compat: modules that haven't migrated yet
-                // (e.g. logos-package-manager-module) keep their existing
-                // emit("name", "json") call sites working through the
-                // provider constructor's lambda wiring. New code should
-                // prefer `logos_events:`.
-                if (line.contains("emitEvent"))
-                    result.module.hasEmitEvent = true;
+                // A std::function member is not a method — skip it so the
+                // `parseMethodLine` path below doesn't choke on the nested
+                // parens in its type. (Events are declared in a typed
+                // `logos_events:` section, parsed above — there is no longer
+                // any special `std::function emitEvent` member to detect.)
                 break;
             }
 

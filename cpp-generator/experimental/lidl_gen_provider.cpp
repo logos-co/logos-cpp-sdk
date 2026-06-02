@@ -270,24 +270,6 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
       << module.name << "\", \"" << (module.version.isEmpty() ? "0.0.0" : module.version) << "\")\n\n";
     s << "public:\n";
 
-    // Legacy backward-compat: if the impl still declares a
-    // `std::function<…> emitEvent` member (the old text-pattern path),
-    // wire it in the provider's constructor so existing modules
-    // (e.g. logos-package-manager-module) keep working through their
-    // `emitEvent("name", "json")` call sites. New universal modules
-    // should declare events in a typed `logos_events:` section — that
-    // path goes through `maybeSetEmitEvent` in onInit (below) and
-    // doesn't touch this constructor.
-    if (module.hasEmitEvent) {
-        s << "    " << providerObjectClass << "() {\n";
-        s << "        m_impl.emitEvent = [this](const std::string& name, const std::string& data) {\n";
-        s << "            QVariantList args;\n";
-        s << "            if (!data.empty()) args << QString::fromStdString(data);\n";
-        s << "            emitEvent(QString::fromStdString(name), args);\n";
-        s << "        };\n";
-        s << "    }\n\n";
-    }
-
     for (const MethodDecl& md : module.methods) {
         QString qtRet = lidlTypeToQt(md.returnType);
         bool retConvertible = lidlIsStdConvertible(md.returnType);

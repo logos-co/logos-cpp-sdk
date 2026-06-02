@@ -300,8 +300,6 @@ modules().my_module.onUserLoggedIn(
 
 The accessor's parameter types follow the consumer's own `--api-style` (so a `universal` consumer sees `const std::string&` / `int64_t`, a handcrafted Qt consumer sees `const QString&` / `int`).
 
-**Legacy** — modules that haven't migrated keep the old `std::function<void(const std::string&, const std::string&)> emitEvent` member working. The codegen still detects it and wires the lambda in the provider constructor. New code should prefer `logos_events:`.
-
 ### API
 
 #### LogosResult

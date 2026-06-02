@@ -80,17 +80,12 @@ struct ModuleDecl {
     QVector<TypeDecl> types;
     QVector<MethodDecl> methods;
     QVector<EventDecl> events;
-    // True when the impl header declares a public
-    // std::function<void(const std::string&, const std::string&)> emitEvent;
-    // The generator will wire it to LogosProviderBase::emitEvent in the glue.
-    bool hasEmitEvent = false;
 
     bool operator==(const ModuleDecl& o) const {
         return name == o.name && version == o.version
             && description == o.description && category == o.category
             && depends == o.depends && types == o.types
-            && methods == o.methods && events == o.events
-            && hasEmitEvent == o.hasEmitEvent;
+            && methods == o.methods && events == o.events;
     }
 };
 

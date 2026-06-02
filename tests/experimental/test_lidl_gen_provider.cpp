@@ -273,24 +273,12 @@ TEST(LidlGenProvider, EventEmitters)
     EXPECT_TRUE(h.contains("emitEvent(\"onUpdate\""));
     // Events declared in ModuleDecl.events flow through the
     // `_logos_codegen_::maybeSetEmitEvent` SFINAE helper invoked from
-    // the generated `onInit` — NOT the legacy `m_impl.emitEvent = …`
-    // constructor wiring (that's gated on `hasEmitEvent` for back-compat
-    // with un-migrated modules — see ConstructorWiresEmitEventWhenHasEmitEventOnly).
+    // the generated `onInit`. There is no constructor-based wiring — the
+    // old `m_impl.emitEvent = …` path was removed along with the legacy
+    // `std::function emitEvent` member it supported.
     EXPECT_TRUE(h.contains("_logos_codegen_::maybeSetEmitEvent(m_impl"));
     EXPECT_TRUE(h.contains("emitEvent(QString::fromStdString(name)"));
     EXPECT_FALSE(h.contains("m_impl.emitEvent ="));
-}
-
-TEST(LidlGenProvider, ConstructorWiresEmitEventWhenHasEmitEventOnly)
-{
-    ModuleDecl m;
-    m.name = "emitonly";
-    m.version = "1.0.0";
-    m.hasEmitEvent = true;
-
-    QString h = lidlMakeProviderHeader(m, "EmitOnlyImpl", "emitonly_impl.h");
-    EXPECT_TRUE(h.contains("m_impl.emitEvent ="));
-    EXPECT_TRUE(h.contains("emitEvent(QString::fromStdString(name)"));
 }
 
 TEST(LidlGenProvider, HeaderIncludesNlohmannConversionForJsonMapReturn)
