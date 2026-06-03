@@ -493,6 +493,7 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
             QString escDesc = md.description;
             escDesc.replace('\\', "\\\\");
             escDesc.replace('"', "\\\"");
+            escDesc.replace('\n', "\\n");
             s << "        obj[\"description\"] = QStringLiteral(\"" << escDesc << "\");\n";
         }
 

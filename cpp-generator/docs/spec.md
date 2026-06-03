@@ -153,9 +153,11 @@ returns, the description flows — with no extra call — to `lm methods`,
 
 Only **doc comments** are captured: `///` line comments and `/** … */` /
 `/*! … */` block comments. Plain `//` and `/* … */` comments are ignored, so
-section separators and incidental notes don't leak into the API. Multi-line doc
-comments are joined into a single-line description, and only comments
-*immediately adjacent* to the declaration (no blank line in between) attach.
+section separators and incidental notes don't leak into the API. A multi-line
+doc comment is preserved with its line breaks (markers stripped, lines joined
+with `\n`; leading/trailing blank lines dropped, interior blank lines kept), and
+only comments *immediately adjacent* to the declaration (no blank line in
+between) attach.
 
 ```cpp
 class WalletModuleImpl : public LogosModuleContext {
@@ -167,7 +169,7 @@ public:
 ```
 
 → the `transfer` entry in `getMethods()` gains
-`"description": "Transfers `amount` from the active account to `toAddress`. Returns the resulting transaction hash."`
+`"description": "Transfers `amount` from the active account to `toAddress`.\nReturns the resulting transaction hash."` (the two lines preserved, joined with `\n`)
 
 The same applies to the legacy `--provider-header` mode (`LOGOS_METHOD`-marked
 declarations): a doc comment above the declaration becomes the method's

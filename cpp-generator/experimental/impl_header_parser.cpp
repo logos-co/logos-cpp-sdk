@@ -190,6 +190,14 @@ static bool parseMethodLine(const QString& line, MethodDecl& out)
 // Main entry point
 // ---------------------------------------------------------------------------
 
+// Join doc-comment lines preserving line breaks (drop leading/trailing blanks).
+static QString joinDocLines(QStringList lines)
+{
+    while (!lines.isEmpty() && lines.first().trimmed().isEmpty()) lines.removeFirst();
+    while (!lines.isEmpty() && lines.last().trimmed().isEmpty()) lines.removeLast();
+    return lines.join('\n');
+}
+
 ImplParseResult parseImplHeader(const QString& headerPath,
                                 const QString& className,
                                 const QString& metadataPath,
@@ -293,7 +301,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 if (end >= 0) { t = t.left(end); inBlockComment = false; }
                 t.remove(QRegularExpression(R"(^\*+\s?)"));
                 t = t.trimmed();
-                if (!t.isEmpty()) pendingDoc.append(t);
+                pendingDoc.append(t);
                 break;
             }
 
@@ -337,7 +345,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 QString text = line.mid(3);
                 if (text.startsWith('<')) text = text.mid(1); // ///< trailing form
                 text = text.trimmed();
-                if (!text.isEmpty()) pendingDoc.append(text);
+                pendingDoc.append(text);
                 break;
             }
             if (line.startsWith("/**") || line.startsWith("/*!")) {
@@ -347,7 +355,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 else inBlockComment = true;
                 text.remove(QRegularExpression(R"(^\*+\s?)"));
                 text = text.trimmed();
-                if (!text.isEmpty()) pendingDoc.append(text);
+                pendingDoc.append(text);
                 break;
             }
             if (line.startsWith("//") || line.startsWith("/*") || line.startsWith("*")) {
@@ -405,7 +413,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 QString decl = line.left(line.size() - 1).trimmed();
                 MethodDecl md;
                 if (parseMethodLine(decl, md)) {
-                    md.description = pendingDoc.join(' ').trimmed();
+                    md.description = joinDocLines(pendingDoc);
                     result.module.methods.append(md);
                 }
             }

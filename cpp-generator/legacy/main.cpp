@@ -24,6 +24,7 @@ static QString cppStringEscape(const QString& s)
     QString out = s;
     out.replace('\\', "\\\\");
     out.replace('"', "\\\"");
+    out.replace('\n', "\\n");
     return out;
 }
 
