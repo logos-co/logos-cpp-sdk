@@ -305,14 +305,20 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 break;
             }
 
-            for (QChar c : line) {
-                if (c == '{') braceDepth++;
-                else if (c == '}') braceDepth--;
-            }
+            // Count braces only on real code lines. Braces inside a doc/line
+            // comment (e.g. `/// returns { "k": v }`) must not affect scope
+            // tracking, or an unbalanced brace in a comment would make the
+            // parser think the class ended early and drop later declarations.
+            if (!(line.startsWith("//") || line.startsWith("/*") || line.startsWith("*"))) {
+                for (QChar c : line) {
+                    if (c == '{') braceDepth++;
+                    else if (c == '}') braceDepth--;
+                }
 
-            if (braceDepth <= 0) {
-                state = LookingForClass;
-                goto done;
+                if (braceDepth <= 0) {
+                    state = LookingForClass;
+                    goto done;
+                }
             }
 
             // `logos_events:` takes precedence over the standard access
