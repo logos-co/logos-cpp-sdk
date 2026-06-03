@@ -138,9 +138,45 @@ The `--from-header` mode parses a C++implementation header to extract public met
 
 `LogosMap` and `LogosList` are `using` aliases for `nlohmann::json` defined in `logos_json.h` (part of the SDK). They allow module implementations to remain completely Qt-free while returning rich structured data. The parser maps them to the same LIDL shapes as `QVariantMap`/`QVariantList`, but sets the `jsonReturn` flag on the method so the generator emits an `nlohmannToQVariant()` conversion in the glue layer.
 
-The parser uses a state machine to find the target class, track access specifiers (`public`/`private`/`protected`), and extract method declarations. It skips constructors, destructors, typedefs, using declarations, `std::function` members, and non-method statements.
+The parser uses a state machine to find the target class, track access specifiers (`public`/`private`/`protected`), and extract method declarations. It skips constructors, destructors, typedefs, using declarations, `std::function` members, and non-method statements. While scanning, it also captures any doc comment immediately above a method declaration as that method's `description` (see [Method documentation](#method-documentation)).
 
 Module metadata (name, version, description, dependencies) comes from `metadata.json`, not from the header.
+
+### Method documentation
+
+A doc comment written directly above a method's declaration in the impl header
+becomes that method's `description`, stored on `MethodDecl.description` in the
+shared AST and emitted into the `description` field of each `getMethods()`
+entry. Because `getMethods()` is what the framework's `getPluginMethods()`
+returns, the description flows — with no extra call — to `lm methods`,
+`logoscore module-info`, and Basecamp's Methods list.
+
+Only **doc comments** are captured: `///` line comments and `/** … */` /
+`/*! … */` block comments. Plain `//` and `/* … */` comments are ignored, so
+section separators and incidental notes don't leak into the API. Multi-line doc
+comments are joined into a single-line description, and only comments
+*immediately adjacent* to the declaration (no blank line in between) attach.
+
+```cpp
+class WalletModuleImpl : public LogosModuleContext {
+public:
+    /// Transfers `amount` from the active account to `toAddress`.
+    /// Returns the resulting transaction hash.
+    std::string transfer(const std::string& toAddress, int64_t amount);
+};
+```
+
+→ the `transfer` entry in `getMethods()` gains
+`"description": "Transfers `amount` from the active account to `toAddress`. Returns the resulting transaction hash."`
+
+The same applies to the legacy `--provider-header` mode (`LOGOS_METHOD`-marked
+declarations): a doc comment above the declaration becomes the method's
+`description` in the generated dispatch.
+
+A method with no doc comment simply has no `description` field. Methods
+introspected purely via Qt's `QMetaObject` (legacy `Q_INVOKABLE` modules with no
+generated dispatch) carry no comments at runtime and therefore have no
+`description`.
 
 ### Event Emission via `logos_events:`
 
@@ -217,7 +253,7 @@ Contains two classes:
 Implements two methods on the ProviderObject:
 
 1. `**callMethod(methodName, args)`** — string-based dispatch table. For each method, extracts args from `QVariantList`, calls the typed wrapper, returns result as `QVariant`. Void methods return `QVariant(true)`.
-2. `**getMethods()**` — returns `QJsonArray` of method metadata. Each entry has `name`, `signature`, `returnType`, `isInvokable`, and `parameters[]` (with `type` and `name`).
+2. `**getMethods()**` — returns `QJsonArray` of method metadata. Each entry has `name`, `signature`, `returnType`, `isInvokable`, and `parameters[]` (with `type` and `name`). When the method's declaration in the impl header is preceded by a doc comment, the entry also carries a `description` (see [Method documentation](#method-documentation) below). This array is what the framework's `getPluginMethods()` returns, so the `description` surfaces in `lm methods`, `logoscore module-info`, and Basecamp's Methods list.
 
 #### Client Stubs (`<name>_api.h` + `<name>_api.cpp`)
 

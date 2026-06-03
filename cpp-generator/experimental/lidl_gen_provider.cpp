@@ -489,6 +489,12 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
         s << "        obj[\"name\"] = QStringLiteral(\"" << md.name << "\");\n";
         s << "        obj[\"returnType\"] = QStringLiteral(\"" << qtRet << "\");\n";
         s << "        obj[\"isInvokable\"] = true;\n";
+        if (!md.description.isEmpty()) {
+            QString escDesc = md.description;
+            escDesc.replace('\\', "\\\\");
+            escDesc.replace('"', "\\\"");
+            s << "        obj[\"description\"] = QStringLiteral(\"" << escDesc << "\");\n";
+        }
 
         QString sig = md.name + "(";
         for (int i = 0; i < md.params.size(); ++i) {

@@ -695,14 +695,62 @@ QVector<ParsedMethod> parseProviderHeader(const QString& headerPath, QTextStream
         R"(^\s*LOGOS_METHOD\s+(.+?)\s+(\w+)\s*\(([^)]*)\)\s*;)"
     );
 
+    // Accumulate comment lines immediately preceding a LOGOS_METHOD so the
+    // doc comment becomes the method's description. Reset on any blank or
+    // non-comment line, so only comments *adjacent* to the declaration count.
+    QStringList pendingDoc;
+    bool inBlockComment = false;
+
     while (!in.atEnd()) {
-        QString line = in.readLine();
-        auto match = re.match(line);
-        if (!match.hasMatch()) continue;
+        QString rawLine = in.readLine();
+        QString line = rawLine.trimmed();
+
+        // Inside a multi-line /* ... */ block comment.
+        if (inBlockComment) {
+            QString text = line;
+            int end = text.indexOf("*/");
+            if (end >= 0) {
+                text = text.left(end);
+                inBlockComment = false;
+            }
+            text.remove(QRegularExpression(R"(^\*+\s?)")); // strip leading '*'
+            text = text.trimmed();
+            if (!text.isEmpty()) pendingDoc.append(text);
+            continue;
+        }
+
+        auto match = re.match(rawLine);
+        if (!match.hasMatch()) {
+            // Only doc comments (/// or /** ... */ / /*! ... */) become the
+            // description. Plain // and /* comments are ignored but leave any
+            // pending doc intact; blank / code lines reset it so only comments
+            // *adjacent* to the declaration attach.
+            if (line.startsWith("///")) {
+                QString text = line.mid(3);
+                if (text.startsWith('<')) text = text.mid(1); // ///< trailing form
+                text = text.trimmed();
+                if (!text.isEmpty()) pendingDoc.append(text);
+            } else if (line.startsWith("/**") || line.startsWith("/*!")) {
+                QString text = line.mid(3);
+                int end = text.indexOf("*/");
+                if (end >= 0) text = text.left(end);
+                else inBlockComment = true;
+                text.remove(QRegularExpression(R"(^\*+\s?)"));
+                text = text.trimmed();
+                if (!text.isEmpty()) pendingDoc.append(text);
+            } else if (line.startsWith("//") || line.startsWith("/*") || line.startsWith("*")) {
+                // Non-doc comment: ignore, keep any pending doc comment.
+            } else {
+                pendingDoc.clear();
+            }
+            continue;
+        }
 
         ParsedMethod m;
         m.returnType = normalizeType(match.captured(1));
         m.name = match.captured(2);
+        m.description = pendingDoc.join(' ').trimmed();
+        pendingDoc.clear();
 
         QString paramStr = match.captured(3).trimmed();
         if (!paramStr.isEmpty()) {

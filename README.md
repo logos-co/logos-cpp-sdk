@@ -227,6 +227,21 @@ protected:
 };
 ```
 
+**Documenting methods:** a doc comment (`///` or `/** … */`) directly above a
+method declaration becomes that method's `description` in the generated
+`getMethods()` output, so it surfaces in `lm methods`, `logoscore module-info`,
+and Basecamp's Methods list — no `describe` call needed:
+
+```cpp
+/// Processes the input and returns a result map.
+LogosMap doWork(const std::string& input);
+```
+
+Plain `//` and `/* … */` comments are ignored (so section separators don't leak
+into the API). The same applies to `interface: "provider"` modules whose methods
+are marked with `LOGOS_METHOD`. See `cpp-generator/docs/spec.md` →
+*Method documentation* for details.
+
 Available getters:
 
 | Getter | Description |
