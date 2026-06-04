@@ -186,9 +186,18 @@ Events are the subscribe-half of a module's API (methods are the call-half), and
 document the same way. A doc comment directly above an event declaration in the
 `logos_events:` section (see [Event Emission](#event-emission-via-logos_events)
 below) becomes that event's `description`, stored on `EventDecl.description` in
-the shared AST and emitted into the `description` field of each `getEvents()`
-entry. `getEvents()` is what the framework's `getPluginEvents()` returns, so the
-description flows — with no extra call — to `lm events`, `logoscore
+the shared AST and emitted into the `description` field of the event's entry in
+**`getMethods()`**.
+
+`getMethods()` returns the module's *whole* interface — methods **and** events —
+with each entry tagged by a `"type"` field (`"method"` or `"event"`). Events ride
+inside `getMethods()` deliberately: there is **no** separate `getEvents()` vtable
+method, so `LogosProviderObject`'s vtable layout never shifts and old/new hosts
+and modules stay binary-compatible (see *Why events live in `getMethods()`*
+below). The framework then offers three filtered views over that one call —
+`getPluginMethods()` (entries that aren't events), `getPluginEvents()`
+(`type == "event"`), and `getPluginInterface()` (everything) — so the
+description flows, with no extra provider call, to `lm events`, `logoscore
 module-info`'s Events section, and Basecamp's Interface screen.
 
 The capture rules are identical to methods: only `///` line comments and
@@ -204,14 +213,17 @@ logos_events:
     void userLoggedIn(const std::string& userId, const std::string& token);
 ```
 
-→ the `userLoggedIn` entry in `getEvents()` gains
+→ the `userLoggedIn` entry in `getMethods()` gains
+`"type": "event"` and
 `"description": "Emitted once the user has authenticated.\nCarries the freshly issued session token."`
 
-An event entry carries `name`, `signature`, `parameters[]` (each with `type` and
-`name`), and — when documented — `description`. Unlike a method entry it has no
-`returnType` or `isInvokable`: events are void, fire-and-forget. Events are a
-universal (`--from-header`) concept; the legacy `--provider-header` path has no
-events and its generated provider inherits an empty `getEvents()`.
+An event entry carries `type: "event"`, `name`, `signature`, `parameters[]`
+(each with `type` and `name`), and — when documented — `description`. Unlike a
+method entry it has no `returnType` or `isInvokable`: events are void,
+fire-and-forget. Events are a universal (`--from-header`) concept; the legacy
+`--provider-header` path declares none, so its `getMethods()` contains only
+methods. (An entry with no `"type"` is treated as a method, so a module built
+against a pre-events SDK simply reports zero events.)
 
 An event's `description` may also be supplied out-of-band via an optional
 `description` field on the corresponding `metadata.json` `events[]` entry (the
@@ -289,11 +301,18 @@ Contains two classes:
 
 #### Dispatch (`<name>_dispatch.cpp`)
 
-Implements three methods on the ProviderObject:
+Implements two methods on the ProviderObject:
 
 1. `**callMethod(methodName, args)`** — string-based dispatch table. For each method, extracts args from `QVariantList`, calls the typed wrapper, returns result as `QVariant`. Void methods return `QVariant(true)`.
-2. `**getMethods()**` — returns `QJsonArray` of method metadata. Each entry has `name`, `signature`, `returnType`, `isInvokable`, and `parameters[]` (with `type` and `name`). When the method's declaration in the impl header is preceded by a doc comment, the entry also carries a `description` (see [Method documentation](#method-documentation) below). This array is what the framework's `getPluginMethods()` returns, so the `description` surfaces in `lm methods`, `logoscore module-info`, and Basecamp's Methods list.
-3. `**getEvents()**` — returns `QJsonArray` of event metadata, one entry per `logos_events:` declaration. Each entry has `name`, `signature`, `parameters[]` (with `type` and `name`), and — when the declaration is preceded by a doc comment — `description` (see [Event documentation](#event-documentation) above). No `returnType`/`isInvokable`: events are void. This array is what the framework's `getPluginEvents()` returns, so events surface in `lm events`, `logoscore module-info`, and Basecamp's Interface screen. The base `LogosProviderObject::getEvents()` returns an empty array, so legacy (`--provider-header`) modules report no events.
+2. `**getMethods()**` — returns a `QJsonArray` describing the module's **whole interface — both methods and events**. Each entry carries a `"type"` of `"method"` or `"event"`:
+   - **method** entries have `type: "method"`, `name`, `signature`, `returnType`, `isInvokable`, `parameters[]` (with `type` and `name`), and — when the declaration has a doc comment — `description` (see [Method documentation](#method-documentation)).
+   - **event** entries (one per `logos_events:` declaration) have `type: "event"`, `name`, `signature`, `parameters[]`, and an optional `description` (see [Event documentation](#event-documentation)). They omit `returnType`/`isInvokable` — events are void.
+
+   The framework slices this single array into `getPluginMethods()` (non-event entries), `getPluginEvents()` (`type == "event"`), and `getPluginInterface()` (everything), which is what surfaces in `lm methods`/`lm events`, `logoscore module-info`, and Basecamp's Interface screen.
+
+##### Why events live in `getMethods()`
+
+Folding events into `getMethods()` — rather than adding a sibling `getEvents()` virtual — is a deliberate **ABI** choice. `LogosProviderObject` is the in-process vtable contract between a host/runtime and a loaded module; inserting a new virtual would shift every later vtable slot and break any mix of old/new host and module binaries. Reusing the existing `getMethods()` slot keeps the vtable byte-for-byte stable: a new host reading an old module just sees no `type: "event"` entries (so zero events), and an old host reading a new module ignores the `"type"` field (events show up in its method list — cosmetic, never a crash). Legacy `--provider-header` and Qt modules declare no events, so their `getMethods()` is methods-only.
 
 #### Client Stubs (`<name>_api.h` + `<name>_api.cpp`)
 

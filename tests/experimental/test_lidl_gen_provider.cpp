@@ -375,12 +375,15 @@ TEST(LidlGenProvider, EmptyModuleGeneratesValidCode)
     QString d = lidlMakeProviderDispatch(m);
     EXPECT_TRUE(d.contains("::callMethod("));
     EXPECT_TRUE(d.contains("::getMethods()"));
-    // Even a no-events module emits an (empty) getEvents() override body.
-    EXPECT_TRUE(d.contains("::getEvents()"));
+    // There is no separate getEvents(): events (when present) ride inside
+    // getMethods(), so the provider vtable never gains a slot.
+    EXPECT_FALSE(d.contains("::getEvents()"));
 }
 
 // ---------------------------------------------------------------------------
-// Event introspection generation (getEvents)
+// Event introspection generation — events are folded INTO getMethods() (each
+// tagged type "event"), not a separate getEvents() vtable method. This keeps
+// LogosProviderObject's vtable layout stable across SDK versions.
 // ---------------------------------------------------------------------------
 
 static ModuleDecl makeEventModule()
@@ -409,17 +412,20 @@ static ModuleDecl makeEventModule()
     return m;
 }
 
-TEST(LidlGenProvider, DispatchContainsGetEvents)
+TEST(LidlGenProvider, GetMethodsContainsEventsTaggedEvent)
 {
     auto m = makeEventModule();
     QString d = lidlMakeProviderDispatch(m);
-    EXPECT_TRUE(d.contains("::getEvents()"));
-    EXPECT_TRUE(d.contains("QJsonArray events"));
+    // No separate getEvents() override is generated…
+    EXPECT_FALSE(d.contains("::getEvents()"));
+    // …instead events appear inside getMethods(), each tagged type "event".
+    EXPECT_TRUE(d.contains("::getMethods()"));
+    EXPECT_TRUE(d.contains("QStringLiteral(\"event\")"));
     EXPECT_TRUE(d.contains("\"userLoggedIn\""));
     EXPECT_TRUE(d.contains("\"tick\""));
 }
 
-TEST(LidlGenProvider, DispatchGetEventsHasSignatureAndParams)
+TEST(LidlGenProvider, GetMethodsEventHasSignatureAndParams)
 {
     auto m = makeEventModule();
     QString d = lidlMakeProviderDispatch(m);
@@ -429,7 +435,7 @@ TEST(LidlGenProvider, DispatchGetEventsHasSignatureAndParams)
     EXPECT_TRUE(d.contains("\"token\""));
 }
 
-TEST(LidlGenProvider, DispatchGetEventsEmitsDescription)
+TEST(LidlGenProvider, GetMethodsEventEmitsDescription)
 {
     auto m = makeEventModule();
     QString d = lidlMakeProviderDispatch(m);
@@ -437,12 +443,20 @@ TEST(LidlGenProvider, DispatchGetEventsEmitsDescription)
     EXPECT_TRUE(d.contains("Auth done.\\nToken issued."));
 }
 
-TEST(LidlGenProvider, DispatchGetEventsHaveNoReturnType)
+TEST(LidlGenProvider, EventEntriesHaveNoReturnType)
 {
-    // An events-only module: events are void, so the dispatch must not emit a
-    // returnType/isInvokable key anywhere (those belong to methods only).
+    // An events-only module: events are void, so no returnType/isInvokable key
+    // is emitted anywhere (those belong to methods only).
     auto m = makeEventModule();
     QString d = lidlMakeProviderDispatch(m);
     EXPECT_FALSE(d.contains("\"returnType\""));
     EXPECT_FALSE(d.contains("\"isInvokable\""));
+}
+
+TEST(LidlGenProvider, MethodEntriesTaggedMethod)
+{
+    // A module with methods: each getMethods() entry is tagged type "method".
+    auto m = makeTestModule();
+    QString d = lidlMakeProviderDispatch(m);
+    EXPECT_TRUE(d.contains("QStringLiteral(\"method\")"));
 }

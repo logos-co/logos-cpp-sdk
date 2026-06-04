@@ -244,10 +244,12 @@ are marked with `LOGOS_METHOD`. See `cpp-generator/docs/spec.md` →
 
 **Documenting events:** events are the other half of a module's API — declared
 in a `logos_events:` section and surfaced the same way. A doc comment above an
-event declaration becomes that event's `description` in the generated
-`getEvents()` output, which the framework returns from `getPluginEvents()`, so
-it surfaces in `lm events`, `logoscore module-info`'s Events section, and
-Basecamp's Interface screen:
+event declaration becomes that event's `description`. Events are reported
+*inside* the generated `getMethods()` output (each entry tagged `type: "event"`,
+methods tagged `type: "method"`); the framework exposes filtered views —
+`getPluginMethods()`, `getPluginEvents()`, `getPluginInterface()` — so the event
+surfaces in `lm events`, `logoscore module-info`'s Events section, and Basecamp's
+Interface screen:
 
 ```cpp
 logos_events:
@@ -256,8 +258,10 @@ logos_events:
     void userLoggedIn(const std::string& userId, const std::string& token);
 ```
 
-Event entries carry `name`, `signature`, `parameters[]`, and `description` (no
-`returnType` — events are fire-and-forget). See `cpp-generator/docs/spec.md` →
+Event entries carry `type: "event"`, `name`, `signature`, `parameters[]`, and
+`description` (no `returnType` — events are fire-and-forget). Folding events into
+`getMethods()` rather than adding a `getEvents()` vtable method keeps the
+provider ABI stable across SDK versions. See `cpp-generator/docs/spec.md` →
 *Event documentation* for details.
 
 Available getters:

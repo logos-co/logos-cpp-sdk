@@ -269,8 +269,6 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
     s << "    LOGOS_PROVIDER(" << providerObjectClass << ", \""
       << module.name << "\", \"" << (module.version.isEmpty() ? "0.0.0" : module.version) << "\")\n\n";
     s << "public:\n";
-    // Event introspection (mirrors getMethods); definition emitted in the dispatch.
-    s << "    QJsonArray getEvents() override;\n";
 
     for (const MethodDecl& md : module.methods) {
         QString qtRet = lidlTypeToQt(md.returnType);
@@ -488,6 +486,7 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
         QString qtRet = lidlTypeToQt(md.returnType);
         s << "    {\n";
         s << "        QJsonObject obj;\n";
+        s << "        obj[\"type\"] = QStringLiteral(\"method\");\n";
         s << "        obj[\"name\"] = QStringLiteral(\"" << md.name << "\");\n";
         s << "        obj[\"returnType\"] = QStringLiteral(\"" << qtRet << "\");\n";
         s << "        obj[\"isInvokable\"] = true;\n";
@@ -521,17 +520,16 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
         s << "    }\n";
     }
 
-    s << "    return methods;\n";
-    s << "}\n";
-
-    // --- getEvents --- (mirrors getMethods; events are void/fire-and-forget,
-    // so there is no returnType/isInvokable)
-    s << "\nQJsonArray " << providerObjectClass << "::getEvents()\n{\n";
-    s << "    QJsonArray events;\n";
-
+    // Events are appended to the SAME interface list, tagged type "event" (and
+    // with no returnType/isInvokable — they are void/fire-and-forget). Folding
+    // them into getMethods() instead of adding a getEvents() vtable slot keeps
+    // LogosProviderObject's vtable layout stable, so old/new hosts and modules
+    // stay binary-compatible. Callers split the list back out by "type" (see
+    // ModuleProxy::getPluginMethods/getPluginEvents/getPluginInterface).
     for (const EventDecl& ed : module.events) {
         s << "    {\n";
         s << "        QJsonObject obj;\n";
+        s << "        obj[\"type\"] = QStringLiteral(\"event\");\n";
         s << "        obj[\"name\"] = QStringLiteral(\"" << ed.name << "\");\n";
         if (!ed.description.isEmpty()) {
             QString escDesc = ed.description;
@@ -559,11 +557,11 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
             s << "        obj[\"parameters\"] = params;\n";
         }
 
-        s << "        events.append(obj);\n";
+        s << "        methods.append(obj);\n";
         s << "    }\n";
     }
 
-    s << "    return events;\n";
+    s << "    return methods;\n";
     s << "}\n";
 
     return c;

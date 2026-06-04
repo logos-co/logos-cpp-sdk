@@ -36,7 +36,7 @@ Shared data model used by all pipelines:
 - **`TypeExpr`** — type expression with `Kind` (Primitive, Array, Map, Optional, Named), `name`, and `elements`
 - **`ParamDecl`** — parameter name + type
 - **`MethodDecl`** — method name, params, return type, `description` (doc comment above the declaration, emitted into `getMethods()`), `jsonReturn` flag (true when impl returns `LogosMap`/`LogosList`)
-- **`EventDecl`** — event name, params, `description` (doc comment above the `logos_events:` declaration, emitted into `getEvents()`)
+- **`EventDecl`** — event name, params, `description` (doc comment above the `logos_events:` declaration, emitted as a `type: "event"` entry inside `getMethods()`)
 - **`FieldDecl`** — struct field name, type, optional flag
 - **`TypeDecl`** — named struct type with fields
 - **`ModuleDecl`** — complete module: name, version, description, category, depends, types, methods, events
@@ -127,7 +127,7 @@ Flag plumbing:
   - Emits `nlohmannToQVariant()` helper when any method has `jsonReturn = true`
   - Always emits an `onInit(LogosAPI*) override` that, via SFINAE'd helpers in `logos_module_context.h`, (a) copies the three runtime-injected properties (`modulePath`, `instanceId`, `instancePersistencePath`) into the impl, (b) constructs a per-module `LogosModules` aggregate and threads its pointer through the same base, and (c) installs the typed-event callback (`maybeSetEmitEvent`) consumed by `<name>_events.cpp` method bodies. Impls that don't inherit `LogosModuleContext` compile unchanged — the helper overloads collapse to no-ops. The full `LogosAPI` is never exposed past the provider boundary.
   - Always emits `#include "logos_sdk.h"` and a `std::unique_ptr<LogosModules> m_logosModules` member; ownership lives on the provider, the context base sees only a non-owning `void*` reinterpreted in `LogosModuleContext::modules()` (which depends on the impl's TU having included `logos_sdk.h`).
-- `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods/getEvents dispatch (`getEvents()` emits one entry per `module.events` declaration: name, signature, parameters, and escaped `description`)
+- `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods dispatch. `getMethods()` emits the full interface: each method tagged `type: "method"`, then each `module.events` entry tagged `type: "event"` (name, signature, parameters, escaped `description`; no returnType/isInvokable). There is no separate `getEvents()` — folding events into `getMethods()` keeps the provider vtable ABI-stable.
 - `lidlMakeEventsSource(ModuleDecl, implClass, implHeader)` — generates `<name>_events.cpp`: Qt-MOC-style method bodies for prototypes declared in the impl's `logos_events:` block. Each body marshals typed args into a `QVariantList` and calls `this->emitEventImpl_("<name>", &args)` on the LogosModuleContext base.
 - `lidlGenerateProviderGlue(lidlPath, ...)` — full pipeline from .lidl file. Also emits `<name>_events.cpp` and a `<name>.lidl` sidecar (via `lidlSerialize`) when the module has any events; both ride the dep's `headers-*` outputs to power consumer-side typed `on<X>()` accessors.
 

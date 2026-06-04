@@ -1,6 +1,8 @@
 #include "module_proxy.h"
 #include "logos_provider_object.h"
 #include <QDebug>
+#include <QJsonObject>
+#include <QJsonValue>
 
 ModuleProxy::ModuleProxy(LogosProviderObject* provider, QObject* parent)
     : QObject(parent)
@@ -70,6 +72,10 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
         return QVariant(getPluginEvents());
     }
 
+    if (methodName == "getPluginInterface" && args.isEmpty()) {
+        return QVariant(getPluginInterface());
+    }
+
     qDebug() << "ModuleProxy: callRemoteMethod" << methodName << "args:" << args;
     return m_provider->callMethod(methodName, args);
 }
@@ -86,7 +92,24 @@ bool ModuleProxy::informModuleToken(const QString& authToken, const QString& mod
     return m_provider->informModuleToken(moduleName, token);
 }
 
-QJsonArray ModuleProxy::getPluginMethods()
+namespace {
+// getMethods() returns the module's full interface — both methods and events,
+// each tagged with a "type" ("method"/"event"). Split it back out. An entry
+// with no "type" counts as a method, so modules built against the pre-events
+// SDK (whose getMethods() contains no events) report zero events, not a crash.
+QJsonArray filterInterface(const QJsonArray& interface, bool keepEvents)
+{
+    QJsonArray out;
+    for (const QJsonValue& v : interface) {
+        const bool isEvent =
+            v.toObject().value(QStringLiteral("type")).toString() == QStringLiteral("event");
+        if (isEvent == keepEvents) out.append(v);
+    }
+    return out;
+}
+} // namespace
+
+QJsonArray ModuleProxy::getPluginInterface()
 {
     if (!m_provider) return QJsonArray();
 
@@ -94,12 +117,14 @@ QJsonArray ModuleProxy::getPluginMethods()
     return m_provider->getMethods();
 }
 
+QJsonArray ModuleProxy::getPluginMethods()
+{
+    return filterInterface(getPluginInterface(), /*keepEvents=*/false);
+}
+
 QJsonArray ModuleProxy::getPluginEvents()
 {
-    if (!m_provider) return QJsonArray();
-
-    qDebug() << "[LogosProviderObject] ModuleProxy: calling LogosProviderObject::getEvents()";
-    return m_provider->getEvents();
+    return filterInterface(getPluginInterface(), /*keepEvents=*/true);
 }
 
 #include "moc_module_proxy.cpp"
