@@ -181,6 +181,51 @@ TEST(LidlParser, EventNoParams)
 }
 
 // ---------------------------------------------------------------------------
+// Keywords as names (contextual keywords)
+//
+// The reserved words (module/type/method/event/version/description/
+// category/depends) are keywords only at the start of a declaration. In a
+// name position they are ordinary identifiers. Regression: a `versionReady`
+// event with a parameter literally named `version` (as emitted for a module
+// whose impl declares `versionReady(const std::string& version)`) used to
+// fail to re-parse with "Expected parameter name", because `version` lexes
+// as a keyword.
+// ---------------------------------------------------------------------------
+
+TEST(LidlParser, KeywordAsParameterName)
+{
+    auto r = lidlParse("module m { event versionReady(version: tstr) }");
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+    ASSERT_EQ(r.module.events.size(), 1);
+    EXPECT_EQ(r.module.events[0].name, "versionReady");
+    ASSERT_EQ(r.module.events[0].params.size(), 1);
+    EXPECT_EQ(r.module.events[0].params[0].name, "version");
+    EXPECT_EQ(r.module.events[0].params[0].type.name, "tstr");
+}
+
+TEST(LidlParser, KeywordAsMethodAndParamName)
+{
+    // `method`, `type`, `event`, `category` all used as ordinary names.
+    auto r = lidlParse("module m { method method(type: tstr, event: int) -> tstr }");
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+    ASSERT_EQ(r.module.methods.size(), 1);
+    EXPECT_EQ(r.module.methods[0].name, "method");
+    ASSERT_EQ(r.module.methods[0].params.size(), 2);
+    EXPECT_EQ(r.module.methods[0].params[0].name, "type");
+    EXPECT_EQ(r.module.methods[0].params[1].name, "event");
+}
+
+TEST(LidlParser, KeywordAsFieldName)
+{
+    auto r = lidlParse("module m { type T { version: tstr description: int } }");
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+    ASSERT_EQ(r.module.types.size(), 1);
+    ASSERT_EQ(r.module.types[0].fields.size(), 2);
+    EXPECT_EQ(r.module.types[0].fields[0].name, "version");
+    EXPECT_EQ(r.module.types[0].fields[1].name, "description");
+}
+
+// ---------------------------------------------------------------------------
 // Type definitions
 // ---------------------------------------------------------------------------
 
