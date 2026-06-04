@@ -225,6 +225,16 @@ TEST(LidlParser, KeywordAsFieldName)
     EXPECT_EQ(r.module.types[0].fields[1].name, "description");
 }
 
+TEST(LidlParser, KeywordAsDependencyName)
+{
+    auto r = lidlParse("module m { depends [version, module, foo] }");
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+    ASSERT_EQ(r.module.depends.size(), 3);
+    EXPECT_EQ(r.module.depends[0], "version");
+    EXPECT_EQ(r.module.depends[1], "module");
+    EXPECT_EQ(r.module.depends[2], "foo");
+}
+
 // ---------------------------------------------------------------------------
 // Type definitions
 // ---------------------------------------------------------------------------

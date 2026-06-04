@@ -116,10 +116,10 @@ private:
             ++m_pos;
             if (!expect(LidlToken::LBracket, "depends list")) return false;
             if (!at(LidlToken::RBracket)) {
-                if (!at(LidlToken::Ident)) { error("Expected identifier in depends list"); return false; }
+                if (!atName()) { error("Expected identifier in depends list"); return false; }
                 mod.depends.append(current().text); ++m_pos;
                 while (consume(LidlToken::Comma)) {
-                    if (!at(LidlToken::Ident)) { error("Expected identifier after ',' in depends list"); return false; }
+                    if (!atName()) { error("Expected identifier after ',' in depends list"); return false; }
                     mod.depends.append(current().text); ++m_pos;
                 }
             }
