@@ -33,6 +33,28 @@ private:
     bool at(LidlToken::Type type) const { return current().type == type; }
     bool consume(LidlToken::Type type) { if (!at(type)) return false; ++m_pos; return true; }
 
+    // The LIDL keywords (module/type/method/event/version/description/
+    // category/depends) are reserved only *structurally* — at the start of
+    // a declaration. In a *name* position (a module/type/field/method/
+    // event name, a parameter name, or a named-type reference) they are
+    // ordinary identifiers. A module with, say, an event parameter named
+    // `version` serializes to `event versionReady(version: tstr)`, and the
+    // consumer must be able to read that back. So treat any keyword token
+    // as an identifier wherever a bare name is expected. The grammar stays
+    // unambiguous because every name position is reached only after a
+    // structural token has already been consumed.
+    bool atName() const {
+        switch (current().type) {
+        case LidlToken::Ident:
+        case LidlToken::Module: case LidlToken::TypeKw: case LidlToken::Method:
+        case LidlToken::Event: case LidlToken::Version: case LidlToken::Description:
+        case LidlToken::Category: case LidlToken::Depends:
+            return true;
+        default:
+            return false;
+        }
+    }
+
     bool expect(LidlToken::Type type, const QString& context) {
         if (consume(type)) return true;
         error(QString("Expected %1 in %2, got '%3'").arg(tokenTypeName(type), context, current().text));
@@ -63,7 +85,7 @@ private:
 
     bool parseModule(ModuleDecl& mod) {
         if (!expect(LidlToken::Module, "module declaration")) return false;
-        if (!at(LidlToken::Ident)) { error("Expected module name"); return false; }
+        if (!atName()) { error("Expected module name"); return false; }
         mod.name = current().text; ++m_pos;
         if (!expect(LidlToken::LBrace, "module declaration")) return false;
         if (!parseModuleBody(mod)) return false;
@@ -94,10 +116,10 @@ private:
             ++m_pos;
             if (!expect(LidlToken::LBracket, "depends list")) return false;
             if (!at(LidlToken::RBracket)) {
-                if (!at(LidlToken::Ident)) { error("Expected identifier in depends list"); return false; }
+                if (!atName()) { error("Expected identifier in depends list"); return false; }
                 mod.depends.append(current().text); ++m_pos;
                 while (consume(LidlToken::Comma)) {
-                    if (!at(LidlToken::Ident)) { error("Expected identifier after ',' in depends list"); return false; }
+                    if (!atName()) { error("Expected identifier after ',' in depends list"); return false; }
                     mod.depends.append(current().text); ++m_pos;
                 }
             }
@@ -110,7 +132,7 @@ private:
     bool parseTypeDef(ModuleDecl& mod) {
         if (!expect(LidlToken::TypeKw, "type definition")) return false;
         TypeDecl td;
-        if (!at(LidlToken::Ident)) { error("Expected type name"); return false; }
+        if (!atName()) { error("Expected type name"); return false; }
         td.name = current().text; ++m_pos;
         if (!expect(LidlToken::LBrace, "type definition")) return false;
         while (!at(LidlToken::RBrace) && !at(LidlToken::Eof)) { FieldDecl fd; if (!parseFieldDef(fd)) return false; td.fields.append(fd); }
@@ -120,7 +142,7 @@ private:
 
     bool parseFieldDef(FieldDecl& fd) {
         fd.optional = consume(LidlToken::Question);
-        if (!at(LidlToken::Ident)) { error("Expected field name"); return false; }
+        if (!atName()) { error("Expected field name"); return false; }
         fd.name = current().text; ++m_pos;
         if (!expect(LidlToken::Colon, "field definition")) return false;
         return parseTypeExpr(fd.type);
@@ -129,7 +151,7 @@ private:
     bool parseMethodDef(ModuleDecl& mod) {
         if (!expect(LidlToken::Method, "method definition")) return false;
         MethodDecl md;
-        if (!at(LidlToken::Ident)) { error("Expected method name"); return false; }
+        if (!atName()) { error("Expected method name"); return false; }
         md.name = current().text; ++m_pos;
         if (!expect(LidlToken::LParen, "method parameters")) return false;
         if (!parseParams(md.params)) return false;
@@ -142,7 +164,7 @@ private:
     bool parseEventDef(ModuleDecl& mod) {
         if (!expect(LidlToken::Event, "event definition")) return false;
         EventDecl ed;
-        if (!at(LidlToken::Ident)) { error("Expected event name"); return false; }
+        if (!atName()) { error("Expected event name"); return false; }
         ed.name = current().text; ++m_pos;
         if (!expect(LidlToken::LParen, "event parameters")) return false;
         if (!parseParams(ed.params)) return false;
@@ -158,7 +180,7 @@ private:
     }
 
     bool parseParam(ParamDecl& p) {
-        if (!at(LidlToken::Ident)) { error("Expected parameter name"); return false; }
+        if (!atName()) { error("Expected parameter name"); return false; }
         p.name = current().text; ++m_pos;
         if (!expect(LidlToken::Colon, "parameter")) return false;
         return parseTypeExpr(p.type);
@@ -168,7 +190,7 @@ private:
         if (consume(LidlToken::Question)) { te.kind = TypeExpr::Optional; te.elements.resize(1); return parseTypeExpr(te.elements[0]); }
         if (consume(LidlToken::LBracket)) { te.kind = TypeExpr::Array; te.elements.resize(1); if (!parseTypeExpr(te.elements[0])) return false; return expect(LidlToken::RBracket, "array type"); }
         if (consume(LidlToken::LBrace)) { te.kind = TypeExpr::Map; te.elements.resize(2); if (!parseTypeExpr(te.elements[0])) return false; if (!expect(LidlToken::Colon, "map type")) return false; if (!parseTypeExpr(te.elements[1])) return false; return expect(LidlToken::RBrace, "map type"); }
-        if (at(LidlToken::Ident)) {
+        if (atName()) {
             const QString& name = current().text;
             te.kind = lidlBuiltinTypes().contains(name) ? TypeExpr::Primitive : TypeExpr::Named;
             te.name = name; ++m_pos; return true;
