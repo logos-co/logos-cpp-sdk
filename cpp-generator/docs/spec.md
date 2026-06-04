@@ -180,6 +180,43 @@ introspected purely via Qt's `QMetaObject` (legacy `Q_INVOKABLE` modules with no
 generated dispatch) carry no comments at runtime and therefore have no
 `description`.
 
+### Event documentation
+
+Events are the subscribe-half of a module's API (methods are the call-half), and
+document the same way. A doc comment directly above an event declaration in the
+`logos_events:` section (see [Event Emission](#event-emission-via-logos_events)
+below) becomes that event's `description`, stored on `EventDecl.description` in
+the shared AST and emitted into the `description` field of each `getEvents()`
+entry. `getEvents()` is what the framework's `getPluginEvents()` returns, so the
+description flows — with no extra call — to `lm events`, `logoscore
+module-info`'s Events section, and Basecamp's Interface screen.
+
+The capture rules are identical to methods: only `///` line comments and
+`/** … */` / `/*! … */` block comments are captured (plain `//` and `/* … */`
+are ignored); multi-line comments preserve their line breaks (markers stripped,
+joined with `\n`, leading/trailing blanks dropped); only comments immediately
+adjacent to the declaration attach.
+
+```cpp
+logos_events:
+    /// Emitted once the user has authenticated.
+    /// Carries the freshly issued session token.
+    void userLoggedIn(const std::string& userId, const std::string& token);
+```
+
+→ the `userLoggedIn` entry in `getEvents()` gains
+`"description": "Emitted once the user has authenticated.\nCarries the freshly issued session token."`
+
+An event entry carries `name`, `signature`, `parameters[]` (each with `type` and
+`name`), and — when documented — `description`. Unlike a method entry it has no
+`returnType` or `isInvokable`: events are void, fire-and-forget. Events are a
+universal (`--from-header`) concept; the legacy `--provider-header` path has no
+events and its generated provider inherits an empty `getEvents()`.
+
+An event's `description` may also be supplied out-of-band via an optional
+`description` field on the corresponding `metadata.json` `events[]` entry (the
+doc comment takes the same role for both sources).
+
 ### Event Emission via `logos_events:`
 
 Universal modules declare events in a Qt-`signals:`-style section parsed by the codegen. The same method name appears on both sides — declared in `logos_events:`, called directly to emit:
@@ -252,10 +289,11 @@ Contains two classes:
 
 #### Dispatch (`<name>_dispatch.cpp`)
 
-Implements two methods on the ProviderObject:
+Implements three methods on the ProviderObject:
 
 1. `**callMethod(methodName, args)`** — string-based dispatch table. For each method, extracts args from `QVariantList`, calls the typed wrapper, returns result as `QVariant`. Void methods return `QVariant(true)`.
 2. `**getMethods()**` — returns `QJsonArray` of method metadata. Each entry has `name`, `signature`, `returnType`, `isInvokable`, and `parameters[]` (with `type` and `name`). When the method's declaration in the impl header is preceded by a doc comment, the entry also carries a `description` (see [Method documentation](#method-documentation) below). This array is what the framework's `getPluginMethods()` returns, so the `description` surfaces in `lm methods`, `logoscore module-info`, and Basecamp's Methods list.
+3. `**getEvents()**` — returns `QJsonArray` of event metadata, one entry per `logos_events:` declaration. Each entry has `name`, `signature`, `parameters[]` (with `type` and `name`), and — when the declaration is preceded by a doc comment — `description` (see [Event documentation](#event-documentation) above). No `returnType`/`isInvokable`: events are void. This array is what the framework's `getPluginEvents()` returns, so events surface in `lm events`, `logoscore module-info`, and Basecamp's Interface screen. The base `LogosProviderObject::getEvents()` returns an empty array, so legacy (`--provider-header`) modules report no events.
 
 #### Client Stubs (`<name>_api.h` + `<name>_api.cpp`)
 

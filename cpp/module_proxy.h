@@ -31,6 +31,7 @@ public:
     Q_INVOKABLE bool informModuleToken(const QString& authToken, const QString& moduleName, const QString& token);
     bool saveToken(const QString& from_module_name, const QString& token);
     Q_INVOKABLE QJsonArray getPluginMethods();
+    Q_INVOKABLE QJsonArray getPluginEvents();
 
 signals:
     void eventResponse(const QString& eventName, const QVariantList& data);

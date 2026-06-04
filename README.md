@@ -242,6 +242,24 @@ into the API). The same applies to `interface: "provider"` modules whose methods
 are marked with `LOGOS_METHOD`. See `cpp-generator/docs/spec.md` →
 *Method documentation* for details.
 
+**Documenting events:** events are the other half of a module's API — declared
+in a `logos_events:` section and surfaced the same way. A doc comment above an
+event declaration becomes that event's `description` in the generated
+`getEvents()` output, which the framework returns from `getPluginEvents()`, so
+it surfaces in `lm events`, `logoscore module-info`'s Events section, and
+Basecamp's Interface screen:
+
+```cpp
+logos_events:
+    /// Emitted once the user has authenticated.
+    /// Carries the freshly issued session token.
+    void userLoggedIn(const std::string& userId, const std::string& token);
+```
+
+Event entries carry `name`, `signature`, `parameters[]`, and `description` (no
+`returnType` — events are fire-and-forget). See `cpp-generator/docs/spec.md` →
+*Event documentation* for details.
+
 Available getters:
 
 | Getter | Description |

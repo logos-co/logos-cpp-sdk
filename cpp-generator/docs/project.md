@@ -36,7 +36,7 @@ Shared data model used by all pipelines:
 - **`TypeExpr`** — type expression with `Kind` (Primitive, Array, Map, Optional, Named), `name`, and `elements`
 - **`ParamDecl`** — parameter name + type
 - **`MethodDecl`** — method name, params, return type, `description` (doc comment above the declaration, emitted into `getMethods()`), `jsonReturn` flag (true when impl returns `LogosMap`/`LogosList`)
-- **`EventDecl`** — event name + params
+- **`EventDecl`** — event name, params, `description` (doc comment above the `logos_events:` declaration, emitted into `getEvents()`)
 - **`FieldDecl`** — struct field name, type, optional flag
 - **`TypeDecl`** — named struct type with fields
 - **`ModuleDecl`** — complete module: name, version, description, category, depends, types, methods, events
@@ -127,7 +127,7 @@ Flag plumbing:
   - Emits `nlohmannToQVariant()` helper when any method has `jsonReturn = true`
   - Always emits an `onInit(LogosAPI*) override` that, via SFINAE'd helpers in `logos_module_context.h`, (a) copies the three runtime-injected properties (`modulePath`, `instanceId`, `instancePersistencePath`) into the impl, (b) constructs a per-module `LogosModules` aggregate and threads its pointer through the same base, and (c) installs the typed-event callback (`maybeSetEmitEvent`) consumed by `<name>_events.cpp` method bodies. Impls that don't inherit `LogosModuleContext` compile unchanged — the helper overloads collapse to no-ops. The full `LogosAPI` is never exposed past the provider boundary.
   - Always emits `#include "logos_sdk.h"` and a `std::unique_ptr<LogosModules> m_logosModules` member; ownership lives on the provider, the context base sees only a non-owning `void*` reinterpreted in `LogosModuleContext::modules()` (which depends on the impl's TU having included `logos_sdk.h`).
-- `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods dispatch
+- `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods/getEvents dispatch (`getEvents()` emits one entry per `module.events` declaration: name, signature, parameters, and escaped `description`)
 - `lidlMakeEventsSource(ModuleDecl, implClass, implHeader)` — generates `<name>_events.cpp`: Qt-MOC-style method bodies for prototypes declared in the impl's `logos_events:` block. Each body marshals typed args into a `QVariantList` and calls `this->emitEventImpl_("<name>", &args)` on the LogosModuleContext base.
 - `lidlGenerateProviderGlue(lidlPath, ...)` — full pipeline from .lidl file. Also emits `<name>_events.cpp` and a `<name>.lidl` sidecar (via `lidlSerialize`) when the module has any events; both ride the dep's `headers-*` outputs to power consumer-side typed `on<X>()` accessors.
 
@@ -135,7 +135,7 @@ Flag plumbing:
 
 - `parseImplHeader(headerPath, className, metadataPath, err)` — parses C++ header + metadata.json into ModuleDecl
 - State machine: `LookingForClass` → `InClass` → `InPublic`/`InPrivate`/`InLogosEvents`
-- The literal `logos_events:` token (defined in `logos_module_context.h` as `#define logos_events public`) opens an events section; bare prototypes inside become `EventDecl{name, params}` entries appended to `ModuleDecl.events`
+- The literal `logos_events:` token (defined in `logos_module_context.h` as `#define logos_events public`) opens an events section; bare prototypes inside become `EventDecl{name, params, description}` entries appended to `ModuleDecl.events` (the `description` is the doc comment immediately above the declaration, captured via `joinDocLines` exactly as for methods)
 - Skips: constructors, destructors, typedefs, using, friend, enum, struct, `std::function` declarations
 - Recognizes `LogosMap` and `LogosList` return types (nlohmann::json aliases) and sets `MethodDecl.jsonReturn = true`
 - Template-aware parameter splitting (handles `std::vector<std::string>` correctly)

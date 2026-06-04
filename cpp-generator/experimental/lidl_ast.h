@@ -59,9 +59,11 @@ struct MethodDecl {
 struct EventDecl {
     QString name;
     QVector<ParamDecl> params;
+    // Doc comment adjacent to the event declaration (becomes "description").
+    QString description;
 
     bool operator==(const EventDecl& o) const {
-        return name == o.name && params == o.params;
+        return name == o.name && params == o.params && description == o.description;
     }
 };
 

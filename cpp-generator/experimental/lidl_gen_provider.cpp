@@ -269,6 +269,8 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
     s << "    LOGOS_PROVIDER(" << providerObjectClass << ", \""
       << module.name << "\", \"" << (module.version.isEmpty() ? "0.0.0" : module.version) << "\")\n\n";
     s << "public:\n";
+    // Event introspection (mirrors getMethods); definition emitted in the dispatch.
+    s << "    QJsonArray getEvents() override;\n";
 
     for (const MethodDecl& md : module.methods) {
         QString qtRet = lidlTypeToQt(md.returnType);
@@ -520,6 +522,48 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
     }
 
     s << "    return methods;\n";
+    s << "}\n";
+
+    // --- getEvents --- (mirrors getMethods; events are void/fire-and-forget,
+    // so there is no returnType/isInvokable)
+    s << "\nQJsonArray " << providerObjectClass << "::getEvents()\n{\n";
+    s << "    QJsonArray events;\n";
+
+    for (const EventDecl& ed : module.events) {
+        s << "    {\n";
+        s << "        QJsonObject obj;\n";
+        s << "        obj[\"name\"] = QStringLiteral(\"" << ed.name << "\");\n";
+        if (!ed.description.isEmpty()) {
+            QString escDesc = ed.description;
+            escDesc.replace('\\', "\\\\");
+            escDesc.replace('"', "\\\"");
+            escDesc.replace('\n', "\\n");
+            s << "        obj[\"description\"] = QStringLiteral(\"" << escDesc << "\");\n";
+        }
+
+        QString sig = ed.name + "(";
+        for (int i = 0; i < ed.params.size(); ++i) {
+            sig += lidlTypeToQt(ed.params[i].type);
+            if (i + 1 < ed.params.size()) sig += ",";
+        }
+        sig += ")";
+        s << "        obj[\"signature\"] = QStringLiteral(\"" << sig << "\");\n";
+
+        if (!ed.params.isEmpty()) {
+            s << "        QJsonArray params;\n";
+            for (int i = 0; i < ed.params.size(); ++i) {
+                s << "        params.append(QJsonObject{{\"type\", QStringLiteral(\""
+                  << lidlTypeToQt(ed.params[i].type) << "\")}, {\"name\", QStringLiteral(\""
+                  << ed.params[i].name << "\")}});\n";
+            }
+            s << "        obj[\"parameters\"] = params;\n";
+        }
+
+        s << "        events.append(obj);\n";
+        s << "    }\n";
+    }
+
+    s << "    return events;\n";
     s << "}\n";
 
     return c;

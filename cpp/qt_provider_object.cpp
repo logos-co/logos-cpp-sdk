@@ -261,6 +261,12 @@ QVariant QtProviderObject::callMethod(const QString& methodName, const QVariantL
         return QVariant(getMethods());
     }
 
+    // Special-case getPluginEvents (legacy Qt modules have no declared events,
+    // so getEvents() inherits the empty base default).
+    if (methodName == "getPluginEvents" && args.isEmpty()) {
+        return QVariant(getEvents());
+    }
+
     // Auth-token validation (mirrors the old ModuleProxy logic)
     PluginInterface* pluginInterface = qobject_cast<PluginInterface*>(m_module);
     if (!pluginInterface) {

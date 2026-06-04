@@ -40,6 +40,10 @@ public:
     virtual QVariant callMethod(const QString& methodName, const QVariantList& args) = 0;
     virtual bool informModuleToken(const QString& moduleName, const QString& token) = 0;
     virtual QJsonArray getMethods() = 0;
+    // Event introspection — parallels getMethods(). Default empty so legacy Qt
+    // providers and `provider`-interface modules (which have no logos_events:)
+    // compile unchanged; universal modules' generated dispatch overrides it.
+    virtual QJsonArray getEvents() { return QJsonArray(); }
     virtual void setEventListener(EventCallback callback) = 0;
     virtual void init(void* apiInstance) = 0;
     virtual QString providerName() const = 0;

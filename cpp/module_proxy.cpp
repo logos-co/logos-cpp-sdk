@@ -66,6 +66,10 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
         return QVariant(getPluginMethods());
     }
 
+    if (methodName == "getPluginEvents" && args.isEmpty()) {
+        return QVariant(getPluginEvents());
+    }
+
     qDebug() << "ModuleProxy: callRemoteMethod" << methodName << "args:" << args;
     return m_provider->callMethod(methodName, args);
 }
@@ -88,6 +92,14 @@ QJsonArray ModuleProxy::getPluginMethods()
 
     qDebug() << "[LogosProviderObject] ModuleProxy: calling LogosProviderObject::getMethods()";
     return m_provider->getMethods();
+}
+
+QJsonArray ModuleProxy::getPluginEvents()
+{
+    if (!m_provider) return QJsonArray();
+
+    qDebug() << "[LogosProviderObject] ModuleProxy: calling LogosProviderObject::getEvents()";
+    return m_provider->getEvents();
 }
 
 #include "moc_module_proxy.cpp"
