@@ -18,6 +18,16 @@
 #include "generator_lib.h"
 #include "../experimental/lidl_parser.h"
 
+// Escape a string for safe embedding inside a generated C++ string literal.
+static QString cppStringEscape(const QString& s)
+{
+    QString out = s;
+    out.replace('\\', "\\\\");
+    out.replace('"', "\\\"");
+    out.replace('\n', "\\n");
+    return out;
+}
+
 // Convert a TypeExpr → Qt-typed string name (same surface the
 // metaobject-introspection path produces for methods, so generator_lib
 // can consume both via one code path).
@@ -411,6 +421,9 @@ static int generateProviderDispatch(const QString& headerPath, const QString& ou
         s << "        obj[\"name\"] = QStringLiteral(\"" << m.name << "\");\n";
         s << "        obj[\"returnType\"] = QStringLiteral(\"" << m.returnType << "\");\n";
         s << "        obj[\"isInvokable\"] = true;\n";
+        if (!m.description.isEmpty()) {
+            s << "        obj[\"description\"] = QStringLiteral(\"" << cppStringEscape(m.description) << "\");\n";
+        }
         QString sig = m.name + "(";
         for (int i = 0; i < m.params.size(); ++i) {
             sig += m.params[i].first;

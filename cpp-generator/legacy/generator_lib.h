@@ -11,6 +11,7 @@ struct ParsedMethod {
     QString returnType;
     QString name;
     QVector<QPair<QString, QString>> params; // (type, name)
+    QString description; // doc comment adjacent to the LOGOS_METHOD declaration
 };
 
 // Which type surface to expose on the generated per-module wrapper.

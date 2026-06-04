@@ -35,7 +35,7 @@ Shared data model used by all pipelines:
 
 - **`TypeExpr`** — type expression with `Kind` (Primitive, Array, Map, Optional, Named), `name`, and `elements`
 - **`ParamDecl`** — parameter name + type
-- **`MethodDecl`** — method name, params, return type, `jsonReturn` flag (true when impl returns `LogosMap`/`LogosList`)
+- **`MethodDecl`** — method name, params, return type, `description` (doc comment above the declaration, emitted into `getMethods()`), `jsonReturn` flag (true when impl returns `LogosMap`/`LogosList`)
 - **`EventDecl`** — event name + params
 - **`FieldDecl`** — struct field name, type, optional flag
 - **`TypeDecl`** — named struct type with fields

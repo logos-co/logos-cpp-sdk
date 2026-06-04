@@ -190,6 +190,14 @@ static bool parseMethodLine(const QString& line, MethodDecl& out)
 // Main entry point
 // ---------------------------------------------------------------------------
 
+// Join doc-comment lines preserving line breaks (drop leading/trailing blanks).
+static QString joinDocLines(QStringList lines)
+{
+    while (!lines.isEmpty() && lines.first().trimmed().isEmpty()) lines.removeFirst();
+    while (!lines.isEmpty() && lines.last().trimmed().isEmpty()) lines.removeLast();
+    return lines.join('\n');
+}
+
 ImplParseResult parseImplHeader(const QString& headerPath,
                                 const QString& className,
                                 const QString& metadataPath,
@@ -257,6 +265,11 @@ ImplParseResult parseImplHeader(const QString& headerPath,
     State state = LookingForClass;
     int braceDepth = 0;
 
+    // Accumulates doc-comment lines adjacent to a method so the doc comment
+    // becomes the method's description. Reset on any blank / non-comment line.
+    QStringList pendingDoc;
+    bool inBlockComment = false;
+
     QRegularExpression classRe("\\bclass\\s+" + QRegularExpression::escape(className) + "\\b");
     QRegularExpression accessRe("^\\s*(public|private|protected)\\s*:");
     QRegularExpression eventsRe("^\\s*logos_events\\s*:");
@@ -280,14 +293,32 @@ ImplParseResult parseImplHeader(const QString& headerPath,
         case InPublic:
         case InPrivate:
         case InLogosEvents:
-            for (QChar c : line) {
-                if (c == '{') braceDepth++;
-                else if (c == '}') braceDepth--;
+            // Inside a multi-line /** ... */ doc-comment block: capture its
+            // text (skip brace counting — comments don't affect scope).
+            if (inBlockComment) {
+                QString t = line;
+                int end = t.indexOf("*/");
+                if (end >= 0) { t = t.left(end); inBlockComment = false; }
+                t.remove(QRegularExpression(R"(^\*+\s?)"));
+                t = t.trimmed();
+                pendingDoc.append(t);
+                break;
             }
 
-            if (braceDepth <= 0) {
-                state = LookingForClass;
-                goto done;
+            // Count braces only on real code lines. Braces inside a doc/line
+            // comment (e.g. `/// returns { "k": v }`) must not affect scope
+            // tracking, or an unbalanced brace in a comment would make the
+            // parser think the class ended early and drop later declarations.
+            if (!(line.startsWith("//") || line.startsWith("/*") || line.startsWith("*"))) {
+                for (QChar c : line) {
+                    if (c == '{') braceDepth++;
+                    else if (c == '}') braceDepth--;
+                }
+
+                if (braceDepth <= 0) {
+                    state = LookingForClass;
+                    goto done;
+                }
             }
 
             // `logos_events:` takes precedence over the standard access
@@ -297,6 +328,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
             // token we recognise here.)
             if (eventsRe.match(line).hasMatch()) {
                 state = InLogosEvents;
+                pendingDoc.clear();
                 break;
             }
 
@@ -306,22 +338,51 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                     QString spec = am.captured(1);
                     if (spec == "public") state = InPublic;
                     else state = InPrivate;
+                    pendingDoc.clear();
                     break;
                 }
             }
 
-            // Skip noise & non-declarations in any section.
-            if (line.isEmpty() || line.startsWith("//") || line.startsWith("#")
-                || line.startsWith("/*") || line.startsWith("*"))
+            // Only doc comments (/// or /** ... */ / /*! ... */) accumulate as
+            // the pending description for the next method. Plain // and /*
+            // comments are ignored but leave pending doc intact; blank /
+            // preprocessor lines reset it so only *adjacent* comments attach.
+            if (line.startsWith("///")) {
+                QString text = line.mid(3);
+                if (text.startsWith('<')) text = text.mid(1); // ///< trailing form
+                text = text.trimmed();
+                pendingDoc.append(text);
                 break;
+            }
+            if (line.startsWith("/**") || line.startsWith("/*!")) {
+                QString text = line.mid(3);
+                int end = text.indexOf("*/");
+                if (end >= 0) text = text.left(end);
+                else inBlockComment = true;
+                text.remove(QRegularExpression(R"(^\*+\s?)"));
+                text = text.trimmed();
+                pendingDoc.append(text);
+                break;
+            }
+            if (line.startsWith("//") || line.startsWith("/*") || line.startsWith("*")) {
+                break; // non-doc comment: ignore, keep pending doc
+            }
+            if (line.isEmpty() || line.startsWith("#")) {
+                pendingDoc.clear();
+                break;
+            }
 
-            if (ctorDtorRe.match(line).hasMatch())
+            if (ctorDtorRe.match(line).hasMatch()) {
+                pendingDoc.clear();
                 break;
+            }
 
             if (line.startsWith("typedef") || line.startsWith("using")
                 || line.startsWith("friend") || line.startsWith("enum")
-                || line.startsWith("struct"))
+                || line.startsWith("struct")) {
+                pendingDoc.clear();
                 break;
+            }
 
             if (state == InLogosEvents) {
                 // Inside `logos_events:` — every bare prototype is an event.
@@ -338,10 +399,11 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                         result.module.events.append(ed);
                     }
                 }
+                pendingDoc.clear();
                 break;
             }
 
-            if (state != InPublic) break;
+            if (state != InPublic) { pendingDoc.clear(); break; }
 
             if (line.contains("std::function<")) {
                 // A std::function member is not a method — skip it so the
@@ -349,6 +411,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 // parens in its type. (Events are declared in a typed
                 // `logos_events:` section, parsed above — there is no longer
                 // any special `std::function emitEvent` member to detect.)
+                pendingDoc.clear();
                 break;
             }
 
@@ -356,9 +419,11 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 QString decl = line.left(line.size() - 1).trimmed();
                 MethodDecl md;
                 if (parseMethodLine(decl, md)) {
+                    md.description = joinDocLines(pendingDoc);
                     result.module.methods.append(md);
                 }
             }
+            pendingDoc.clear();
             break;
         }
     }

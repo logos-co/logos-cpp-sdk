@@ -40,6 +40,8 @@ struct MethodDecl {
     QString name;
     QVector<ParamDecl> params;
     TypeExpr returnType;
+    // Doc comment adjacent to the method declaration (becomes "description").
+    QString description;
     // True when the impl returns LogosMap or LogosList (nlohmann::json).
     // The generator will emit nlohmann→Qt conversion code in the glue layer.
     bool jsonReturn = false;
@@ -49,6 +51,7 @@ struct MethodDecl {
 
     bool operator==(const MethodDecl& o) const {
         return name == o.name && params == o.params && returnType == o.returnType
+            && description == o.description
             && jsonReturn == o.jsonReturn && resultReturn == o.resultReturn;
     }
 };

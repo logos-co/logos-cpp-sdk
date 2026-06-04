@@ -201,7 +201,7 @@ Modules never instantiate `ModuleProxy` directly; it is created by the provider 
 **Responsibilities**:
 - Validate the authentication token on every remote call. In `callRemoteMethod()` the proxy checks that a non‑empty token is provided and verifies it against the `TokenManager`. Calls with invalid or missing tokens return an empty `QVariant`.
 - Dispatch method calls to the underlying module using Qt’s meta‑object system. The proxy locates the requested method by name and argument count, supports up to five arguments, and handles various return types including `void`, `bool`, `int`, `QString`, `QVariant`, `QJsonArray` and `QStringList`
-- Introspect the wrapped module’s API via `getPluginMethods()`, returning a `QJsonArray` describing each method (name, signature, return type, parameters)
+- Introspect the wrapped module’s API via `getPluginMethods()`, returning a `QJsonArray` describing each method (name, signature, return type, parameters, and — when the method has a doc comment in its header — a `description`)
 - Provide an `eventResponse` signal that the provider emits when events are forwarded to subscribers
 - Store tokens issued by other modules via `saveToken(fromModuleName, token)`
 - Allow a module or consumer to inform another module of a token via `informModuleToken(authToken, moduleName, token)`
@@ -211,7 +211,7 @@ Modules never instantiate `ModuleProxy` directly; it is created by the provider 
 | `explicit ModuleProxy(QObject* module, QObject *parent = nullptr)`                                              | Wraps `module` for remote access.                                                                                                   |
 | `QVariant callRemoteMethod(const QString& authToken, const QString& methodName, const QVariantList& args = {})` | Validates `authToken`, locates `methodName` on the module and invokes it.  Supports up to five arguments and multiple return types. This will forward the request to the wrapped object. |
 | `bool informModuleToken(const QString& authToken, const QString& moduleName, const QString& token)`             | Stores `token` for `moduleName` in the global `TokenManager`. This is used by the core and capability module to let this module know that another module will communicate using a certain token,=.                                                                       |
-| `QJsonArray getPluginMethods()`                                                                                 | Enumerates the wrapped module’s methods using Qt meta‑object introspection and returns a JSON array with signatures and parameters. |
+| `QJsonArray getPluginMethods()`                                                                                 | Enumerates the wrapped module’s methods and returns a JSON array with signatures and parameters. Generated provider/universal modules also include a per-method `description` (from the method's header doc comment); legacy modules introspected via Qt meta‑object have none. |
 | `eventResponse(QString eventName, QVariantList data)` (signal)                                                  | Emitted when the proxy forwards an event to subscribers.                                                                            |
 
 Example: Listing methods of a module (from a consumer)
@@ -491,7 +491,7 @@ signals:
 |--------|---------|
 | `callRemoteMethod(authToken, methodName, args) → QVariant` | Validates `authToken`, locates `methodName` on the module and invokes it |
 | `informModuleToken(authToken, moduleName, token) → bool` | Stores `token` for `moduleName` in the global `TokenManager` |
-| `getPluginMethods() → QJsonArray` | Enumerates the wrapped module's methods using Qt meta-object introspection |
+| `getPluginMethods() → QJsonArray` | Enumerates the wrapped module's methods (name, signature, return type, parameters, and a per-method `description` for documented provider/universal methods) |
 
 **Responsibilities**:
 - Enforce token validation on every inbound call (returns invalid `QVariant` on failure).
