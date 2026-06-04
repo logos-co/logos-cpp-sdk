@@ -375,4 +375,74 @@ TEST(LidlGenProvider, EmptyModuleGeneratesValidCode)
     QString d = lidlMakeProviderDispatch(m);
     EXPECT_TRUE(d.contains("::callMethod("));
     EXPECT_TRUE(d.contains("::getMethods()"));
+    // Even a no-events module emits an (empty) getEvents() override body.
+    EXPECT_TRUE(d.contains("::getEvents()"));
+}
+
+// ---------------------------------------------------------------------------
+// Event introspection generation (getEvents)
+// ---------------------------------------------------------------------------
+
+static ModuleDecl makeEventModule()
+{
+    ModuleDecl m;
+    m.name = "evt_module";
+    m.version = "1.0.0";
+
+    // Documented event with two params (multi-line description).
+    {
+        EventDecl ed;
+        ed.name = "userLoggedIn";
+        ed.description = "Auth done.\nToken issued.";
+        ParamDecl p1; p1.name = "userId"; p1.type = { TypeExpr::Primitive, "tstr", {} };
+        ParamDecl p2; p2.name = "token";  p2.type = { TypeExpr::Primitive, "tstr", {} };
+        ed.params.append(p1);
+        ed.params.append(p2);
+        m.events.append(ed);
+    }
+    // Undocumented, no-arg event.
+    {
+        EventDecl ed;
+        ed.name = "tick";
+        m.events.append(ed);
+    }
+    return m;
+}
+
+TEST(LidlGenProvider, DispatchContainsGetEvents)
+{
+    auto m = makeEventModule();
+    QString d = lidlMakeProviderDispatch(m);
+    EXPECT_TRUE(d.contains("::getEvents()"));
+    EXPECT_TRUE(d.contains("QJsonArray events"));
+    EXPECT_TRUE(d.contains("\"userLoggedIn\""));
+    EXPECT_TRUE(d.contains("\"tick\""));
+}
+
+TEST(LidlGenProvider, DispatchGetEventsHasSignatureAndParams)
+{
+    auto m = makeEventModule();
+    QString d = lidlMakeProviderDispatch(m);
+    // Event signature is computed from its params (tstr → QString).
+    EXPECT_TRUE(d.contains("userLoggedIn(QString,QString)"));
+    EXPECT_TRUE(d.contains("\"userId\""));
+    EXPECT_TRUE(d.contains("\"token\""));
+}
+
+TEST(LidlGenProvider, DispatchGetEventsEmitsDescription)
+{
+    auto m = makeEventModule();
+    QString d = lidlMakeProviderDispatch(m);
+    // The multi-line description is emitted with its newline escaped (\n).
+    EXPECT_TRUE(d.contains("Auth done.\\nToken issued."));
+}
+
+TEST(LidlGenProvider, DispatchGetEventsHaveNoReturnType)
+{
+    // An events-only module: events are void, so the dispatch must not emit a
+    // returnType/isInvokable key anywhere (those belong to methods only).
+    auto m = makeEventModule();
+    QString d = lidlMakeProviderDispatch(m);
+    EXPECT_FALSE(d.contains("\"returnType\""));
+    EXPECT_FALSE(d.contains("\"isInvokable\""));
 }

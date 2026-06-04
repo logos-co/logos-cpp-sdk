@@ -1,0 +1,7 @@
+{
+  "name": "documented_events_mod",
+  "version": "1.0.0",
+  "description": "Fixture for event doc-comment capture",
+  "category": "test",
+  "dependencies": []
+}

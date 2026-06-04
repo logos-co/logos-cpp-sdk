@@ -258,6 +258,8 @@ TEST_F(ImplHeaderParserTest, UniversalTypesAndMetadataEvents)
 
     ASSERT_EQ(r.module.events.size(), 1);
     EXPECT_EQ(r.module.events[0].name, "onReady");
+    // Optional per-event description carried from metadata.json events[].
+    EXPECT_EQ(r.module.events[0].description, "Fired once the module is ready.");
     ASSERT_EQ(r.module.events[0].params.size(), 1);
     EXPECT_EQ(r.module.events[0].params[0].name, "info");
     EXPECT_EQ(r.module.events[0].params[0].type.name, "tstr");
@@ -311,4 +313,39 @@ TEST_F(ImplHeaderParserTest, UniversalTypesAndMetadataEvents)
     for (const auto& m : r.module.methods) {
         EXPECT_NE(m.name, "void") << "Keyword should not appear as method name";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Event doc comments: `///` above a `logos_events:` declaration becomes the
+// event's description (same capture rules as methods: doc-comments only,
+// adjacent-only, multi-line joined with \n).
+// ---------------------------------------------------------------------------
+
+TEST_F(ImplHeaderParserTest, EventDocCommentsFromHeader)
+{
+    auto r = parseImplHeader(
+        fixturesDir() + "/documented_events_impl.h",
+        "DocumentedEventsImpl",
+        fixturesDir() + "/documented_events_metadata.json",
+        err);
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+
+    ASSERT_EQ(r.module.events.size(), 3);
+
+    // Multi-line `///` doc comment: the two lines are joined with a newline.
+    EXPECT_EQ(r.module.events[0].name, "userLoggedIn");
+    EXPECT_EQ(r.module.events[0].description,
+              "Fired once the user has authenticated.\n"
+              "Carries the freshly issued session token.");
+    ASSERT_EQ(r.module.events[0].params.size(), 2);
+    EXPECT_EQ(r.module.events[0].params[0].name, "userId");
+    EXPECT_EQ(r.module.events[0].params[1].name, "token");
+
+    // A plain `//` comment is not a doc comment → no description captured.
+    EXPECT_EQ(r.module.events[1].name, "heartbeat");
+    EXPECT_TRUE(r.module.events[1].description.isEmpty());
+
+    // Single-line `///` doc comment.
+    EXPECT_EQ(r.module.events[2].name, "shutdown");
+    EXPECT_EQ(r.module.events[2].description, "Single-line documented event.");
 }
