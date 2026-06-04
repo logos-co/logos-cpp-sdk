@@ -30,7 +30,14 @@ public:
     Q_INVOKABLE QVariant callRemoteMethod(const QString& authToken, const QString& methodName, const QVariantList& args = QVariantList());
     Q_INVOKABLE bool informModuleToken(const QString& authToken, const QString& moduleName, const QString& token);
     bool saveToken(const QString& from_module_name, const QString& token);
+    // getPluginInterface() returns the module's whole interface (methods AND
+    // events, each tagged with a "type"); getPluginMethods()/getPluginEvents()
+    // are the type-filtered views. All three derive from the provider's single
+    // getMethods() call — there is no separate getEvents() vtable method, which
+    // is what keeps the provider ABI stable across SDK versions.
     Q_INVOKABLE QJsonArray getPluginMethods();
+    Q_INVOKABLE QJsonArray getPluginEvents();
+    Q_INVOKABLE QJsonArray getPluginInterface();
 
 signals:
     void eventResponse(const QString& eventName, const QVariantList& data);

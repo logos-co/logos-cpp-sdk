@@ -39,6 +39,14 @@ public:
     // --- Qt interface (pure virtual — existing providers override these) ---
     virtual QVariant callMethod(const QString& methodName, const QVariantList& args) = 0;
     virtual bool informModuleToken(const QString& moduleName, const QString& token) = 0;
+    // Returns the module's full interface as a QJsonArray: both methods and
+    // events, each entry tagged with a "type" of "method" or "event" (events
+    // omit returnType/isInvokable — they are void/fire-and-forget). Events ride
+    // inside getMethods() ON PURPOSE: this avoids adding a separate getEvents()
+    // vtable slot, so the vtable layout never shifts and old/new hosts and
+    // modules stay binary-compatible. An entry with no "type" is a method (so
+    // pre-events modules degrade cleanly). Callers split the list by "type"
+    // (see ModuleProxy::getPluginMethods/getPluginEvents/getPluginInterface).
     virtual QJsonArray getMethods() = 0;
     virtual void setEventListener(EventCallback callback) = 0;
     virtual void init(void* apiInstance) = 0;

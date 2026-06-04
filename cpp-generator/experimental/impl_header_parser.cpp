@@ -233,6 +233,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
             QJsonObject evObj = ev.toObject();
             EventDecl ed;
             ed.name = evObj.value("name").toString();
+            ed.description = evObj.value("description").toString();
             QJsonArray params = evObj.value("params").toArray();
             for (const QJsonValue& pv : params) {
                 QJsonObject po = pv.toObject();
@@ -396,6 +397,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                         EventDecl ed;
                         ed.name = md.name;
                         ed.params = md.params;
+                        ed.description = joinDocLines(pendingDoc);
                         result.module.events.append(ed);
                     }
                 }

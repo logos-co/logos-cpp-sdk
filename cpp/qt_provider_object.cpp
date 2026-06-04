@@ -261,6 +261,18 @@ QVariant QtProviderObject::callMethod(const QString& methodName, const QVariantL
         return QVariant(getMethods());
     }
 
+    // Special-case getPluginEvents / getPluginInterface. Legacy Qt modules have
+    // no logos_events: section, so getMethods() (built here from QMetaObject)
+    // only ever contains methods: events are always empty and the interface is
+    // just the methods list.
+    if (methodName == "getPluginEvents" && args.isEmpty()) {
+        return QVariant(QJsonArray());
+    }
+
+    if (methodName == "getPluginInterface" && args.isEmpty()) {
+        return QVariant(getMethods());
+    }
+
     // Auth-token validation (mirrors the old ModuleProxy logic)
     PluginInterface* pluginInterface = qobject_cast<PluginInterface*>(m_module);
     if (!pluginInterface) {

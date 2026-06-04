@@ -19,12 +19,23 @@ public:
         return returnValue;
     }
 
+    // getMethods() returns the whole interface: methods AND events, each tagged
+    // with a "type". The proxy slices it into getPluginMethods/Events/Interface.
     QJsonArray getMethods() override
     {
         QJsonArray arr;
-        QJsonObject m;
-        m["name"] = "testMethod";
-        arr.append(m);
+        {
+            QJsonObject m;
+            m["type"] = "method";
+            m["name"] = "testMethod";
+            arr.append(m);
+        }
+        {
+            QJsonObject e;
+            e["type"] = "event";
+            e["name"] = "testEvent";
+            arr.append(e);
+        }
         return arr;
     }
 
@@ -64,8 +75,26 @@ TEST_F(ModuleProxyTest, CallRemoteMethodDispatchesToProvider)
 TEST_F(ModuleProxyTest, GetPluginMethodsDispatchesToProvider)
 {
     ModuleProxy proxy(m_provider);
+    // getPluginMethods() returns the method-typed entries only — the event the
+    // provider also reports through getMethods() is filtered out.
     QJsonArray methods = proxy.getPluginMethods();
-    EXPECT_EQ(methods.size(), 1);
+    ASSERT_EQ(methods.size(), 1);
+    EXPECT_EQ(methods[0].toObject()["name"].toString(), "testMethod");
+}
+
+TEST_F(ModuleProxyTest, GetPluginEventsReturnsOnlyEvents)
+{
+    ModuleProxy proxy(m_provider);
+    QJsonArray events = proxy.getPluginEvents();
+    ASSERT_EQ(events.size(), 1);
+    EXPECT_EQ(events[0].toObject()["name"].toString(), "testEvent");
+}
+
+TEST_F(ModuleProxyTest, GetPluginInterfaceReturnsMethodsAndEvents)
+{
+    ModuleProxy proxy(m_provider);
+    // The whole interface — both the method and the event — in one array.
+    EXPECT_EQ(proxy.getPluginInterface().size(), 2);
 }
 
 TEST_F(ModuleProxyTest, GetPluginMethodsSpecialCaseInCallRemoteMethod)
@@ -75,6 +104,20 @@ TEST_F(ModuleProxyTest, GetPluginMethodsSpecialCaseInCallRemoteMethod)
     // Should return the methods array as QVariant, not dispatch to provider's callMethod
     EXPECT_TRUE(r.toJsonArray().size() > 0);
     // Provider's callMethod should NOT have been called for "getPluginMethods"
+    EXPECT_TRUE(m_provider->lastMethodCalled.isEmpty());
+}
+
+TEST_F(ModuleProxyTest, GetPluginEventsAndInterfaceSpecialCaseInCallRemoteMethod)
+{
+    ModuleProxy proxy(m_provider);
+
+    QVariant ev = proxy.callRemoteMethod("token", "getPluginEvents");
+    EXPECT_EQ(ev.toJsonArray().size(), 1);
+
+    QVariant iface = proxy.callRemoteMethod("token", "getPluginInterface");
+    EXPECT_EQ(iface.toJsonArray().size(), 2);
+
+    // Both are intercepted by the proxy, never dispatched to the provider.
     EXPECT_TRUE(m_provider->lastMethodCalled.isEmpty());
 }
 
