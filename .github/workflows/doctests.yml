@@ -1,11 +1,15 @@
 name: cpp-sdk Doc-Tests
 
-# Runs the executable cpp-sdk doc-test (doctests/cpp-sdk-module-runtime.test.yaml)
-# end-to-end via the shared doctest CLI: builds the logoscore runtime against the
-# commit of logos-cpp-sdk under test (overriding the SDK across every consumer in
-# the closure), builds lgpm, packages and installs the real accounts module built
-# against the same SDK, starts the daemon, loads the module, calls its methods,
-# and asserts on the output.
+# Runs the executable cpp-sdk doc-tests end-to-end via the shared doctest CLI,
+# both against the commit of logos-cpp-sdk under test (overriding the SDK across
+# every consumer in each closure):
+#   - cpp-sdk-module-runtime.test.yaml     builds the logoscore runtime against
+#     this SDK, packages and installs the real accounts module built against the
+#     same SDK, starts the daemon, loads the module, and calls its methods.
+#   - cpp-sdk-module-composition.test.yaml builds two modules against this SDK
+#     (a callee and a caller that depends on it), loads both in logoscore, and
+#     drives the caller so it calls the callee over IPC — exercising the SDK's
+#     generated cross-module wrappers (sync, async, and events).
 #
 # ──────────────────────────────────────────────────────────────────────────────
 # One-time setup required for the clickable report links to work:
@@ -91,13 +95,18 @@ jobs:
       # module client, the capability module, and the accounts module are all
       # rebuilt against this PR/push. Every other repo URL still resolves to
       # latest.
-      - name: Run cpp-sdk module-runtime doc-test
+      - name: Run cpp-sdk doc-tests
         run: |
           # --continue-on-fail so the run walks every step and the published
           # report is complete. The job still fails (non-zero exit) if any step
           # failed; this only changes whether we stop early.
+          #
+          # Both specs run back-to-back into one combined report (one dropdown
+          # entry each): the module-runtime spec and the module-composition spec,
+          # which builds two modules against this SDK and has one call the other.
           nix run github:logos-co/logos-doctest -- run \
             doctests/cpp-sdk-module-runtime.test.yaml \
+            doctests/cpp-sdk-module-composition.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \
@@ -125,11 +134,13 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          nix run github:logos-co/logos-doctest -- generate \
-            doctests/cpp-sdk-module-runtime.test.yaml \
-            --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \
-            -o /tmp/cpp-sdk-module-runtime.md
-          test -s /tmp/cpp-sdk-module-runtime.md
+          for spec in cpp-sdk-module-runtime cpp-sdk-module-composition; do
+            nix run github:logos-co/logos-doctest -- generate \
+              "doctests/$spec.test.yaml" \
+              --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \
+              -o "/tmp/$spec.md"
+            test -s "/tmp/$spec.md"
+          done
           echo "Generated markdown successfully"
 
   publish-report:
