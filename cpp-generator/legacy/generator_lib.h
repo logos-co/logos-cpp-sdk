@@ -21,6 +21,19 @@ struct ParsedMethod {
 // builder threads through.
 enum class ApiStyle { Qt, Std };
 
+// Whether the generated wrapper targets ONE fixed module (the historical
+// behaviour) or binds to a module name chosen at runtime.
+//   Static — the module name is baked into the ctor + every remote call,
+//            so `<Class>(LogosAPI*)` always talks to that one module.
+//            This is what name-baked dependency wrappers use.
+//   Bound  — the ctor takes `(LogosAPI*, const QString& moduleName)` and
+//            stores it in `m_moduleName`; every remote call routes through
+//            that member. This is what *interface* wrappers use: one
+//            interface, bound to a concrete module name at runtime.
+// Default is Static so existing callers and their generated output are
+// byte-for-byte unchanged.
+enum class BindMode { Static, Bound };
+
 QString toPascalCase(const QString& name);
 QString normalizeType(QString t);
 QString mapParamType(const QString& qtType);
@@ -45,8 +58,13 @@ QString toQVariantConversion(const QString& type, const QString& argExpr);
 // event next to the existing generic `onEvent(name, callback)` channel.
 // The accessor signature uses the apiStyle's type surface for the
 // callback's argument types.
-QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle = ApiStyle::Qt, const QJsonArray& events = {});
-QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle = ApiStyle::Qt, const QJsonArray& events = {});
+//
+// `bindMode` selects a fixed-module wrapper (Static, default) or a
+// runtime-bound interface wrapper (Bound) — see BindMode above. In Bound
+// mode `moduleName` is used only for the class/file naming the caller
+// already decided; the emitted code never bakes it into a call.
+QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle = ApiStyle::Qt, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static);
+QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle = ApiStyle::Qt, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static);
 QVector<ParsedMethod> parseProviderHeader(const QString& headerPath, QTextStream& err);
 
 #endif // GENERATOR_LIB_H

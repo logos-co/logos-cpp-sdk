@@ -2,6 +2,7 @@
 #define LIDL_GEN_CLIENT_H
 
 #include "lidl_ast.h"
+#include "../legacy/generator_lib.h"  // BindMode
 #include <QString>
 #include <QTextStream>
 
@@ -11,11 +12,14 @@ QString lidlTypeToQt(const TypeExpr& te);
 // Convert "my_module" to "MyModule"
 QString lidlToPascalCase(const QString& name);
 
-// Generate the client API header (.h) from a ModuleDecl
-QString lidlMakeHeader(const ModuleDecl& module);
+// Generate the client API header (.h) from a ModuleDecl.
+// `bindMode == Bound` emits an interface wrapper whose ctor takes the
+// target module name at runtime (see BindMode in generator_lib.h); the
+// default Static keeps the historical fixed-module wrapper.
+QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode = BindMode::Static);
 
 // Generate the client API source (.cpp) from a ModuleDecl
-QString lidlMakeSource(const ModuleDecl& module);
+QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode = BindMode::Static);
 
 // Generate metadata.json content from a ModuleDecl
 QString lidlGenerateMetadataJson(const ModuleDecl& module);
