@@ -103,7 +103,7 @@ static QString asyncDefaultVal(const QString& qt)
 // Header generation
 // ---------------------------------------------------------------------------
 
-QString lidlMakeHeader(const ModuleDecl& module)
+QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode)
 {
     QString className = lidlToPascalCase(module.name);
     QString h;
@@ -125,7 +125,10 @@ QString lidlMakeHeader(const ModuleDecl& module)
 
     s << "class " << className << " {\n";
     s << "public:\n";
-    s << "    explicit " << className << "(LogosAPI* api);\n\n";
+    if (bindMode == BindMode::Bound)
+        s << "    explicit " << className << "(LogosAPI* api, const QString& moduleName);\n\n";
+    else
+        s << "    explicit " << className << "(LogosAPI* api);\n\n";
 
     s << "    using RawEventCallback = std::function<void(const QString&, const QVariantList&)>;\n";
     s << "    using EventCallback = std::function<void(const QVariantList&)>;\n\n";
@@ -189,7 +192,7 @@ QString lidlMakeHeader(const ModuleDecl& module)
 // Source generation
 // ---------------------------------------------------------------------------
 
-QString lidlMakeSource(const ModuleDecl& module)
+QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
 {
     QString className = lidlToPascalCase(module.name);
     QString headerRel = module.name + "_api.h";
@@ -199,8 +202,16 @@ QString lidlMakeSource(const ModuleDecl& module)
     s << "#include \"" << headerRel << "\"\n\n";
     s << "#include <QDebug>\n\n";
 
-    s << className << "::" << className << "(LogosAPI* api) : m_api(api), m_client(api->getClient(\""
-      << module.name << "\")), m_moduleName(QStringLiteral(\"" << module.name << "\")) {}\n\n";
+    // Target expression for every remote call: a baked literal in Static
+    // mode, the runtime m_moduleName member in Bound (interface) mode.
+    const QString targetExpr = (bindMode == BindMode::Bound)
+        ? QStringLiteral("m_moduleName")
+        : (QStringLiteral("\"") + module.name + QStringLiteral("\""));
+    if (bindMode == BindMode::Bound)
+        s << className << "::" << className << "(LogosAPI* api, const QString& moduleName) : m_api(api), m_client(api->getClient(moduleName)), m_moduleName(moduleName) {}\n\n";
+    else
+        s << className << "::" << className << "(LogosAPI* api) : m_api(api), m_client(api->getClient(\""
+          << module.name << "\")), m_moduleName(QStringLiteral(\"" << module.name << "\")) {}\n\n";
 
     s << "LogosObject* " << className << "::ensureReplica() {\n";
     s << "    if (!m_eventReplica) {\n";
@@ -256,12 +267,12 @@ QString lidlMakeSource(const ModuleDecl& module)
         else                s << "    ";
 
         if (nParams <= 5) {
-            s << "m_client->invokeRemoteMethod(\"" << module.name << "\", \"" << md.name << "\"";
+            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\"";
             for (int i = 0; i < nParams; ++i)
                 s << ", " << md.params[i].name;
             s << ");\n";
         } else {
-            s << "m_client->invokeRemoteMethod(\"" << module.name << "\", \"" << md.name << "\", QVariantList{";
+            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\", QVariantList{";
             for (int i = 0; i < nParams; ++i) {
                 s << md.params[i].name;
                 if (i + 1 < nParams) s << ", ";
@@ -281,7 +292,7 @@ QString lidlMakeSource(const ModuleDecl& module)
         if (nParams > 0) s << ", ";
         s << "std::function<void(" << (ret == "void" ? "void" : ret) << ")> callback, Timeout timeout) {\n";
         s << "    if (!callback) return;\n";
-        s << "    m_client->invokeRemoteMethodAsync(\"" << module.name << "\", \"" << md.name << "\", ";
+        s << "    m_client->invokeRemoteMethodAsync(" << targetExpr << ", \"" << md.name << "\", ";
         if (nParams == 0) {
             s << "QVariantList()";
         } else if (nParams == 1) {

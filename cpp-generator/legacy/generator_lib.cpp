@@ -194,7 +194,7 @@ static bool isQtRefType(const QString& t)
         || t == "QJsonArray" || t == "QVariantList" || t == "QVariantMap";
 }
 
-QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events)
+QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode)
 {
     QString h;
     QTextStream s(&h);
@@ -234,7 +234,12 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
     }
     s << "class " << className << " {\n";
     s << "public:\n";
-    s << "    explicit " << className << "(LogosAPI* api);\n\n";
+    if (bindMode == BindMode::Bound) {
+        // Interface wrapper: the module to talk to is chosen at runtime.
+        s << "    explicit " << className << "(LogosAPI* api, const QString& moduleName);\n\n";
+    } else {
+        s << "    explicit " << className << "(LogosAPI* api);\n\n";
+    }
     if (apiStyle == ApiStyle::Qt) {
         // Event subscription / trigger surface — Qt-typed.
         s << "    using RawEventCallback = std::function<void(const QString&, const QVariantList&)>;\n";
@@ -366,7 +371,7 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
     return h;
 }
 
-QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events)
+QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode)
 {
     QString c;
     QTextStream s(&c);
@@ -389,7 +394,18 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
         if (!events.isEmpty()) s << "#include \"logos_object.h\"\n";
     }
     s << "\n";
-    s << className << "::" << className << "(LogosAPI* api) : m_api(api), m_client(api->getClient(\"" << moduleName << "\")), m_moduleName(QStringLiteral(\"" << moduleName << "\")) {}\n\n";
+    // The expression every remote call uses to name its target module.
+    // Static: the baked string literal "<moduleName>" (unchanged
+    // behaviour). Bound: the m_moduleName member set from the runtime ctor
+    // arg — so one interface wrapper can talk to any satisfying module.
+    const QString targetExpr = (bindMode == BindMode::Bound)
+        ? QStringLiteral("m_moduleName")
+        : (QStringLiteral("\"") + moduleName + QStringLiteral("\""));
+    if (bindMode == BindMode::Bound) {
+        s << className << "::" << className << "(LogosAPI* api, const QString& moduleName) : m_api(api), m_client(api->getClient(moduleName)), m_moduleName(moduleName) {}\n\n";
+    } else {
+        s << className << "::" << className << "(LogosAPI* api) : m_api(api), m_client(api->getClient(\"" << moduleName << "\")), m_moduleName(QStringLiteral(\"" << moduleName << "\")) {}\n\n";
+    }
 
     // ensureReplica() — generated for std mode too when events are
     // declared. The body is identical to the Qt version; pulled up
@@ -572,15 +588,15 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
         else               s << "    ";
 
         if (params.size() == 0) {
-            s << "m_client->invokeRemoteMethod(\"" << moduleName << "\", \"" << name << "\");\n";
+            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << name << "\");\n";
         } else if (params.size() <= 5) {
-            s << "m_client->invokeRemoteMethod(\"" << moduleName << "\", \"" << name << "\"";
+            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << name << "\"";
             for (int i = 0; i < params.size(); ++i) {
                 s << ", " << wireArg(params.at(i).toObject());
             }
             s << ");\n";
         } else {
-            s << "m_client->invokeRemoteMethod(\"" << moduleName << "\", \"" << name << "\", QVariantList{";
+            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << name << "\", QVariantList{";
             for (int i = 0; i < params.size(); ++i) {
                 s << wireArg(params.at(i).toObject());
                 if (i + 1 < params.size()) s << ", ";
@@ -628,7 +644,7 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
         if (params.size() > 0) s << ", ";
         s << "std::function<void(" << (ret == "void" ? "void" : ret) << ")> callback, Timeout timeout) {\n";
         s << "    if (!callback) return;\n";
-        s << "    m_client->invokeRemoteMethodAsync(\"" << moduleName << "\", \"" << name << "\", ";
+        s << "    m_client->invokeRemoteMethodAsync(" << targetExpr << ", \"" << name << "\", ";
         if (params.size() == 0) {
             s << "QVariantList()";
         } else {
