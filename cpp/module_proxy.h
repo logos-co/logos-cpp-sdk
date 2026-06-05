@@ -43,6 +43,12 @@ signals:
     void eventResponse(const QString& eventName, const QVariantList& data);
 
 private:
+    // Returns true only when authToken matches a token THIS module has issued
+    // (via saveToken / informModuleToken). Empty/unknown tokens are rejected.
+    // Comparison is constant-time and never early-outs, so neither a correct
+    // prefix nor the number of issued tokens leaks through timing.
+    bool isAuthorized(const QString& authToken) const;
+
     LogosProviderObject* m_provider;
     QHash<QString, QString> m_tokens;
 };

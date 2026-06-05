@@ -54,12 +54,16 @@ protected:
         LogosModeConfig::setMode(LogosMode::Local);
         m_provider = new LocalTestProvider();
         m_proxy = new ModuleProxy(m_provider);
+        // Authorize the "auth" token the dispatch tests below present, so they
+        // exercise the call path rather than the (now-enforced) authz rejection.
+        m_proxy->saveToken("caller", "auth");
     }
     void TearDown() override
     {
         PluginRegistry::unregisterPlugin("local_mod");
         delete m_proxy;
         delete m_provider;
+        TokenManager::instance().clearAllTokens();
         LogosModeConfig::setMode(m_savedMode);
     }
     LogosMode m_savedMode;

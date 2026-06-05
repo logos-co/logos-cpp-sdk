@@ -216,6 +216,8 @@ protected:
         TokenManager::instance().clearAllTokens();
         m_provider = new SampleProvider();
         m_proxy = new ModuleProxy(m_provider);
+        // Authorize the "auth" token the full-stack tests present.
+        m_proxy->saveToken("caller", "auth");
     }
     void TearDown() override
     {
