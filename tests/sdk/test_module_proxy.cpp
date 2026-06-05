@@ -66,6 +66,7 @@ protected:
 TEST_F(ModuleProxyTest, CallRemoteMethodDispatchesToProvider)
 {
     ModuleProxy proxy(m_provider);
+    proxy.saveToken("caller", "token"); // authorize the caller's token
     QVariant r = proxy.callRemoteMethod("token", "myMethod", {QVariant(1)});
     EXPECT_EQ(r.toInt(), 99);
     EXPECT_EQ(m_provider->lastMethodCalled, "myMethod");

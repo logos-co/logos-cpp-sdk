@@ -273,7 +273,10 @@ QVariant QtProviderObject::callMethod(const QString& methodName, const QVariantL
         return QVariant(getMethods());
     }
 
-    // Auth-token validation (mirrors the old ModuleProxy logic)
+    // No auth check here by design: this adapter has no token parameter and is
+    // only ever reached through ModuleProxy::callRemoteMethod, which authorizes
+    // the caller's token before dispatching (see ModuleProxy::isAuthorized).
+    // The checks below are sanity guards on the wrapped plugin, not authz.
     PluginInterface* pluginInterface = qobject_cast<PluginInterface*>(m_module);
     if (!pluginInterface) {
         qWarning() << "[LogosProviderObject] QtProviderObject::callMethod: module is not a PluginInterface";
