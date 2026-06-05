@@ -908,9 +908,25 @@ int legacy_main(int argc, char* argv[])
                 // LOCAL interface_dependencies entries (those without an
                 // `input`) from metadata.json, relative to the metadata dir —
                 // covers non-nix / source-tree builds. Flags win on collision.
-                QVector<InterfaceSpec> ifaceSpecs = parseInterfaceFlags(args);
+                // Dedup --interface flags by name and drop malformed specs:
+                // a repeated interface name would emit duplicate
+                // #include "<name>_api.h" / bind_<name>(...) into logos_sdk.h
+                // and fail to compile, and an empty name/path can only fail
+                // later in a less actionable way.
+                QVector<InterfaceSpec> ifaceSpecs;
                 QSet<QString> haveIface;
-                for (const InterfaceSpec& sp : ifaceSpecs) haveIface.insert(sp.name);
+                for (const InterfaceSpec& sp : parseInterfaceFlags(args)) {
+                    if (sp.name.isEmpty() || sp.path.isEmpty()) {
+                        err << "Ignoring malformed --interface spec (empty name or path)\n";
+                        continue;
+                    }
+                    if (haveIface.contains(sp.name)) {
+                        err << "Ignoring duplicate --interface '" << sp.name << "'\n";
+                        continue;
+                    }
+                    haveIface.insert(sp.name);
+                    ifaceSpecs.append(sp);
+                }
 
                 const QString metaDir = QFileInfo(metaResolvedPath).absolutePath();
                 const QJsonArray ifaceDeps = obj.value("interface_dependencies").toArray();
