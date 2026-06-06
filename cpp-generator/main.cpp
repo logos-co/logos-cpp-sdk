@@ -34,12 +34,16 @@ int main(int argc, char* argv[])
         QTextStream out(stdout);
         const QStringList args = app.arguments();
 
+        // Strip a leading '@' from path arguments — some build drivers pass
+        // `@/abs/path`. Matches the legacy_main path handling.
+        auto stripAt = [](QString p) { if (p.startsWith('@')) p.remove(0, 1); return p; };
+
         const int idx = args.indexOf("--header-to-lidl");
         if (idx + 1 >= args.size()) {
             err << "Error: --header-to-lidl requires a path to the impl header\n";
             return 1;
         }
-        const QString headerPath = args.at(idx + 1);
+        const QString headerPath = stripAt(args.at(idx + 1));
 
         const int implClassIdx = args.indexOf("--impl-class");
         if (implClassIdx == -1 || implClassIdx + 1 >= args.size()) {
@@ -53,7 +57,7 @@ int main(int argc, char* argv[])
             err << "Error: --header-to-lidl requires --metadata <metadata.json>\n";
             return 1;
         }
-        const QString metadataPath = args.at(metadataIdx + 1);
+        const QString metadataPath = stripAt(args.at(metadataIdx + 1));
 
         ImplParseResult pr = parseImplHeader(headerPath, implClass, metadataPath, err);
         if (pr.hasError()) {
@@ -69,12 +73,13 @@ int main(int argc, char* argv[])
         const int outputIdx = args.indexOf("--output");
         const int outDirIdx = args.indexOf("--output-dir");
         if (oIdx != -1 && oIdx + 1 < args.size()) {
-            outPath = args.at(oIdx + 1);
+            outPath = stripAt(args.at(oIdx + 1));
         } else if (outputIdx != -1 && outputIdx + 1 < args.size()) {
-            outPath = args.at(outputIdx + 1);
+            outPath = stripAt(args.at(outputIdx + 1));
         } else if (outDirIdx != -1 && outDirIdx + 1 < args.size()) {
-            QDir().mkpath(args.at(outDirIdx + 1));
-            outPath = QDir(args.at(outDirIdx + 1)).filePath(mod.name + ".lidl");
+            const QString d = stripAt(args.at(outDirIdx + 1));
+            QDir().mkpath(d);
+            outPath = QDir(d).filePath(mod.name + ".lidl");
         } else {
             outPath = mod.name + ".lidl";
         }

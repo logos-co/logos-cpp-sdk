@@ -255,12 +255,10 @@ static bool parseInterfaceFile(const InterfaceSpec& spec, const QString& genDirP
     return false;
 }
 
-// Generate a bound wrapper (<name>_api.{h,cpp}) for each interface. The
-// wrapper class is named from the interface `name` (PascalCase), NOT the
-// definition file's internal module name, so it matches the #include the
-// umbrella header emits.
 // Generate a wrapper (`<name>_api.{h,cpp}`) per spec from its definition file.
-// `bindMode` picks the wrapper flavour:
+// The wrapper class is named from the spec `name` (PascalCase), NOT the
+// definition file's internal module name, so it matches the `#include` the
+// umbrella header emits. `bindMode` picks the wrapper flavour:
 //   Bound  — interface dependency: ctor takes a runtime module name; exposed
 //            via a `bind_<name>(...)` factory on the umbrella.
 //   Static — concrete dependency: the module name is baked in; exposed as a
