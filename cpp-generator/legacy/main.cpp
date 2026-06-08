@@ -115,17 +115,19 @@ struct InterfaceSpec {
     QString implClass;  // class inside a .h whose API defines the interface
 };
 
-// Parse all `--interface <name>=<path>[=<impl_class>]` flags. Names and
-// store paths contain no '=', so splitting on the first two '=' is
-// unambiguous.
-static QVector<InterfaceSpec> parseInterfaceFlags(const QStringList& args)
+// Parse all `<flag> <name>=<path>[=<impl_class>]` (or `<flag>=<name>=...`)
+// occurrences. Names and store paths contain no '=', so splitting on the
+// first two '=' is unambiguous. Used for both `--interface` (runtime-bound
+// wrappers) and `--dep` (name-baked wrappers generated from a dep's LIDL).
+static QVector<InterfaceSpec> parseSpecFlags(const QStringList& args, const QString& flag)
 {
+    const QString flagEq = flag + "=";
     QVector<InterfaceSpec> specs;
     for (int i = 0; i < args.size(); ++i) {
         QString value;
-        if (args.at(i) == "--interface" && i + 1 < args.size()) {
+        if (args.at(i) == flag && i + 1 < args.size()) {
             value = args.at(i + 1);
-        } else if (args.at(i).startsWith("--interface=")) {
+        } else if (args.at(i).startsWith(flagEq)) {
             value = args.at(i).section('=', 1);
         } else {
             continue;
@@ -253,13 +255,19 @@ static bool parseInterfaceFile(const InterfaceSpec& spec, const QString& genDirP
     return false;
 }
 
-// Generate a bound wrapper (<name>_api.{h,cpp}) for each interface. The
-// wrapper class is named from the interface `name` (PascalCase), NOT the
-// definition file's internal module name, so it matches the #include the
-// umbrella header emits.
+// Generate a wrapper (`<name>_api.{h,cpp}`) per spec from its definition file.
+// The wrapper class is named from the spec `name` (PascalCase), NOT the
+// definition file's internal module name, so it matches the `#include` the
+// umbrella header emits. `bindMode` picks the wrapper flavour:
+//   Bound  — interface dependency: ctor takes a runtime module name; exposed
+//            via a `bind_<name>(...)` factory on the umbrella.
+//   Static — concrete dependency: the module name is baked in; exposed as a
+//            `<name>` member on the umbrella (byte-identical to the wrapper the
+//            dep's prebuilt headers used to ship).
 static bool generateInterfaceWrappers(const QVector<InterfaceSpec>& ifaces,
                                       const QString& genDirPath, ApiStyle apiStyle,
-                                      QTextStream& out, QTextStream& err)
+                                      QTextStream& out, QTextStream& err,
+                                      BindMode bindMode = BindMode::Bound)
 {
     for (const InterfaceSpec& spec : ifaces) {
         ModuleDecl mod;
@@ -271,13 +279,13 @@ static bool generateInterfaceWrappers(const QVector<InterfaceSpec>& ifaces,
         const QString headerRel = spec.name + "_api.h";
         const QString sourceRel = spec.name + "_api.cpp";
 
-        const QString header = makeHeader(spec.name, className, methods, apiStyle, events, BindMode::Bound);
-        const QString source = makeSource(spec.name, className, headerRel, methods, apiStyle, events, BindMode::Bound);
+        const QString header = makeHeader(spec.name, className, methods, apiStyle, events, bindMode);
+        const QString source = makeSource(spec.name, className, headerRel, methods, apiStyle, events, bindMode);
 
         {
             QFile f(QDir(genDirPath).filePath(headerRel));
             if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                err << "Failed to write interface header: " << headerRel << "\n";
+                err << "Failed to write wrapper header: " << headerRel << "\n";
                 return false;
             }
             f.write(header.toUtf8());
@@ -285,14 +293,14 @@ static bool generateInterfaceWrappers(const QVector<InterfaceSpec>& ifaces,
         {
             QFile f(QDir(genDirPath).filePath(sourceRel));
             if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                err << "Failed to write interface source: " << sourceRel << "\n";
+                err << "Failed to write wrapper source: " << sourceRel << "\n";
                 return false;
             }
             f.write(source.toUtf8());
         }
-        out << "Generated bound interface wrapper: " << headerRel << " (class "
-            << className << ", " << methods.size() << " methods, "
-            << events.size() << " events)\n";
+        out << "Generated " << (bindMode == BindMode::Bound ? "bound interface" : "dependency")
+            << " wrapper: " << headerRel << " (class " << className << ", "
+            << methods.size() << " methods, " << events.size() << " events)\n";
     }
     out.flush();
     return true;
@@ -915,7 +923,7 @@ int legacy_main(int argc, char* argv[])
                 // later in a less actionable way.
                 QVector<InterfaceSpec> ifaceSpecs;
                 QSet<QString> haveIface;
-                for (const InterfaceSpec& sp : parseInterfaceFlags(args)) {
+                for (const InterfaceSpec& sp : parseSpecFlags(args, "--interface")) {
                     if (sp.name.isEmpty() || sp.path.isEmpty()) {
                         err << "Ignoring malformed --interface spec (empty name or path)\n";
                         continue;
@@ -956,6 +964,38 @@ int legacy_main(int argc, char* argv[])
                 // Generate one bound wrapper (<name>_api.{h,cpp}) per interface.
                 if (!ifaceSpecs.isEmpty()) {
                     if (!generateInterfaceWrappers(ifaceSpecs, genDirPath, apiStyle, out, err)) {
+                        return 9;
+                    }
+                }
+
+                // Concrete dependencies generated from their published LIDL
+                // (`--dep <name>=<lidl>`). Same backend as interfaces but
+                // BindMode::Static — the module name is baked in and the dep is
+                // exposed as a `<dep>` MEMBER (the umbrella already emits it from
+                // `dependencies`, so no umbrella change). nix passes `--dep` only
+                // for deps that publish a `lidl` output; deps without one fall
+                // back to the header-copy path and are NOT passed here. Dedup vs
+                // each other and vs interface names.
+                QVector<InterfaceSpec> depSpecs;
+                QSet<QString> haveDep;
+                for (const InterfaceSpec& sp : parseSpecFlags(args, "--dep")) {
+                    if (sp.name.isEmpty() || sp.path.isEmpty()) {
+                        err << "Ignoring malformed --dep spec (empty name or path)\n";
+                        continue;
+                    }
+                    if (haveIface.contains(sp.name)) {
+                        err << "Ignoring --dep '" << sp.name << "' (name already used by an interface)\n";
+                        continue;
+                    }
+                    if (haveDep.contains(sp.name)) {
+                        err << "Ignoring duplicate --dep '" << sp.name << "'\n";
+                        continue;
+                    }
+                    haveDep.insert(sp.name);
+                    depSpecs.append(sp);
+                }
+                if (!depSpecs.isEmpty()) {
+                    if (!generateInterfaceWrappers(depSpecs, genDirPath, apiStyle, out, err, BindMode::Static)) {
                         return 9;
                     }
                 }

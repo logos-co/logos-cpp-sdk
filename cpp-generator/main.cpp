@@ -12,14 +12,89 @@
 
 int main(int argc, char* argv[])
 {
-    // Check for --lidl or --from-header mode before initializing QCoreApplication,
-    // since legacy_main creates its own.
+    // Check for --lidl / --from-header / --header-to-lidl mode before
+    // initializing QCoreApplication, since legacy_main creates its own.
     bool hasLidl = false;
     bool hasFromHeader = false;
+    bool hasHeaderToLidl = false;
     for (int i = 1; i < argc; ++i) {
         QString arg = QString::fromUtf8(argv[i]);
         if (arg == "--lidl") hasLidl = true;
         if (arg == "--from-header") hasFromHeader = true;
+        if (arg == "--header-to-lidl") hasHeaderToLidl = true;
+    }
+
+    // --header-to-lidl: the C++ frontend of the source -> LIDL -> bindings
+    // pipeline. Parse an impl header and emit ONLY its LIDL contract (no Qt
+    // glue / dispatch), so a module can publish a cheap `lidl` artifact that
+    // consumers (any language) turn into bindings without building the module.
+    if (hasHeaderToLidl) {
+        QCoreApplication app(argc, argv);
+        QTextStream err(stderr);
+        QTextStream out(stdout);
+        const QStringList args = app.arguments();
+
+        // Strip a leading '@' from path arguments — some build drivers pass
+        // `@/abs/path`. Matches the legacy_main path handling.
+        auto stripAt = [](QString p) { if (p.startsWith('@')) p.remove(0, 1); return p; };
+
+        const int idx = args.indexOf("--header-to-lidl");
+        if (idx + 1 >= args.size()) {
+            err << "Error: --header-to-lidl requires a path to the impl header\n";
+            return 1;
+        }
+        const QString headerPath = stripAt(args.at(idx + 1));
+
+        const int implClassIdx = args.indexOf("--impl-class");
+        if (implClassIdx == -1 || implClassIdx + 1 >= args.size()) {
+            err << "Error: --header-to-lidl requires --impl-class <ClassName>\n";
+            return 1;
+        }
+        const QString implClass = args.at(implClassIdx + 1);
+
+        const int metadataIdx = args.indexOf("--metadata");
+        if (metadataIdx == -1 || metadataIdx + 1 >= args.size()) {
+            err << "Error: --header-to-lidl requires --metadata <metadata.json>\n";
+            return 1;
+        }
+        const QString metadataPath = stripAt(args.at(metadataIdx + 1));
+
+        ImplParseResult pr = parseImplHeader(headerPath, implClass, metadataPath, err);
+        if (pr.hasError()) {
+            err << "Error parsing impl header: " << pr.error << "\n";
+            return 4;
+        }
+        const ModuleDecl& mod = pr.module;
+
+        // Output path: explicit -o/--output <file>, else <output-dir>/<name>.lidl,
+        // else <name>.lidl in the CWD.
+        QString outPath;
+        const int oIdx = args.indexOf("-o");
+        const int outputIdx = args.indexOf("--output");
+        const int outDirIdx = args.indexOf("--output-dir");
+        if (oIdx != -1 && oIdx + 1 < args.size()) {
+            outPath = stripAt(args.at(oIdx + 1));
+        } else if (outputIdx != -1 && outputIdx + 1 < args.size()) {
+            outPath = stripAt(args.at(outputIdx + 1));
+        } else if (outDirIdx != -1 && outDirIdx + 1 < args.size()) {
+            const QString d = stripAt(args.at(outDirIdx + 1));
+            QDir().mkpath(d);
+            outPath = QDir(d).filePath(mod.name + ".lidl");
+        } else {
+            outPath = mod.name + ".lidl";
+        }
+
+        QFile f(outPath);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            err << "Failed to write LIDL: " << outPath << "\n";
+            return 5;
+        }
+        f.write(lidlSerialize(mod).toUtf8());
+        f.close();
+        out << "Generated LIDL: " << outPath << " (" << mod.methods.size()
+            << " methods, " << mod.events.size() << " events)\n";
+        out.flush();
+        return 0;
     }
 
     if (hasLidl || hasFromHeader) {
