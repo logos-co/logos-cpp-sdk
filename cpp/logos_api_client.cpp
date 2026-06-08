@@ -4,6 +4,7 @@
 #include "logos_object.h"
 #include "logos_types.h"
 #include "logos_json_convert.h"
+#include "logos_thread_marshal.h"
 #include "token_manager.h"
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -59,7 +60,10 @@ LogosAPIClient::~LogosAPIClient()
 
 LogosObject* LogosAPIClient::requestObject(const QString& objectName, Timeout timeout)
 {
-    return m_consumer->requestObject(objectName, timeout);
+    // Marshal to the owner thread: the replica is acquired and lives there.
+    return logos::runOnOwnerThread(this, [&]() -> LogosObject* {
+        return m_consumer->requestObject(objectName, timeout);
+    });
 }
 
 bool LogosAPIClient::isConnected() const
@@ -80,6 +84,10 @@ bool LogosAPIClient::reconnect()
 QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QString& methodName,
                                    const QVariantList& args, Timeout timeout)
 {
+    // Marshal the whole operation (capability/token fetch + the call) onto the
+    // owner thread so a worker thread (e.g. an HTTP handler) can call other
+    // modules. Same-thread callers run directly. See logos_thread_marshal.h.
+    return logos::runOnOwnerThread(this, [&]() -> QVariant {
     qDebug() << "LogosAPIClient: invoking remote method" << objectName << methodName << "args_count:" << args.size();
 
     QString token = getToken(objectName);
@@ -95,6 +103,7 @@ QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QSt
     }
 
     return m_consumer->invokeRemoteMethod(token, objectName, methodName, args, timeout);
+    });
 }
 
 QVariant LogosAPIClient::invokeRemoteMethod(const QString& objectName, const QString& methodName,
@@ -134,6 +143,21 @@ void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QS
                                               Timeout timeout)
 {
     if (!callback) return;
+
+    // The async path acquires a replica too, so it must also run on the owner
+    // thread. Unlike the sync path we post non-blocking (QueuedConnection): the
+    // worker caller returns immediately and the result callback fires on the
+    // owner thread when the reply arrives.
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this,
+            [this, objectName, methodName, args,
+             callback = std::move(callback), timeout]() mutable {
+                invokeRemoteMethodAsync(objectName, methodName, args,
+                                        std::move(callback), timeout);
+            },
+            Qt::QueuedConnection);
+        return;
+    }
 
     QString token = getToken(objectName);
 
@@ -222,7 +246,10 @@ void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QS
 
 void LogosAPIClient::onEvent(LogosObject* originObject, const QString& eventName, std::function<void(const QString&, const QVariantList&)> callback)
 {
-    m_consumer->onEvent(originObject, eventName, std::move(callback));
+    // Marshal to the owner thread: event registration touches the replica.
+    logos::runOnOwnerThread(this, [&]() {
+        m_consumer->onEvent(originObject, eventName, std::move(callback));
+    });
 }
 
 void LogosAPIClient::onEventResponse(LogosObject* object, const QString& eventName, const QVariantList& data)

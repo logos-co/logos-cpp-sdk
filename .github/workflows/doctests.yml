@@ -107,6 +107,7 @@ jobs:
           nix run github:logos-co/logos-doctest -- run \
             doctests/cpp-sdk-module-runtime.test.yaml \
             doctests/cpp-sdk-module-composition.test.yaml \
+            doctests/cpp-sdk-worker-thread-http.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \
@@ -134,7 +135,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in cpp-sdk-module-runtime cpp-sdk-module-composition; do
+          for spec in cpp-sdk-module-runtime cpp-sdk-module-composition cpp-sdk-worker-thread-http; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/$spec.test.yaml" \
               --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \

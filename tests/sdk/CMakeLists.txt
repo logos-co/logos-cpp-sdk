@@ -39,6 +39,7 @@ add_executable(sdk_tests
     test_logos_api_provider.cpp
     test_mock_transport.cpp
     test_local_transport_integration.cpp
+    test_worker_thread_ipc.cpp
     test_event_system.cpp
     test_async_calls.cpp
     test_provider_dispatch.cpp
