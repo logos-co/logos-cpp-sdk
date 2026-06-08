@@ -1,0 +1,7 @@
+{
+  "name": "same_line_events_mod",
+  "version": "1.0.0",
+  "description": "Fixture for same-line section specifiers (issue #76)",
+  "category": "test",
+  "dependencies": []
+}

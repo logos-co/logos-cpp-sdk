@@ -322,26 +322,39 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 }
             }
 
+            // A section specifier may be followed by a declaration on the
+            // *same* physical line — e.g. clang-format / prettier collapse
+            //     logos_events:
+            //         void versionReady(const std::string& version);
+            // into `logos_events : void versionReady(const std::string& version);`.
+            // Strip any leading specifiers, updating the section state, and
+            // let whatever remains fall through to the declaration parser
+            // below — otherwise everything after the colon is discarded and
+            // the same valid C++ is parsed differently based on formatting.
+            //
             // `logos_events:` takes precedence over the standard access
             // specifiers: it's a separate section that the codegen pulls
             // event prototypes from. (At preprocess time, `logos_events`
             // expands to `public`, but the raw source still carries the
             // token we recognise here.)
-            if (eventsRe.match(line).hasMatch()) {
-                state = InLogosEvents;
-                pendingDoc.clear();
-                break;
-            }
-
-            {
+            while (true) {
+                QRegularExpressionMatch em = eventsRe.match(line);
+                if (em.hasMatch()) {
+                    state = InLogosEvents;
+                    pendingDoc.clear();
+                    line = line.mid(em.capturedEnd()).trimmed();
+                    continue;
+                }
                 QRegularExpressionMatch am = accessRe.match(line);
                 if (am.hasMatch()) {
                     QString spec = am.captured(1);
                     if (spec == "public") state = InPublic;
                     else state = InPrivate;
                     pendingDoc.clear();
-                    break;
+                    line = line.mid(am.capturedEnd()).trimmed();
+                    continue;
                 }
+                break;
             }
 
             // Only doc comments (/// or /** ... */ / /*! ... */) accumulate as
