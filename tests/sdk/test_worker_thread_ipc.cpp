@@ -76,10 +76,15 @@ TEST_F(WorkerThreadIpcTest, InvokeFromWorkerThreadRunsOnOwnerThread)
 {
     QThread* const ownerThread = QThread::currentThread();
 
+    // The ModuleProxy created by registerObject (owned by providerApi) keeps a
+    // raw pointer to the provider while published, so the provider must outlive
+    // it. Declaring `provider` before `providerApi` ensures that: at end of
+    // scope, providerApi (and its proxy) is destroyed first, then the provider.
+    ThreadProbeProvider provider;
+
     // Provider registered on the owner thread.
     LogosAPI providerApi("thread_probe");
-    auto* provider = new ThreadProbeProvider();
-    ASSERT_TRUE(providerApi.getProvider()->registerObject("thread_probe", provider));
+    ASSERT_TRUE(providerApi.getProvider()->registerObject("thread_probe", &provider));
     // Authorize the token the consumer will present, so the call reaches the
     // provider instead of being rejected by the authz check.
     providerApi.getProvider()->saveToken("caller", "tok");
@@ -117,10 +122,6 @@ TEST_F(WorkerThreadIpcTest, InvokeFromWorkerThreadRunsOnOwnerThread)
 
     // The crux: the inter-module call must execute on the owner thread, not the
     // worker thread. Without the marshaling fix it runs on the worker thread.
-    EXPECT_EQ(provider->calledThread.load(), ownerThread)
+    EXPECT_EQ(provider.calledThread.load(), ownerThread)
         << "inter-module call executed on the worker thread instead of the owner thread";
-
-    // provider is intentionally leaked: the ModuleProxy created by
-    // registerObject (owned by providerApi) references it for the lifetime of
-    // the LogosAPI, which outlives this scope.
 }

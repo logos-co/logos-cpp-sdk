@@ -19,13 +19,20 @@ namespace logos {
 // thread) without the module touching Qt — the SDK transparently marshals the
 // call onto the owner thread.
 //
-// Requirements: `obj`'s thread must be running an event loop (it is — the
-// module's main thread runs QCoreApplication::exec()). The same-thread guard
-// avoids the BlockingQueuedConnection self-deadlock.
+// Requirements:
+//   - `obj`'s thread must be running an event loop (it is — the module's main
+//     thread runs QCoreApplication::exec()). The same-thread guard avoids the
+//     BlockingQueuedConnection self-deadlock.
+//   - The return type must be void or default-constructible (the marshaled
+//     branch holds the result in a local before assigning it), and must not be
+//     a reference (there'd be nothing to bind the local to). Both are satisfied
+//     by the SDK's uses here (void, QVariant, LogosObject*, LogosAPIClient*).
 template <typename Fn>
 auto runOnOwnerThread(QObject* obj, Fn&& fn) -> decltype(fn())
 {
     using Ret = decltype(fn());
+    static_assert(!std::is_reference_v<Ret>,
+                  "runOnOwnerThread does not support reference return types");
     if (QThread::currentThread() == obj->thread()) {
         return fn();
     }

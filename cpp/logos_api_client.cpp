@@ -144,6 +144,21 @@ void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QS
 {
     if (!callback) return;
 
+    // The async path acquires a replica too, so it must also run on the owner
+    // thread. Unlike the sync path we post non-blocking (QueuedConnection): the
+    // worker caller returns immediately and the result callback fires on the
+    // owner thread when the reply arrives.
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this,
+            [this, objectName, methodName, args,
+             callback = std::move(callback), timeout]() mutable {
+                invokeRemoteMethodAsync(objectName, methodName, args,
+                                        std::move(callback), timeout);
+            },
+            Qt::QueuedConnection);
+        return;
+    }
+
     QString token = getToken(objectName);
 
     if (token.isEmpty() && objectName != "capability_module" && m_capability_consumer) {
