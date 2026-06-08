@@ -95,18 +95,6 @@ QVariant ModuleProxy::callRemoteMethod(const QString& authToken, const QString& 
     return m_provider->callMethod(methodName, args);
 }
 
-bool ModuleProxy::informModuleToken(const QString& authToken, const QString& moduleName, const QString& token)
-{
-    Q_UNUSED(authToken)
-
-    if (!m_provider) {
-        qWarning() << "ModuleProxy: Cannot inform token on null provider";
-        return false;
-    }
-
-    return m_provider->informModuleToken(moduleName, token);
-}
-
 namespace {
 // note: this is to ensure comparison is constant time to prevent timing attacks
 // Length-independent constant-time comparison of two tokens. Returns true only
@@ -128,6 +116,36 @@ bool constantTimeEquals(const QString& a, const QString& b)
     return diff == 0;
 }
 } // namespace
+
+bool ModuleProxy::informModuleToken(const QString& authToken, const QString& moduleName, const QString& token)
+{
+    if (!m_provider) {
+        qWarning() << "ModuleProxy: Cannot inform token on null provider";
+        return false;
+    }
+
+    const QString coreToken = TokenManager::instance().getToken(QStringLiteral("core"));
+    const QString capToken  = TokenManager::instance().getToken(QStringLiteral("capability_module"));
+    const bool callerIsTrusted =
+        (!coreToken.isEmpty() && constantTimeEquals(authToken, coreToken)) ||
+        (!capToken.isEmpty()  && constantTimeEquals(authToken, capToken));
+    if (authToken.isEmpty() || !callerIsTrusted) {
+        qWarning() << "ModuleProxy: rejecting informModuleToken for" << moduleName
+                   << "- caller is not the trusted core/capability_module channel";
+        return false;
+    }
+
+    if (moduleName.isEmpty()) {
+        qWarning() << "ModuleProxy: Cannot inform token with empty module name";
+        return false;
+    }
+    if (token.isEmpty()) {
+        qWarning() << "ModuleProxy: Cannot inform empty token for module:" << moduleName;
+        return false;
+    }
+
+    return m_provider->informModuleToken(moduleName, token);
+}
 
 bool ModuleProxy::isAuthorized(const QString& authToken) const
 {

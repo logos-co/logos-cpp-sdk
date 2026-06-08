@@ -35,6 +35,7 @@ add_executable(sdk_tests
     test_logos_module_context.cpp
     test_module_proxy.cpp
     test_auth_token_enforcement.cpp
+    test_inform_module_token_auth.cpp
     test_logos_api_provider.cpp
     test_mock_transport.cpp
     test_local_transport_integration.cpp

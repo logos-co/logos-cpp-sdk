@@ -169,8 +169,19 @@ TEST_F(ModuleProxyTest, InformModuleTokenDelegatesToProvider)
     m_provider->init(&api);
     ModuleProxy proxy(m_provider);
 
-    bool result = proxy.informModuleToken("auth", "target_mod", "tok123");
+    // informModuleToken is privileged: only the trusted core/capability_module
+    // channel may plant tokens (F-002). The host seeds the module's own auth
+    // secret under "core"/"capability_module" at init; the legitimate caller
+    // presents that secret. Seed it and present it so this exercises the
+    // delegation path rather than the (now-enforced) authz rejection.
+    TokenManager::instance().clearAllTokens();
+    TokenManager::instance().saveToken("capability_module", "trusted-secret");
+
+    bool result = proxy.informModuleToken("trusted-secret", "target_mod", "tok123");
     EXPECT_TRUE(result);
     // Provider's informModuleToken saves via TokenManager
     EXPECT_EQ(TokenManager::instance().getToken("target_mod"), "tok123");
+
+    // Don't leak the seeded secret into sibling tests sharing the singleton.
+    TokenManager::instance().clearAllTokens();
 }
