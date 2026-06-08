@@ -7,7 +7,6 @@
 #include <QMutex>
 #include <QByteArray>
 #include <QCryptographicHash>
-#include <QLatin1String>
 #include <string>
 
 /**
