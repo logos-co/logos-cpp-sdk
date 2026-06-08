@@ -173,7 +173,7 @@ void LogosAPIConsumer::onEvent(LogosObject* originObject, const QString& eventNa
 
 bool LogosAPIConsumer::informModuleToken(const QString& authToken, const QString& moduleName, const QString& token)
 {
-    qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
+    qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << redactToken(token);
 
     LogosObject* plugin = m_transport->requestObject("capability_module", 20000);
     if (!plugin) {
@@ -190,7 +190,7 @@ bool LogosAPIConsumer::informModuleToken(const QString& authToken, const QString
 
 bool LogosAPIConsumer::informModuleToken_module(const QString& authToken, const QString& originModule, const QString& moduleName, const QString& token)
 {
-    qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << token;
+    qDebug() << "LogosAPIConsumer: Informing module token for module:" << moduleName << "with token:" << redactToken(token);
 
     LogosObject* plugin = m_transport->requestObject(originModule, 20000);
     if (!plugin) {

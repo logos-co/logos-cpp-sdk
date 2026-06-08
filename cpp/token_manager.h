@@ -5,7 +5,33 @@
 #include <QString>
 #include <QHash>
 #include <QMutex>
+#include <QByteArray>
+#include <QCryptographicHash>
 #include <string>
+
+/**
+ * @brief Render a capability/auth token safe to write to logs.
+ *
+ * Tokens gate all cross-module RPC and are accepted by value (see
+ * ModuleProxy::isAuthorized), so a raw token recovered from a log line is
+ * directly replayable. This collapses a token to a non-reversible, non-
+ * replayable fingerprint — a fixed prefix plus the first bytes of its SHA-256 —
+ * suitable for correlating log lines without exposing the secret. The
+ * "redacted:" prefix signals to anyone reading the log that this is a
+ * deliberately non-replayable fingerprint, not a truncated real token. Empty
+ * tokens render as "<none>" so missing-token cases stay greppable.
+ *
+ * Always pass tokens through this before logging; never log the raw value.
+ */
+inline QString redactToken(const QString& token)
+{
+    if (token.isEmpty()) {
+        return QStringLiteral("<none>");
+    }
+    const QByteArray digest =
+        QCryptographicHash::hash(token.toUtf8(), QCryptographicHash::Sha256);
+    return QStringLiteral("redacted:") + QString::fromLatin1(digest.toHex().left(8)) + QStringLiteral("…");
+}
 
 /**
  * @brief TokenManager provides a singleton interface for managing authentication tokens
