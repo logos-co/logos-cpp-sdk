@@ -193,7 +193,14 @@ TEST_F(LocalTransportIntegrationTest, InformModuleTokenDelegatesToProvider)
     LogosObject* obj = conn.requestObject("local_mod", 5000);
     ASSERT_NE(obj, nullptr);
 
-    bool result = obj->informModuleToken("auth", "target_mod", "secret_tok", 5000);
+    // informModuleToken is privileged (F-002): only the trusted
+    // core/capability_module channel may plant tokens. Seed the module's auth
+    // secret (as the host does at init) and present it, so this drives the
+    // delegation path through the transport rather than hitting the authz
+    // rejection.
+    TokenManager::instance().saveToken("capability_module", "trusted-secret");
+
+    bool result = obj->informModuleToken("trusted-secret", "target_mod", "secret_tok", 5000);
     EXPECT_TRUE(result);
     EXPECT_EQ(TokenManager::instance().getToken("target_mod"), "secret_tok");
     obj->release();
