@@ -1,6 +1,7 @@
 #include "logos_api.h"
 #include "logos_api_client.h"
 #include "logos_api_provider.h"
+#include "logos_thread_marshal.h"
 #include "token_manager.h"
 #include <QVariant>
 #include <string>
@@ -58,6 +59,14 @@ LogosAPIClient* LogosAPI::getClient(const std::string& target_module) const
 LogosAPIClient* LogosAPI::getClient(const QString& target_module,
                                     const LogosTransportConfig& transport) const
 {
+    // Create the client (and its consumers + transport replicas) on this
+    // LogosAPI's owner thread — the module's main/event-loop thread — even when
+    // called from a worker thread (e.g. an HTTP handler). Qt Remote Objects
+    // replicas only work on the thread that created them, so construction (and
+    // the cache it populates) must happen there. invokeRemoteMethod() then
+    // marshals calls back to the same thread. See logos_thread_marshal.h.
+    return logos::runOnOwnerThread(const_cast<LogosAPI*>(this),
+                                   [&]() -> LogosAPIClient* {
     // Single cache, single construction path. Key composition mirrors
     // the factory's resolution rule (see LogosAPIClientCacheKey in
     // logos_api.h):
@@ -90,6 +99,7 @@ LogosAPIClient* LogosAPI::getClient(const QString& target_module,
         const_cast<LogosAPI*>(this));
     m_clients.insert(key, client);
     return client;
+    });
 }
 
 TokenManager* LogosAPI::getTokenManager() const
