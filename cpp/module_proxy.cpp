@@ -135,6 +135,15 @@ bool ModuleProxy::informModuleToken(const QString& authToken, const QString& mod
         return false;
     }
 
+    if (moduleName.isEmpty()) {
+        qWarning() << "ModuleProxy: Cannot inform token with empty module name";
+        return false;
+    }
+    if (token.isEmpty()) {
+        qWarning() << "ModuleProxy: Cannot inform empty token for module:" << moduleName;
+        return false;
+    }
+
     return m_provider->informModuleToken(moduleName, token);
 }
 
