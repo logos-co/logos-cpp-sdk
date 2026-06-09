@@ -349,3 +349,74 @@ TEST_F(ImplHeaderParserTest, EventDocCommentsFromHeader)
     EXPECT_EQ(r.module.events[2].name, "shutdown");
     EXPECT_EQ(r.module.events[2].description, "Single-line documented event.");
 }
+
+// ---------------------------------------------------------------------------
+// Issue #76: a section specifier and a declaration on the *same* physical
+// line (`logos_events : void foo();`, as clang-format / prettier produce)
+// must be parsed identically to the newline-separated form. The code after
+// the colon must not be discarded.
+// ---------------------------------------------------------------------------
+
+TEST_F(ImplHeaderParserTest, SameLineSectionSpecifiers)
+{
+    auto r = parseImplHeader(
+        fixturesDir() + "/same_line_events_impl.h",
+        "SameLineEventsImpl",
+        fixturesDir() + "/same_line_events_metadata.json",
+        err);
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+
+    auto findEvent = [&](const QString& name) -> const EventDecl* {
+        for (const auto& e : r.module.events)
+            if (e.name == name) return &e;
+        return nullptr;
+    };
+    auto findMethod = [&](const QString& name) -> const MethodDecl* {
+        for (const auto& m : r.module.methods)
+            if (m.name == name) return &m;
+        return nullptr;
+    };
+
+    // The exact prettier form from the issue:
+    //     logos_events : void versionReady(const std::string &version);
+    // Previously the prototype after the colon was discarded entirely.
+    const EventDecl* versionReady = findEvent("versionReady");
+    ASSERT_NE(versionReady, nullptr)
+        << "Same-line `logos_events :` prototype must still be parsed";
+    ASSERT_EQ(versionReady->params.size(), 1);
+    EXPECT_EQ(versionReady->params[0].name, "version");
+    EXPECT_EQ(versionReady->params[0].type.name, "tstr");
+    // The `///` doc comment above the collapsed line must attach: in the
+    // same-line form there is nowhere else for it to go, so documentation
+    // must not be formatting-dependent either.
+    EXPECT_EQ(versionReady->description, "Fired once the latest version is known.");
+
+    // An event declared after the section is already open, also same-line.
+    const EventDecl* downloadProgress = findEvent("downloadProgress");
+    ASSERT_NE(downloadProgress, nullptr);
+    ASSERT_EQ(downloadProgress->params.size(), 2);
+    EXPECT_EQ(downloadProgress->params[0].name, "id");
+    EXPECT_EQ(downloadProgress->params[0].type.name, "tstr");
+    EXPECT_EQ(downloadProgress->params[1].name, "percent");
+    EXPECT_EQ(downloadProgress->params[1].type.name, "int");
+
+    // The newline-separated form keeps working alongside the collapsed form.
+    EXPECT_NE(findEvent("shutdown"), nullptr);
+
+    // Exactly the three events above — no phantom or dropped entries.
+    EXPECT_EQ(r.module.events.size(), 3);
+
+    // The symmetric case: `public : <decl>` on one line must surface the
+    // method too (the access specifier no longer swallows the declaration).
+    const MethodDecl* greet = findMethod("greet");
+    ASSERT_NE(greet, nullptr)
+        << "Same-line `public:` declaration must still be parsed";
+    EXPECT_EQ(greet->returnType.name, "tstr");
+    ASSERT_EQ(greet->params.size(), 1);
+    EXPECT_EQ(greet->params[0].name, "name");
+    EXPECT_EQ(greet->params[0].type.name, "tstr");
+
+    // The same-line events must land in events[], never leak into methods[].
+    EXPECT_EQ(findMethod("versionReady"), nullptr);
+    EXPECT_EQ(findMethod("downloadProgress"), nullptr);
+}

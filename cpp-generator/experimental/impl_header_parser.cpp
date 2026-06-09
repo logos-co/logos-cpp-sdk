@@ -322,27 +322,51 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 }
             }
 
+            // A section specifier may be followed by a declaration on the
+            // *same* physical line — e.g. clang-format / prettier collapse
+            //     logos_events:
+            //         void versionReady(const std::string& version);
+            // into `logos_events : void versionReady(const std::string& version);`.
+            // Strip any leading specifiers, updating the section state, and
+            // let whatever remains fall through to the declaration parser
+            // below — otherwise everything after the colon is discarded and
+            // the same valid C++ is parsed differently based on formatting.
+            //
             // `logos_events:` takes precedence over the standard access
             // specifiers: it's a separate section that the codegen pulls
             // event prototypes from. (At preprocess time, `logos_events`
             // expands to `public`, but the raw source still carries the
             // token we recognise here.)
-            if (eventsRe.match(line).hasMatch()) {
-                state = InLogosEvents;
-                pendingDoc.clear();
-                break;
-            }
-
-            {
+            bool specifierStripped = false;
+            while (true) {
+                QRegularExpressionMatch em = eventsRe.match(line);
+                if (em.hasMatch()) {
+                    state = InLogosEvents;
+                    line = line.mid(em.capturedEnd()).trimmed();
+                    specifierStripped = true;
+                    continue;
+                }
                 QRegularExpressionMatch am = accessRe.match(line);
                 if (am.hasMatch()) {
                     QString spec = am.captured(1);
                     if (spec == "public") state = InPublic;
                     else state = InPrivate;
-                    pendingDoc.clear();
-                    break;
+                    line = line.mid(am.capturedEnd()).trimmed();
+                    specifierStripped = true;
+                    continue;
                 }
+                break;
             }
+            // A *bare* specifier (nothing after the colon) is a section
+            // boundary and resets any pending doc-comment, mirroring Qt's
+            // `signals:`. But when a declaration shares the line, the doc
+            // comment preceding the whole line must still attach to that
+            // declaration — otherwise documentation, like the declaration
+            // itself (#76), would become formatting-dependent. So only clear
+            // here for the bare form; the same-line form keeps pendingDoc and
+            // attaches it in the declaration parser below.
+            if (specifierStripped && line.isEmpty())
+                pendingDoc.clear();
 
             // Only doc comments (/// or /** ... */ / /*! ... */) accumulate as
             // the pending description for the next method. Plain // and /*
