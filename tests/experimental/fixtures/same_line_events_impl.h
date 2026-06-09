@@ -15,7 +15,11 @@ public:
     public: std::string greet(const std::string& name);
 
     // The exact prettier-formatted form from the issue: `logos_events`,
-    // a space, the colon, then the event prototype — all on one line.
+    // a space, the colon, then the event prototype — all on one line. The
+    // `///` doc comment above must still attach to the event: in the
+    // collapsed form there is nowhere else to put it, so dropping it would
+    // make documentation formatting-dependent too.
+    /// Fired once the latest version is known.
     logos_events : void versionReady(const std::string &version);
 
     // A further event after the section is already open (still same-line).

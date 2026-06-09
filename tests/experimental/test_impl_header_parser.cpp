@@ -386,6 +386,10 @@ TEST_F(ImplHeaderParserTest, SameLineSectionSpecifiers)
     ASSERT_EQ(versionReady->params.size(), 1);
     EXPECT_EQ(versionReady->params[0].name, "version");
     EXPECT_EQ(versionReady->params[0].type.name, "tstr");
+    // The `///` doc comment above the collapsed line must attach: in the
+    // same-line form there is nowhere else for it to go, so documentation
+    // must not be formatting-dependent either.
+    EXPECT_EQ(versionReady->description, "Fired once the latest version is known.");
 
     // An event declared after the section is already open, also same-line.
     const EventDecl* downloadProgress = findEvent("downloadProgress");

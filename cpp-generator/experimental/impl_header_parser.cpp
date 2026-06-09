@@ -337,12 +337,13 @@ ImplParseResult parseImplHeader(const QString& headerPath,
             // event prototypes from. (At preprocess time, `logos_events`
             // expands to `public`, but the raw source still carries the
             // token we recognise here.)
+            bool specifierStripped = false;
             while (true) {
                 QRegularExpressionMatch em = eventsRe.match(line);
                 if (em.hasMatch()) {
                     state = InLogosEvents;
-                    pendingDoc.clear();
                     line = line.mid(em.capturedEnd()).trimmed();
+                    specifierStripped = true;
                     continue;
                 }
                 QRegularExpressionMatch am = accessRe.match(line);
@@ -350,12 +351,22 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                     QString spec = am.captured(1);
                     if (spec == "public") state = InPublic;
                     else state = InPrivate;
-                    pendingDoc.clear();
                     line = line.mid(am.capturedEnd()).trimmed();
+                    specifierStripped = true;
                     continue;
                 }
                 break;
             }
+            // A *bare* specifier (nothing after the colon) is a section
+            // boundary and resets any pending doc-comment, mirroring Qt's
+            // `signals:`. But when a declaration shares the line, the doc
+            // comment preceding the whole line must still attach to that
+            // declaration — otherwise documentation, like the declaration
+            // itself (#76), would become formatting-dependent. So only clear
+            // here for the bare form; the same-line form keeps pendingDoc and
+            // attaches it in the declaration parser below.
+            if (specifierStripped && line.isEmpty())
+                pendingDoc.clear();
 
             // Only doc comments (/// or /** ... */ / /*! ... */) accumulate as
             // the pending description for the next method. Plain // and /*
