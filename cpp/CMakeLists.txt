@@ -36,7 +36,8 @@ if(NOT DEFINED LOGOS_PROTOCOL_ROOT)
         set(LOGOS_PROTOCOL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../logos-protocol")
     endif()
 endif()
-if(NOT EXISTS "${LOGOS_PROTOCOL_ROOT}/cpp/logos_protocol.h")
+if(NOT EXISTS "${LOGOS_PROTOCOL_ROOT}/cpp/logos_protocol.h" AND
+   NOT EXISTS "${LOGOS_PROTOCOL_ROOT}/include/cpp/logos_protocol.h")
     message(FATAL_ERROR "logos-protocol sources not found. "
                         "Set LOGOS_PROTOCOL_ROOT (CMake or environment variable) "
                         "to a logos-protocol checkout or its installed source export.")
