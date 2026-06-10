@@ -1,6 +1,7 @@
 #include "legacy/legacy_main.h"
 #include "experimental/lidl_gen_client.h"
 #include "experimental/lidl_gen_provider.h"
+#include "experimental/lidl_gen_cdylib.h"
 #include "experimental/lidl_serializer.h"
 #include "experimental/impl_header_parser.h"
 
@@ -161,6 +162,39 @@ int main(int argc, char* argv[])
                 : outputDir;
             QDir().mkpath(genDirPath);
 
+            if (backend == "cdylib") {
+                // Cdylib authoring: the common module-impl C ABI exports +
+                // the uniform Qt-plugin glue (language-agnostic, forwards to
+                // the C symbols). See logos_module_impl.h in logos-protocol.
+                QString cdErr;
+                if (!lidlCdylibSupported(mod, &cdErr)) {
+                    err << "Error: module not cdylib-eligible: " << cdErr << "\n";
+                    return 10;
+                }
+                struct Out { QString file; QString content; };
+                QList<Out> outs;
+                outs.append({mod.name + "_module_impl.cpp",
+                             lidlMakeModuleImplExports(mod, implClass, implHeader)});
+                if (!mod.events.isEmpty())
+                    outs.append({mod.name + "_events_cdylib.cpp",
+                                 lidlMakeEventsSourceCdylib(mod, implClass, implHeader)});
+                outs.append({mod.name + "_cdylib_glue.h", lidlMakeCdylibGlueHeader(mod)});
+                outs.append({mod.name + "_cdylib_glue.cpp", lidlMakeCdylibGlueSource(mod)});
+                outs.append({mod.name + ".lidl", lidlSerialize(mod)});
+                for (const Out& o : outs) {
+                    const QString abs = QDir(genDirPath).filePath(o.file);
+                    QFile f(abs);
+                    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                        err << "Failed to write: " << abs << "\n";
+                        return 11;
+                    }
+                    f.write(o.content.toUtf8());
+                    out << "Generated: " << abs << "\n";
+                }
+                out.flush();
+                return 0;
+            }
+
             if (backend == "qt") {
                 // Generate provider header (Qt glue)
                 QString glueHeaderAbs = QDir(genDirPath).filePath(mod.name + "_qt_glue.h");
@@ -220,7 +254,7 @@ int main(int argc, char* argv[])
                 return 0;
             }
 
-            err << "Error: --from-header currently only supports --backend qt\n";
+            err << "Error: --from-header supports --backend qt or cdylib\n";
             return 1;
         }
 
