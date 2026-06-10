@@ -2,20 +2,13 @@
 
 # logos-cpp-sdkConfig.cmake — consumed by `find_package(logos-cpp-sdk)`.
 #
-# Re-resolves every transitive dependency of liblogos_sdk before
-# importing the target, so downstream consumers get OpenSSL / Boost /
-# nlohmann_json / Qt6 wired into their own link line automatically.
-# Without this, a consumer linking the static archive directly would
-# see "undefined reference to SSL_CTX_*" / "DSO missing from command
-# line" because a STATIC archive doesn't carry transitive link info.
+# The base SDK is Qt-free and header-only (logos_module_context.h /
+# logos_result.h / logos_json.h). Its only dependency is nlohmann_json.
+# Qt-typed wrappers and the provider glue live in logos-qt-sdk; the
+# transports and lp_* C ABI live in logos-protocol.
 
 include(CMakeFindDependencyMacro)
 
-find_dependency(Qt6 REQUIRED COMPONENTS Core RemoteObjects)
-# `system` for boost::system::error_code (Boost.Asio) — see the
-# matching note in cpp/CMakeLists.txt next to target_link_libraries.
-find_dependency(Boost REQUIRED COMPONENTS system)
-find_dependency(OpenSSL REQUIRED)
 find_dependency(nlohmann_json REQUIRED)
 
 include("${CMAKE_CURRENT_LIST_DIR}/logos-cpp-sdkTargets.cmake")

@@ -14,7 +14,7 @@
 #include <QSet>
 #include <QRegularExpression>
 #include <QtGlobal>
-#include "logos_provider_object.h"
+#include "logos_provider_interface.h"
 #include "generator_lib.h"
 #include "../experimental/lidl_parser.h"
 #include "../experimental/impl_header_parser.h"
