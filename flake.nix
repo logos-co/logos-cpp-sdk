@@ -3,8 +3,13 @@
 
   inputs.logos-nix.url = "github:logos-co/logos-nix";
   inputs.nixpkgs.follows = "logos-nix/nixpkgs";
+  # The protocol layer (transports, token exchange, lp_* C ABI). Follows our
+  # logos-nix so both repos resolve the identical nixpkgs/Qt pin — the QRO
+  # wire is Qt-version-sensitive.
+  inputs.logos-protocol.url = "github:logos-co/logos-protocol";
+  inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
 
-  outputs = { self, nixpkgs, logos-nix }:
+  outputs = { self, nixpkgs, logos-nix, logos-protocol }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
@@ -19,10 +24,10 @@
           src = ./.;
           
           # Individual package components
-          bin = import ./nix/bin.nix { inherit pkgs common src; };
-          lib = import ./nix/lib.nix { inherit pkgs common src; };
-          include = import ./nix/include.nix { inherit pkgs common src; };
-          tests = import ./nix/tests.nix { inherit pkgs common src; };
+          bin = import ./nix/bin.nix { inherit pkgs common src logos-protocol; };
+          lib = import ./nix/lib.nix { inherit pkgs common src logos-protocol; };
+          include = import ./nix/include.nix { inherit pkgs common src logos-protocol; };
+          tests = import ./nix/tests.nix { inherit pkgs common src logos-protocol; };
           
           # Combined SDK package. We re-declare propagatedBuildInputs on
           # the join so downstream Nix derivations that depend on the
@@ -58,7 +63,7 @@
         let
           common = import ./nix/default.nix { inherit pkgs; };
           src = ./.;
-          tests = import ./nix/tests.nix { inherit pkgs common src; };
+          tests = import ./nix/tests.nix { inherit pkgs common src logos-protocol; };
         in
         {
           inherit tests;

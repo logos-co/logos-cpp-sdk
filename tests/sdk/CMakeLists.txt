@@ -20,39 +20,24 @@ add_custom_command(
 add_executable(sdk_tests
     test_main.cpp
     test_logos_result.cpp
-    test_token_manager.cpp
-    test_mock_store.cpp
-    test_logos_mode.cpp
     test_logos_mock_setup.cpp
     test_logos_api_client_mock.cpp
     test_logos_api.cpp
     test_logos_api_client_overloads.cpp
-    test_transport_factory.cpp
-    test_registry_factory.cpp
-    test_plugin_registry.cpp
-    test_logos_instance.cpp
     test_logos_provider_base.cpp
     test_logos_module_context.cpp
     test_module_proxy.cpp
     test_auth_token_enforcement.cpp
     test_inform_module_token_auth.cpp
     test_logos_api_provider.cpp
-    test_mock_transport.cpp
     test_local_transport_integration.cpp
     test_worker_thread_ipc.cpp
     test_event_system.cpp
     test_async_calls.cpp
     test_provider_dispatch.cpp
     test_std_string_overloads.cpp
-    test_rpc_framing.cpp
-    test_json_codec.cpp
-    test_cbor_codec.cpp
-    # test_plain_transport_tcp.cpp — entirely #if 0 in this iteration
-    # (in-process Qt-event-loop deadlock between consumer + provider
-    # under nix's test sandbox). The plain transport is exercised
-    # cross-process by the logos-logoscore-py integration matrix
-    # instead. Re-add once the in-process scaffold runs host + consumer
-    # in separate QCoreApplication instances / processes.
+    # Transport/protocol component tests moved to logos-protocol
+    # (tests/protocol) together with the code they exercise.
     fixtures/sample_provider.cpp
     ${GENERATED_DISPATCH}
 )

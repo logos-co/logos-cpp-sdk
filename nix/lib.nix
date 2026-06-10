@@ -1,5 +1,5 @@
 # Builds the logos-cpp-sdk library
-{ pkgs, common, src }:
+{ pkgs, common, src, logos-protocol }:
 
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-lib";
@@ -31,7 +31,8 @@ pkgs.stdenv.mkDerivation {
     # Build SDK library
     mkdir -p build-sdk
     cd build-sdk
-    cmake ../cpp -GNinja -DCMAKE_INSTALL_PREFIX=$out $cmakeFlags
+    cmake ../cpp -GNinja -DCMAKE_INSTALL_PREFIX=$out \
+      -DLOGOS_PROTOCOL_ROOT=${logos-protocol} $cmakeFlags
     ninja
     cd ..
 
