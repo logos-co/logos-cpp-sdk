@@ -414,7 +414,8 @@ QString lidlMakeCdylibGlueHeader(const ModuleDecl& module)
     s << "// linked in from the module's cdylib. logos_host loads it unchanged.\n";
     s << "#pragma once\n\n";
     s << "#include \"interface.h\"\n";
-    s << "#include \"logos_provider_interface.h\"\n";
+    s << "#include \"logos_api.h\"\n";
+    s << "#include \"logos_provider_object.h\"\n";
     s << "#include \"logos_json_convert.h\"\n";
     s << "#include \"logos_module_impl.h\"\n";
     s << "#include \"logos_types.h\"\n";
@@ -427,15 +428,20 @@ QString lidlMakeCdylibGlueHeader(const ModuleDecl& module)
     s << "#include <QVariantList>\n";
     s << "#include <nlohmann/json.hpp>\n\n";
 
-    s << "class " << className << "CdylibProvider : public LogosProviderObject {\n";
+    // LogosProviderBase (not the bare interface): its informModuleToken saves
+    // into the HOST-stack TokenManager — what ModuleProxy validates INBOUND
+    // calls against — exactly as C++ provider modules do. The glue then ALSO
+    // forwards every token across the C ABI for the cdylib's own stack.
+    s << "class " << className << "CdylibProvider : public LogosProviderBase {\n";
     s << "public:\n";
     s << "    QVariant callMethod(const QString& methodName, const QVariantList& args) override;\n";
     s << "    QJsonArray getMethods() override;\n";
     s << "    bool informModuleToken(const QString& moduleName, const QString& token) override;\n";
     s << "    void setEventListener(EventCallback callback) override;\n";
-    s << "    void init(void* apiInstance) override;\n";
     s << "    QString providerName() const override { return QStringLiteral(\"" << module.name << "\"); }\n";
     s << "    QString providerVersion() const override { return QStringLiteral(\"" << (module.version.isEmpty() ? QStringLiteral("1.0.0") : module.version) << "\"); }\n";
+    s << "protected:\n";
+    s << "    void onInit(LogosAPI* api) override;\n";
     s << "private:\n";
     s << "    EventCallback m_eventCallback;\n";
     s << "    static void emitTrampoline(const char* eventName, const char* dataJson, void* userData);\n";
@@ -514,8 +520,14 @@ QString lidlMakeCdylibGlueSource(const ModuleDecl& module)
     s << "}\n\n";
 
     s << "bool " << provider << "::informModuleToken(const QString& moduleName, const QString& token)\n{\n";
-    s << "    return logos_module_accept_token(moduleName.toUtf8().constData(),\n";
-    s << "                                     token.toUtf8().constData()) == 0;\n";
+    s << "    // Host-stack save first: ModuleProxy validates INBOUND calls against\n";
+    s << "    // the host's TokenManager (LogosProviderBase saves there).\n";
+    s << "    const bool hostOk = LogosProviderBase::informModuleToken(moduleName, token);\n";
+    s << "    // Then forward across the C ABI: the cdylib's own protocol stack\n";
+    s << "    // (a separate static copy) authenticates the module's OUTBOUND calls.\n";
+    s << "    const bool implOk = logos_module_accept_token(moduleName.toUtf8().constData(),\n";
+    s << "                                                  token.toUtf8().constData()) == 0;\n";
+    s << "    return hostOk && implOk;\n";
     s << "}\n\n";
 
     s << "void " << provider << "::setEventListener(EventCallback callback)\n{\n";
@@ -534,21 +546,22 @@ QString lidlMakeCdylibGlueSource(const ModuleDecl& module)
     s << "                          logos::nlohmannArgsToQVariantList(payload));\n";
     s << "}\n\n";
 
-    s << "void " << provider << "::init(void* apiInstance)\n{\n";
+    s << "void " << provider << "::onInit(LogosAPI* api)\n{\n";
     s << "    // Context comes from the host's property stamping on the LogosAPI\n";
     s << "    // object — forwarded across the C ABI; the cdylib never sees Qt.\n";
-    s << "    QObject* api = static_cast<QObject*>(apiInstance);\n";
-    s << "    if (!api) return;\n";
+    s << "    QObject* obj = api;\n";
+    s << "    if (!obj) return;\n";
     s << "    logos_module_set_context(\n";
-    s << "        api->property(\"modulePath\").toString().toUtf8().constData(),\n";
-    s << "        api->property(\"instanceId\").toString().toUtf8().constData(),\n";
-    s << "        api->property(\"instancePersistencePath\").toString().toUtf8().constData());\n";
+    s << "        obj->property(\"modulePath\").toString().toUtf8().constData(),\n";
+    s << "        obj->property(\"instanceId\").toString().toUtf8().constData(),\n";
+    s << "        obj->property(\"instancePersistencePath\").toString().toUtf8().constData());\n";
     s << "    // The cdylib runs its own protocol stack (a separate static copy with\n";
     s << "    // its own TokenManager). Seed it with the host-issued auth token the\n";
-    s << "    // initializer surfaces as a property, under the same keys it uses\n";
+    s << "    // initializer surfaces as a property (set before registerObject, so\n";
+    s << "    // it is visible here), under the same keys the initializer uses\n";
     s << "    // (\"core\" / \"capability_module\") — this is what authenticates the\n";
     s << "    // module's OUTBOUND calls (incl. the capability requestModule flow).\n";
-    s << "    const QString authToken = api->property(\"authToken\").toString();\n";
+    s << "    const QString authToken = obj->property(\"authToken\").toString();\n";
     s << "    if (!authToken.isEmpty()) {\n";
     s << "        logos_module_accept_token(\"core\", authToken.toUtf8().constData());\n";
     s << "        logos_module_accept_token(\"capability_module\", authToken.toUtf8().constData());\n";
