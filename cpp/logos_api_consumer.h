@@ -107,6 +107,8 @@ public slots:
     bool informModuleToken(const QString& authToken, const QString& moduleName, const QString& token);
     bool informModuleToken_module(const QString& authToken, const QString& originModule, const QString& moduleName, const QString& token);
 
+    QString requestModule(const QString& authToken, const QString& originModule, const QString& targetModule);
+
 private:
     std::unique_ptr<LogosTransportConnection> m_transport;
     QString m_registryUrl;

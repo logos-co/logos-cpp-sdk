@@ -204,3 +204,19 @@ bool LogosAPIConsumer::informModuleToken_module(const QString& authToken, const 
     plugin->release();
     return result;
 }
+
+QString LogosAPIConsumer::requestModule(const QString& authToken, const QString& originModule, const QString& targetModule)
+{
+    qDebug() << "LogosAPIConsumer: requestModule for origin:" << originModule << "target:" << targetModule;
+
+    LogosObject* plugin = m_transport->requestObject("capability_module", 20000);
+    if (!plugin) {
+        qWarning() << "LogosAPIConsumer: Failed to acquire plugin/replica for object: capability_module";
+        return {};
+    }
+
+    QVariant result = plugin->callMethod(authToken, QStringLiteral("requestModule"),
+                                         QVariantList() << originModule << targetModule, 20000);
+    plugin->release();
+    return result.toString();
+}
