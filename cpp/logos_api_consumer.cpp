@@ -205,9 +205,11 @@ bool LogosAPIConsumer::informModuleToken_module(const QString& authToken, const 
     return result;
 }
 
-QString LogosAPIConsumer::requestModule(const QString& authToken, const QString& originModule, const QString& targetModule)
+std::string LogosAPIConsumer::requestModule(const std::string& authToken, const std::string& originModule, const std::string& targetModule)
 {
-    qDebug() << "LogosAPIConsumer: requestModule for origin:" << originModule << "target:" << targetModule;
+    const QString qOrigin = QString::fromStdString(originModule);
+    const QString qTarget = QString::fromStdString(targetModule);
+    qDebug() << "LogosAPIConsumer: requestModule for origin:" << qOrigin << "target:" << qTarget;
 
     LogosObject* plugin = m_transport->requestObject("capability_module", 20000);
     if (!plugin) {
@@ -215,8 +217,8 @@ QString LogosAPIConsumer::requestModule(const QString& authToken, const QString&
         return {};
     }
 
-    QVariant result = plugin->callMethod(authToken, QStringLiteral("requestModule"),
-                                         QVariantList() << originModule << targetModule, 20000);
+    QVariant result = plugin->callMethod(QString::fromStdString(authToken), QStringLiteral("requestModule"),
+                                         QVariantList() << qOrigin << qTarget, 20000);
     plugin->release();
-    return result.toString();
+    return result.toString().toStdString();
 }
