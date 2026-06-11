@@ -543,6 +543,16 @@ QString lidlMakeCdylibGlueSource(const ModuleDecl& module)
     s << "        api->property(\"modulePath\").toString().toUtf8().constData(),\n";
     s << "        api->property(\"instanceId\").toString().toUtf8().constData(),\n";
     s << "        api->property(\"instancePersistencePath\").toString().toUtf8().constData());\n";
+    s << "    // The cdylib runs its own protocol stack (a separate static copy with\n";
+    s << "    // its own TokenManager). Seed it with the host-issued auth token the\n";
+    s << "    // initializer surfaces as a property, under the same keys it uses\n";
+    s << "    // (\"core\" / \"capability_module\") — this is what authenticates the\n";
+    s << "    // module's OUTBOUND calls (incl. the capability requestModule flow).\n";
+    s << "    const QString authToken = api->property(\"authToken\").toString();\n";
+    s << "    if (!authToken.isEmpty()) {\n";
+    s << "        logos_module_accept_token(\"core\", authToken.toUtf8().constData());\n";
+    s << "        logos_module_accept_token(\"capability_module\", authToken.toUtf8().constData());\n";
+    s << "    }\n";
     s << "}\n";
     return c;
 }
