@@ -410,6 +410,7 @@ sections:
       - title: "Build the sensor's .lgx against this SDK"
         run: |
           nix build 'path:./sensor_module#lgx' \
+            --override-input logos-module-builder 'github:logos-co/logos-module-builder{release}' \
             --override-input logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             -o sensor-lgx
         code_block: |
@@ -428,7 +429,9 @@ sections:
         run: |
           nix build 'path:./http_module#lgx' \
             --override-input sensor_module 'path:./sensor_module' \
+            --override-input logos-module-builder 'github:logos-co/logos-module-builder{release}' \
             --override-input logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
+            --override-input sensor_module/logos-module-builder 'github:logos-co/logos-module-builder{release}' \
             --override-input sensor_module/logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             -o http-lgx
         code_block: |
@@ -449,10 +452,11 @@ sections:
     steps:
       - title: "Build logoscore against this SDK"
         run: |
-          nix build 'github:logos-co/logos-logoscore-cli' \
+          nix build 'github:logos-co/logos-logoscore-cli{release}' \
             --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             --override-input logos-module-client/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
+            --override-input logos-capability-module/logos-module-builder 'github:logos-co/logos-module-builder{release}' \
             --override-input logos-capability-module/logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             --out-link ./logos
         code_block: |
