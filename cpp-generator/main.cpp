@@ -2,6 +2,7 @@
 #include "experimental/lidl_gen_client.h"
 #include "experimental/lidl_gen_provider.h"
 #include "experimental/lidl_gen_cdylib.h"
+#include "experimental/lidl_parser.h"
 #include "experimental/lidl_serializer.h"
 #include "experimental/impl_header_parser.h"
 
@@ -266,6 +267,8 @@ int main(int argc, char* argv[])
                 << "       " << QFileInfo(app.applicationFilePath()).fileName()
                 << " --lidl /path/to/module.lidl --backend qt --impl-class Class --impl-header header.h [--output-dir /path]\n"
                 << "       " << QFileInfo(app.applicationFilePath()).fileName()
+                << " --lidl /path/to/module.lidl --backend cdylib [--output-dir /path]   (glue-only: C exports come from the module's own language backend)\n"
+                << "       " << QFileInfo(app.applicationFilePath()).fileName()
                 << " --from-header src/impl.h --backend qt --impl-class Class --metadata metadata.json [--output-dir /path]\n";
             return 1;
         }
@@ -282,6 +285,53 @@ int main(int argc, char* argv[])
 
             const int implClassIdx = args.indexOf("--impl-class");
             const int implHeaderIdx = args.indexOf("--impl-header");
+
+            // Cdylib glue-only mode: with no --impl-class, emit just the
+            // uniform Qt-plugin glue over the common module-impl C ABI. The
+            // C exports come from the module's own language backend (e.g.
+            // the Rust SDK's lidl-gen --provider) — the glue is identical
+            // either way, it only knows the C symbols.
+            if (backend == "cdylib" && implClassIdx == -1) {
+                QFile f(lidlPath);
+                if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                    err << "Error: cannot read " << lidlPath << "\n";
+                    return 1;
+                }
+                LidlParseResult pr = lidlParse(QString::fromUtf8(f.readAll()));
+                if (pr.hasError()) {
+                    err << "Error parsing " << lidlPath << ": " << pr.error
+                        << " (line " << pr.errorLine << ")\n";
+                    return 4;
+                }
+                const ModuleDecl& mod = pr.module;
+                QString cdErr;
+                if (!lidlCdylibSupported(mod, &cdErr)) {
+                    err << "Error: module not cdylib-eligible: " << cdErr << "\n";
+                    return 10;
+                }
+                QString genDirPath = outputDir.isEmpty()
+                    ? QDir::current().filePath("generated")
+                    : outputDir;
+                QDir().mkpath(genDirPath);
+                struct Out { QString file; QString content; };
+                const QList<Out> outs = {
+                    {mod.name + "_cdylib_glue.h", lidlMakeCdylibGlueHeader(mod)},
+                    {mod.name + "_cdylib_glue.cpp", lidlMakeCdylibGlueSource(mod)},
+                };
+                for (const Out& o : outs) {
+                    const QString abs = QDir(genDirPath).filePath(o.file);
+                    QFile of(abs);
+                    if (!of.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                        err << "Failed to write: " << abs << "\n";
+                        return 11;
+                    }
+                    of.write(o.content.toUtf8());
+                    out << "Generated: " << abs << "\n";
+                }
+                out.flush();
+                return 0;
+            }
+
             if (implClassIdx == -1 || implClassIdx + 1 >= args.size()) {
                 err << "Error: --backend " << backend << " requires --impl-class <ClassName>\n";
                 return 1;
@@ -297,7 +347,7 @@ int main(int argc, char* argv[])
             if (backend == "qt")
                 return lidlGenerateProviderGlue(lidlPath, implClass, implHeader, outputDir, out, err);
 
-            err << "Error: unsupported backend '" << backend << "' (supported: qt)\n";
+            err << "Error: unsupported backend '" << backend << "' (supported: qt, cdylib)\n";
             return 1;
         }
 
