@@ -413,6 +413,7 @@ QString lidlMakeCdylibGlueHeader(const ModuleDecl& module)
     s << "// language (C++ or Rust): it only knows the C symbols, which are\n";
     s << "// linked in from the module's cdylib. logos_host loads it unchanged.\n";
     s << "#pragma once\n\n";
+    s << "#include \"interface.h\"\n";
     s << "#include \"logos_provider_interface.h\"\n";
     s << "#include \"logos_json_convert.h\"\n";
     s << "#include \"logos_module_impl.h\"\n";
@@ -440,11 +441,15 @@ QString lidlMakeCdylibGlueHeader(const ModuleDecl& module)
     s << "    static void emitTrampoline(const char* eventName, const char* dataJson, void* userData);\n";
     s << "};\n\n";
 
-    s << "class " << className << "CdylibPlugin : public QObject, public LogosProviderPlugin {\n";
+    // The root plugin must also implement PluginInterface — logos_host's
+    // module_initializer hard-requires it before any provider detection.
+    s << "class " << className << "CdylibPlugin : public QObject, public PluginInterface, public LogosProviderPlugin {\n";
     s << "    Q_OBJECT\n";
     s << "    Q_PLUGIN_METADATA(IID LogosProviderPlugin_iid FILE \"metadata.json\")\n";
-    s << "    Q_INTERFACES(LogosProviderPlugin)\n";
+    s << "    Q_INTERFACES(PluginInterface LogosProviderPlugin)\n";
     s << "public:\n";
+    s << "    QString name() const override { return QStringLiteral(\"" << module.name << "\"); }\n";
+    s << "    QString version() const override { return QStringLiteral(\"" << (module.version.isEmpty() ? QStringLiteral("1.0.0") : module.version) << "\"); }\n";
     s << "    LogosProviderObject* createProviderObject() override {\n";
     s << "        return new " << className << "CdylibProvider();\n";
     s << "    }\n";
