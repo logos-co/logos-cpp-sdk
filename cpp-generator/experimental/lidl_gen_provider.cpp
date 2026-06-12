@@ -1,4 +1,5 @@
 #include "lidl_gen_provider.h"
+#include "lidl_emit_common.h"
 #include "lidl_gen_client.h"  // lidlToPascalCase, lidlTypeToQt
 #include "lidl_parser.h"
 #include "lidl_serializer.h"
@@ -16,54 +17,7 @@
 // Type mapping: LIDL → C++ std types
 // ---------------------------------------------------------------------------
 
-bool lidlIsStdConvertible(const TypeExpr& te)
-{
-    if (te.kind == TypeExpr::Primitive) {
-        return te.name == "tstr" || te.name == "bstr"
-            || te.name == "int" || te.name == "uint"
-            || te.name == "float64" || te.name == "bool";
-    }
-    if (te.kind == TypeExpr::Array && te.elements.size() == 1) {
-        const TypeExpr& elem = te.elements[0];
-        if (elem.kind == TypeExpr::Primitive) {
-            return elem.name == "tstr" || elem.name == "bstr"
-                || elem.name == "int" || elem.name == "uint"
-                || elem.name == "float64" || elem.name == "bool";
-        }
-    }
-    return false;
-}
 
-QString lidlTypeToStd(const TypeExpr& te)
-{
-    if (te.kind == TypeExpr::Primitive) {
-        if (te.name == "tstr")    return "std::string";
-        if (te.name == "bstr")    return "std::vector<uint8_t>";
-        if (te.name == "int")     return "int64_t";
-        if (te.name == "uint")    return "uint64_t";
-        if (te.name == "float64") return "double";
-        if (te.name == "bool")    return "bool";
-        if (te.name == "result")  return "LogosResult";
-        if (te.name == "any")     return "QVariant";
-        return "QVariant";
-    }
-    if (te.kind == TypeExpr::Array && te.elements.size() == 1) {
-        const TypeExpr& elem = te.elements[0];
-        if (elem.kind == TypeExpr::Primitive) {
-            if (elem.name == "tstr")    return "std::vector<std::string>";
-            if (elem.name == "bstr")    return "std::vector<std::vector<uint8_t>>";
-            if (elem.name == "int")     return "std::vector<int64_t>";
-            if (elem.name == "uint")    return "std::vector<uint64_t>";
-            if (elem.name == "float64") return "std::vector<double>";
-            if (elem.name == "bool")    return "std::vector<bool>";
-        }
-        return "QVariantList";
-    }
-    if (te.kind == TypeExpr::Map)      return "QVariantMap";
-    if (te.kind == TypeExpr::Optional) return "QVariant";
-    if (te.kind == TypeExpr::Named)    return "QVariant";
-    return "QVariant";
-}
 
 // ---------------------------------------------------------------------------
 // Conversion helpers: Qt type ↔ std type
