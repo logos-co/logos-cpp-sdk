@@ -583,26 +583,23 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
         }
         s << ") {\n";
 
-        // Body: perform call
+        // Body: perform call through the err-out overload. A failed call
+        // (e.g. the bound module is missing) throws logos::LogosCallError
+        // instead of silently degrading to the return type's default value —
+        // a caller cannot otherwise tell failure from a legitimate 0 / "".
+        // Generated provider dispatch catches anything the author lets
+        // escape and converts it into an ordinary method failure.
+        s << "    logos::CallError _err;\n";
         if (ret != "void") s << "    QVariant _result = ";
         else               s << "    ";
 
-        if (params.size() == 0) {
-            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << name << "\");\n";
-        } else if (params.size() <= 5) {
-            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << name << "\"";
-            for (int i = 0; i < params.size(); ++i) {
-                s << ", " << wireArg(params.at(i).toObject());
-            }
-            s << ");\n";
-        } else {
-            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << name << "\", QVariantList{";
-            for (int i = 0; i < params.size(); ++i) {
-                s << wireArg(params.at(i).toObject());
-                if (i + 1 < params.size()) s << ", ";
-            }
-            s << "});\n";
+        s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << name << "\", QVariantList{";
+        for (int i = 0; i < params.size(); ++i) {
+            s << wireArg(params.at(i).toObject());
+            if (i + 1 < params.size()) s << ", ";
         }
+        s << "}, Timeout(), &_err);\n";
+        s << "    if (!_err.ok()) throw logos::LogosCallError(_err);\n";
 
         // Return conversion
         if (ret == "void") {

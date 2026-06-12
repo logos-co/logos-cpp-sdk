@@ -263,22 +263,20 @@ QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
         }
         s << ") {\n";
 
+        // Call through the err-out overload: a failed call throws
+        // logos::LogosCallError instead of silently degrading to the return
+        // type's default value (see logos_call_error.h).
+        s << "    logos::CallError _err;\n";
         if (ret != "void") s << "    QVariant _result = ";
         else                s << "    ";
 
-        if (nParams <= 5) {
-            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\"";
-            for (int i = 0; i < nParams; ++i)
-                s << ", " << md.params[i].name;
-            s << ");\n";
-        } else {
-            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\", QVariantList{";
-            for (int i = 0; i < nParams; ++i) {
-                s << md.params[i].name;
-                if (i + 1 < nParams) s << ", ";
-            }
-            s << "});\n";
+        s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\", QVariantList{";
+        for (int i = 0; i < nParams; ++i) {
+            s << md.params[i].name;
+            if (i + 1 < nParams) s << ", ";
         }
+        s << "}, Timeout(), &_err);\n";
+        s << "    if (!_err.ok()) throw logos::LogosCallError(_err);\n";
 
         if (ret != "void")
             s << "    " << returnConversion(ret) << "\n";
