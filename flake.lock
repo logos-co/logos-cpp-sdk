@@ -30,11 +30,19 @@
         ]
       },
       "locked": {
+<<<<<<< HEAD
         "lastModified": 1781221330,
         "narHash": "sha256-WjU0FM77hx1BkJBKvGbK/Qro450ngFUnDlYXpeeQDHo=",
         "owner": "logos-co",
         "repo": "logos-protocol",
         "rev": "1ca34a0e45209d14649c817a090074520ffb86e5",
+=======
+        "lastModified": 1781266151,
+        "narHash": "sha256-RECe/lpZD7DsZEdwme13XXJEF7lxEqF2+Rjd4CUhW64=",
+        "owner": "logos-co",
+        "repo": "logos-protocol",
+        "rev": "176fbc80304b78c385f64eb78af9ec5470c29955",
+>>>>>>> feat/qt-free-sdk
         "type": "github"
       },
       "original": {

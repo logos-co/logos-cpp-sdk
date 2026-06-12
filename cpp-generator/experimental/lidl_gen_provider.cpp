@@ -444,11 +444,18 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
     s << "#include <QJsonObject>\n";
     s << "#include <QVariant>\n";
     s << "#include <QString>\n";
-    s << "#include \"logos_types.h\"\n\n";
+    s << "#include \"logos_types.h\"\n";
+    s << "#include <exception>\n\n";
 
     // --- callMethod ---
+    // The dispatch body is wrapped in a catch-all: anything the author's code
+    // (or a generated typed wrapper — see logos::LogosCallError) lets escape
+    // becomes an ordinary method failure (invalid QVariant) instead of an
+    // exception unwinding through Qt event dispatch and killing the module
+    // process.
     s << "QVariant " << providerObjectClass
       << "::callMethod(const QString& methodName, const QVariantList& args)\n{\n";
+    s << "    try {\n";
 
     for (const MethodDecl& md : module.methods) {
         QString qtRet = lidlTypeToQt(md.returnType);
@@ -473,6 +480,11 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
         s << "    }\n";
     }
 
+    s << "    } catch (const std::exception& e) {\n";
+    s << "        qWarning() << \"" << providerObjectClass
+      << "::callMethod:\" << methodName << \"failed:\" << e.what();\n";
+    s << "        return QVariant();\n";
+    s << "    }\n";
     s << "    qWarning() << \"" << providerObjectClass
       << "::callMethod: unknown method:\" << methodName;\n";
     s << "    return QVariant();\n";
