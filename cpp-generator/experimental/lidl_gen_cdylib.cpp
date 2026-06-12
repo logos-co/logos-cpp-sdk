@@ -188,6 +188,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "#include <nlohmann/json.hpp>\n";
     s << "#include <cstdlib>\n";
     s << "#include <cstring>\n";
+    s << "#include <atomic>\n";
     s << "#include <map>\n";
     s << "#include <mutex>\n";
     s << "#include <string>\n";
@@ -200,7 +201,11 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "void* g_emitUd = nullptr;\n";
     s << "std::mutex g_emitMutex;\n";
     s << "std::map<std::string, std::string> g_tokens;\n";
-    s << "std::mutex g_tokensMutex;\n\n";
+    s << "std::mutex g_tokensMutex;\n";
+    s << "std::mutex g_ctxMutex;\n";
+    s << "bool g_ctxStored = false;\n";
+    s << "std::string g_ctxPath, g_ctxId, g_ctxPersist;\n";
+    s << "std::atomic<bool> g_hookFired{false};\n\n";
 
     s << "char* lidlStrdup(const std::string& str)\n{\n";
     s << "    char* out = static_cast<char*>(std::malloc(str.size() + 1));\n";
@@ -284,12 +289,34 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "            });\n";
     s << "    });\n}\n\n";
 
+    // The context ready-latch: stamp the context + fire onContextReady ONCE,
+    // as soon as the module is fully wired (context stored AND the emit
+    // callback delivered) — at module load, before publication. Hosts that
+    // never wire an emit callback still get the hook before first dispatch
+    // (requireEmit = false fallback).
+    s << "static void lidlTryFireContext(bool requireEmit)\n{\n";
+    s << "    lidlEnsureEmitWiring();\n";
+    s << "    if (g_hookFired.load(std::memory_order_acquire)) return;\n";
+    s << "    std::string path, id, persist;\n";
+    s << "    {\n";
+    s << "        std::lock_guard<std::mutex> lock(g_ctxMutex);\n";
+    s << "        if (!g_ctxStored) return;\n";
+    s << "        path = g_ctxPath; id = g_ctxId; persist = g_ctxPersist;\n";
+    s << "    }\n";
+    s << "    if (requireEmit) {\n";
+    s << "        std::lock_guard<std::mutex> lock(g_emitMutex);\n";
+    s << "        if (!g_emitCb) return;\n";
+    s << "    }\n";
+    s << "    g_hookFired.store(true, std::memory_order_release);\n";
+    s << "    _logos_codegen_::maybeSetContext(lidlImpl(), path, id, persist);\n";
+    s << "}\n\n";
+
     // -- exports -------------------------------------------------------------
     s << "extern \"C\" {\n\n";
 
     s << "char* logos_module_dispatch(const char* method, const char* args_json)\n{\n";
     s << "    if (!method) return nullptr;\n";
-    s << "    lidlEnsureEmitWiring();\n";
+    s << "    lidlTryFireContext(false);\n";
     s << "    nlohmann::json args = nlohmann::json::array();\n";
     s << "    if (args_json && *args_json) {\n";
     s << "        args = nlohmann::json::parse(args_json, nullptr, false);\n";
@@ -333,18 +360,23 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "void logos_module_set_context(const char* module_path,\n";
     s << "                              const char* instance_id,\n";
     s << "                              const char* instance_persistence_path)\n{\n";
-    s << "    lidlEnsureEmitWiring();\n";
-    s << "    _logos_codegen_::maybeSetContext(lidlImpl(),\n";
-    s << "        module_path ? module_path : \"\",\n";
-    s << "        instance_id ? instance_id : \"\",\n";
-    s << "        instance_persistence_path ? instance_persistence_path : \"\");\n";
+    s << "    {\n";
+    s << "        std::lock_guard<std::mutex> lock(g_ctxMutex);\n";
+    s << "        g_ctxPath = module_path ? module_path : \"\";\n";
+    s << "        g_ctxId = instance_id ? instance_id : \"\";\n";
+    s << "        g_ctxPersist = instance_persistence_path ? instance_persistence_path : \"\";\n";
+    s << "        g_ctxStored = true;\n";
+    s << "    }\n";
+    s << "    lidlTryFireContext(true);\n";
     s << "}\n\n";
 
     s << "void logos_module_set_emit_callback(logos_module_emit_cb cb, void* user_data)\n{\n";
-    s << "    lidlEnsureEmitWiring();\n";
-    s << "    std::lock_guard<std::mutex> lock(g_emitMutex);\n";
-    s << "    g_emitCb = cb;\n";
-    s << "    g_emitUd = user_data;\n";
+    s << "    {\n";
+    s << "        std::lock_guard<std::mutex> lock(g_emitMutex);\n";
+    s << "        g_emitCb = cb;\n";
+    s << "        g_emitUd = user_data;\n";
+    s << "    }\n";
+    s << "    lidlTryFireContext(true);\n";
     s << "}\n\n";
 
     s << "int logos_module_accept_token(const char* module_name, const char* token)\n{\n";
@@ -547,25 +579,30 @@ QString lidlMakeCdylibGlueSource(const ModuleDecl& module)
     s << "}\n\n";
 
     s << "void " << provider << "::onInit(LogosAPI* api)\n{\n";
-    s << "    // Context comes from the host's property stamping on the LogosAPI\n";
-    s << "    // object — forwarded across the C ABI; the cdylib never sees Qt.\n";
     s << "    QObject* obj = api;\n";
     s << "    if (!obj) return;\n";
-    s << "    logos_module_set_context(\n";
-    s << "        obj->property(\"modulePath\").toString().toUtf8().constData(),\n";
-    s << "        obj->property(\"instanceId\").toString().toUtf8().constData(),\n";
-    s << "        obj->property(\"instancePersistencePath\").toString().toUtf8().constData());\n";
-    s << "    // The cdylib runs its own protocol stack (a separate static copy with\n";
-    s << "    // its own TokenManager). Seed it with the host-issued auth token the\n";
-    s << "    // initializer surfaces as a property (set before registerObject, so\n";
-    s << "    // it is visible here), under the same keys the initializer uses\n";
-    s << "    // (\"core\" / \"capability_module\") — this is what authenticates the\n";
-    s << "    // module's OUTBOUND calls (incl. the capability requestModule flow).\n";
+    s << "    // Token FIRST: the cdylib runs its own protocol stack (a separate\n";
+    s << "    // static copy with its own TokenManager). Seed it with the\n";
+    s << "    // host-issued auth token the initializer surfaces as a property\n";
+    s << "    // (set before registerObject, so it is visible here), under the\n";
+    s << "    // same keys the initializer uses (\"core\" / \"capability_module\")\n";
+    s << "    // — this authenticates the module's OUTBOUND calls (incl. the\n";
+    s << "    // capability requestModule flow). Seeding before the context\n";
+    s << "    // forward means on_context_ready/onContextReady can already make\n";
+    s << "    // authenticated calls whenever the impl's ready-latch fires.\n";
     s << "    const QString authToken = obj->property(\"authToken\").toString();\n";
     s << "    if (!authToken.isEmpty()) {\n";
     s << "        logos_module_accept_token(\"core\", authToken.toUtf8().constData());\n";
     s << "        logos_module_accept_token(\"capability_module\", authToken.toUtf8().constData());\n";
     s << "    }\n";
+    s << "    // Context LAST — comes from the host's property stamping on the\n";
+    s << "    // LogosAPI object, forwarded across the C ABI; the cdylib never\n";
+    s << "    // sees Qt. (The impl fires its context-ready hook once BOTH the\n";
+    s << "    // context and the emit callback have been delivered.)\n";
+    s << "    logos_module_set_context(\n";
+    s << "        obj->property(\"modulePath\").toString().toUtf8().constData(),\n";
+    s << "        obj->property(\"instanceId\").toString().toUtf8().constData(),\n";
+    s << "        obj->property(\"instancePersistencePath\").toString().toUtf8().constData());\n";
     s << "}\n";
     return c;
 }
