@@ -13,6 +13,7 @@ add_executable(logos-cpp-generator
     main.cpp
     legacy/main.cpp
     legacy/generator_lib.cpp
+    experimental/lidl_emit_common.cpp
     experimental/lidl_lexer.cpp
     experimental/lidl_parser.cpp
     experimental/lidl_serializer.cpp
@@ -62,4 +63,25 @@ target_include_directories(logos-cpp-generator PRIVATE
 # Output directories
 set_target_properties(logos-cpp-generator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── LIDL frontend distribution ───────────────────────────────────────────────
+# logos-qt-sdk's logos-qt-generator (which emits ALL Qt glue: universal,
+# cdylib, ui) compiles these sources directly — source-level sharing keeps the
+# two generators on one frontend without a binary-ABI coupling.
+install(FILES
+    experimental/lidl_ast.h
+    experimental/lidl_lexer.h
+    experimental/lidl_lexer.cpp
+    experimental/lidl_parser.h
+    experimental/lidl_parser.cpp
+    experimental/lidl_serializer.h
+    experimental/lidl_serializer.cpp
+    experimental/lidl_validator.h
+    experimental/lidl_validator.cpp
+    experimental/impl_header_parser.h
+    experimental/impl_header_parser.cpp
+    experimental/lidl_emit_common.h
+    experimental/lidl_emit_common.cpp
+    DESTINATION share/lidl-frontend
 )

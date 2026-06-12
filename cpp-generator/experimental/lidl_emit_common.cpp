@@ -1,0 +1,94 @@
+#include "lidl_emit_common.h"
+
+QString lidlToPascalCase(const QString& name)
+{
+    QString out;
+    bool cap = true;
+    for (QChar c : name) {
+        if (!c.isLetterOrNumber()) { cap = true; continue; }
+        if (cap) { out.append(c.toUpper()); cap = false; }
+        else { out.append(c.toLower()); }
+    }
+    if (out.isEmpty()) return QString("Module");
+    return out;
+}
+
+QString lidlTypeToQt(const TypeExpr& te)
+{
+    switch (te.kind) {
+    case TypeExpr::Primitive:
+        if (te.name == "void")    return "void";
+        if (te.name == "tstr")    return "QString";
+        if (te.name == "bstr")    return "QByteArray";
+        if (te.name == "int")     return "int";
+        if (te.name == "uint")    return "int";
+        if (te.name == "float64") return "double";
+        if (te.name == "bool")    return "bool";
+        if (te.name == "result")  return "LogosResult";
+        if (te.name == "any")     return "QVariant";
+        return "QVariant";
+    case TypeExpr::Array:
+        if (te.elements.size() == 1
+            && te.elements[0].kind == TypeExpr::Primitive
+            && te.elements[0].name == "tstr") {
+            return "QStringList";
+        }
+        return "QVariantList";
+    case TypeExpr::Map:
+        return "QVariantMap";
+    case TypeExpr::Optional:
+        return "QVariant";
+    case TypeExpr::Named:
+        return "QVariant";
+    }
+    return "QVariant";
+}
+
+bool lidlIsStdConvertible(const TypeExpr& te)
+{
+    if (te.kind == TypeExpr::Primitive) {
+        return te.name == "tstr" || te.name == "bstr"
+            || te.name == "int" || te.name == "uint"
+            || te.name == "float64" || te.name == "bool";
+    }
+    if (te.kind == TypeExpr::Array && te.elements.size() == 1) {
+        const TypeExpr& elem = te.elements[0];
+        if (elem.kind == TypeExpr::Primitive) {
+            return elem.name == "tstr" || elem.name == "bstr"
+                || elem.name == "int" || elem.name == "uint"
+                || elem.name == "float64" || elem.name == "bool";
+        }
+    }
+    return false;
+}
+
+QString lidlTypeToStd(const TypeExpr& te)
+{
+    if (te.kind == TypeExpr::Primitive) {
+        if (te.name == "tstr")    return "std::string";
+        if (te.name == "bstr")    return "std::vector<uint8_t>";
+        if (te.name == "int")     return "int64_t";
+        if (te.name == "uint")    return "uint64_t";
+        if (te.name == "float64") return "double";
+        if (te.name == "bool")    return "bool";
+        if (te.name == "result")  return "LogosResult";
+        if (te.name == "any")     return "QVariant";
+        return "QVariant";
+    }
+    if (te.kind == TypeExpr::Array && te.elements.size() == 1) {
+        const TypeExpr& elem = te.elements[0];
+        if (elem.kind == TypeExpr::Primitive) {
+            if (elem.name == "tstr")    return "std::vector<std::string>";
+            if (elem.name == "bstr")    return "std::vector<std::vector<uint8_t>>";
+            if (elem.name == "int")     return "std::vector<int64_t>";
+            if (elem.name == "uint")    return "std::vector<uint64_t>";
+            if (elem.name == "float64") return "std::vector<double>";
+            if (elem.name == "bool")    return "std::vector<bool>";
+        }
+        return "QVariantList";
+    }
+    if (te.kind == TypeExpr::Map)      return "QVariantMap";
+    if (te.kind == TypeExpr::Optional) return "QVariant";
+    if (te.kind == TypeExpr::Named)    return "QVariant";
+    return "QVariant";
+}

@@ -1,4 +1,5 @@
 #include "lidl_gen_client.h"
+#include "lidl_emit_common.h"
 #include "lidl_parser.h"
 #include "lidl_validator.h"
 
@@ -14,49 +15,7 @@
 // Helpers
 // ---------------------------------------------------------------------------
 
-QString lidlToPascalCase(const QString& name)
-{
-    QString out;
-    bool cap = true;
-    for (QChar c : name) {
-        if (!c.isLetterOrNumber()) { cap = true; continue; }
-        if (cap) { out.append(c.toUpper()); cap = false; }
-        else { out.append(c.toLower()); }
-    }
-    if (out.isEmpty()) return QString("Module");
-    return out;
-}
 
-QString lidlTypeToQt(const TypeExpr& te)
-{
-    switch (te.kind) {
-    case TypeExpr::Primitive:
-        if (te.name == "void")    return "void";
-        if (te.name == "tstr")    return "QString";
-        if (te.name == "bstr")    return "QByteArray";
-        if (te.name == "int")     return "int";
-        if (te.name == "uint")    return "int";
-        if (te.name == "float64") return "double";
-        if (te.name == "bool")    return "bool";
-        if (te.name == "result")  return "LogosResult";
-        if (te.name == "any")     return "QVariant";
-        return "QVariant";
-    case TypeExpr::Array:
-        if (te.elements.size() == 1
-            && te.elements[0].kind == TypeExpr::Primitive
-            && te.elements[0].name == "tstr") {
-            return "QStringList";
-        }
-        return "QVariantList";
-    case TypeExpr::Map:
-        return "QVariantMap";
-    case TypeExpr::Optional:
-        return "QVariant";
-    case TypeExpr::Named:
-        return "QVariant";
-    }
-    return "QVariant";
-}
 
 static bool isRefType(const QString& qt)
 {

@@ -8,12 +8,9 @@
 // opt-in via metadata `type: "ui_qml"` + `interface: "universal"`.
 
 #include "lidl_gen_ui.h"
-#include "lidl_serializer.h"
+#include "lidl_emit_common.h"
 
 #include <QTextStream>
-
-// Shared with the other emitters (defined in lidl_gen_provider.cpp).
-QString lidlToPascalCase(const QString& name);
 
 namespace {
 

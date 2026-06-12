@@ -18,6 +18,7 @@ add_executable(experimental_tests
     test_impl_header_parser.cpp
 
     # Sources under test
+    ${EXPERIMENTAL_SRC_DIR}/lidl_emit_common.cpp
     ${EXPERIMENTAL_SRC_DIR}/lidl_lexer.cpp
     ${EXPERIMENTAL_SRC_DIR}/lidl_parser.cpp
     ${EXPERIMENTAL_SRC_DIR}/lidl_validator.cpp
