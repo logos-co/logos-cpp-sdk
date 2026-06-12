@@ -612,10 +612,9 @@ static int generateProviderDispatch(const QString& headerPath, const QString& ou
         methodsByName[m.name].append(&m);
     }
 
-    // The dispatch body is wrapped in a catch-all: anything the author's code
-    // (or a generated typed wrapper — see logos::LogosCallError) lets escape
-    // becomes an ordinary method failure (invalid QVariant) instead of an
-    // exception unwinding through Qt event dispatch and killing the module
+    // The dispatch body is wrapped in a catch-all: any exception the author's
+    // code lets escape becomes an ordinary method failure (invalid QVariant)
+    // instead of unwinding through Qt event dispatch and killing the module
     // process.
     s << "QVariant " << className << "::callMethod(const QString& methodName, const QVariantList& args)\n";
     s << "{\n";

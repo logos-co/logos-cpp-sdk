@@ -121,6 +121,7 @@ QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode)
     s << "#include \"logos_types.h\"\n";
     s << "#include \"logos_api.h\"\n";
     s << "#include \"logos_api_client.h\"\n";
+    s << "#include \"logos_call_error.h\"\n";
     s << "#include \"logos_object.h\"\n\n";
 
     s << "class " << className << " {\n";
@@ -155,7 +156,10 @@ QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode)
             emitParam(s, lidlTypeToQt(md.params[i].type), md.params[i].name);
             if (i + 1 < md.params.size()) s << ", ";
         }
-        s << ");\n";
+        // Optional error out-channel: pass a logos::CallError* to distinguish
+        // a failed remote call from a legitimately default-valued result.
+        if (!md.params.isEmpty()) s << ", ";
+        s << "logos::CallError* err = nullptr);\n";
         QString asyncCb = (ret == "void")
             ? QString("std::function<void()>")
             : QString("std::function<void(") + ret + ")>";
@@ -261,11 +265,13 @@ QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
             emitParam(s, lidlTypeToQt(md.params[i].type), md.params[i].name);
             if (i + 1 < nParams) s << ", ";
         }
-        s << ") {\n";
+        if (nParams > 0) s << ", ";
+        s << "logos::CallError* err) {\n";
 
-        // Call through the err-out overload: a failed call throws
-        // logos::LogosCallError instead of silently degrading to the return
-        // type's default value (see logos_call_error.h).
+        // Call through the err-out overload: with a logos::CallError* the
+        // caller can distinguish a failed remote call from a legitimately
+        // default-valued result; without it the historical default-on-failure
+        // behavior is kept, plus a warning in the module log.
         s << "    logos::CallError _err;\n";
         if (ret != "void") s << "    QVariant _result = ";
         else                s << "    ";
@@ -276,7 +282,9 @@ QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
             if (i + 1 < nParams) s << ", ";
         }
         s << "}, Timeout(), &_err);\n";
-        s << "    if (!_err.ok()) throw logos::LogosCallError(_err);\n";
+        s << "    if (err) *err = _err;\n";
+        s << "    else if (!_err.ok()) qWarning() << \"" << className << "::" << md.name
+          << ": remote call failed:\" << QString::fromStdString(_err.message);\n";
 
         if (ret != "void")
             s << "    " << returnConversion(ret) << "\n";
