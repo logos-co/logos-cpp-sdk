@@ -286,12 +286,15 @@ int main(int argc, char* argv[])
             const int implClassIdx = args.indexOf("--impl-class");
             const int implHeaderIdx = args.indexOf("--impl-header");
 
-            // Cdylib glue-only mode: with no --impl-class, emit just the
-            // uniform Qt-plugin glue over the common module-impl C ABI. The
-            // C exports come from the module's own language backend (e.g.
-            // the Rust SDK's lidl-gen --provider) — the glue is identical
-            // either way, it only knows the C symbols.
-            if (backend == "cdylib" && implClassIdx == -1) {
+            // Cdylib-from-LIDL (contract-first):
+            //   - with no --impl-class: GLUE-ONLY — the C exports come from
+            //     the module's own language backend (e.g. the Rust SDK's
+            //     lidl-gen --provider); the glue only knows the C symbols.
+            //   - with --impl-class/--impl-header: the FULL set — the C-ABI
+            //     export wrapper around the named (hand-written, Qt-free)
+            //     C++ impl class, plus the same uniform glue. The contract
+            //     stays the .lidl; the author just implements the class.
+            if (backend == "cdylib") {
                 QFile f(lidlPath);
                 if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
                     err << "Error: cannot read " << lidlPath << "\n";
@@ -314,10 +317,26 @@ int main(int argc, char* argv[])
                     : outputDir;
                 QDir().mkpath(genDirPath);
                 struct Out { QString file; QString content; };
-                const QList<Out> outs = {
-                    {mod.name + "_cdylib_glue.h", lidlMakeCdylibGlueHeader(mod)},
-                    {mod.name + "_cdylib_glue.cpp", lidlMakeCdylibGlueSource(mod)},
-                };
+                QList<Out> outs;
+                if (implClassIdx != -1) {
+                    if (implClassIdx + 1 >= args.size()) {
+                        err << "Error: --impl-class requires a class name\n";
+                        return 1;
+                    }
+                    const QString implClass = args.at(implClassIdx + 1);
+                    QString implHeader;
+                    if (implHeaderIdx != -1 && implHeaderIdx + 1 < args.size())
+                        implHeader = args.at(implHeaderIdx + 1);
+                    else
+                        implHeader = mod.name + "_impl.h";
+                    outs.append({mod.name + "_module_impl.cpp",
+                                 lidlMakeModuleImplExports(mod, implClass, implHeader)});
+                    if (!mod.events.isEmpty())
+                        outs.append({mod.name + "_events_cdylib.cpp",
+                                     lidlMakeEventsSourceCdylib(mod, implClass, implHeader)});
+                }
+                outs.append({mod.name + "_cdylib_glue.h", lidlMakeCdylibGlueHeader(mod)});
+                outs.append({mod.name + "_cdylib_glue.cpp", lidlMakeCdylibGlueSource(mod)});
                 for (const Out& o : outs) {
                     const QString abs = QDir(genDirPath).filePath(o.file);
                     QFile of(abs);
