@@ -1,5 +1,5 @@
 # Builds and runs the test suite
-{ pkgs, common, src }:
+{ pkgs, common, src, logos-protocol }:
 
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-tests";
@@ -18,7 +18,7 @@ pkgs.stdenv.mkDerivation {
 
     mkdir -p build-tests
     cd build-tests
-    cmake ../tests -GNinja $cmakeFlags
+    cmake ../tests -GNinja -DLOGOS_PROTOCOL_ROOT=${logos-protocol} $cmakeFlags
     ninja
     cd ..
 

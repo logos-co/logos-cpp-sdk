@@ -1,5 +1,5 @@
 # Builds the logos-cpp-generator binary
-{ pkgs, common, src }:
+{ pkgs, common, src, logos-protocol }:
 
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-generator";
@@ -17,7 +17,7 @@ pkgs.stdenv.mkDerivation {
     # Build generator
     mkdir -p build-generator
     cd build-generator
-    cmake ../cpp-generator -GNinja $cmakeFlags
+    cmake ../cpp-generator -GNinja -DLOGOS_PROTOCOL_ROOT=${logos-protocol} $cmakeFlags
     ninja
     cd ..
     

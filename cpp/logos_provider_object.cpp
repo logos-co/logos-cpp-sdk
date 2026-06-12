@@ -1,64 +1,12 @@
 #include "logos_provider_object.h"
-#include "logos_json_convert.h"
 #include "logos_api.h"
 #include "token_manager.h"
 #include <QDebug>
-#include <QJsonDocument>
 
-// ---------------------------------------------------------------------------
-// LogosProviderObject — universal virtual defaults
-// ---------------------------------------------------------------------------
-
-nlohmann::json LogosProviderObject::callMethodStd(const std::string& /*methodName*/,
-                                                   const nlohmann::json& /*args*/)
-{
-    return nullptr;
-}
-
-std::vector<LogosMethodMetadata> LogosProviderObject::getMethodsStd()
-{
-    return {};
-}
-
-void LogosProviderObject::setEventListenerStd(UniversalEventCallback /*callback*/)
-{
-}
-
-// ---------------------------------------------------------------------------
-// LogosProviderObject — bridge helpers (Qt-free providers delegate here)
-// ---------------------------------------------------------------------------
-
-QVariant LogosProviderObject::callMethodStdBridge(const QString& methodName, const QVariantList& args)
-{
-    nlohmann::json jArgs = nlohmann::json::array();
-    for (const QVariant& a : args)
-        jArgs.push_back(logos::qvariantToNlohmann(a));
-
-    nlohmann::json result = callMethodStd(methodName.toStdString(), jArgs);
-    return logos::nlohmannToQVariant(result);
-}
-
-QJsonArray LogosProviderObject::getMethodsStdBridge()
-{
-    return logos::methodsToJsonArray(getMethodsStd());
-}
-
-void LogosProviderObject::setEventListenerStdBridge(EventCallback callback)
-{
-    setEventListenerStd([callback](const std::string& eventName, const std::string& data) {
-        if (!callback) return;
-        QVariantList qData;
-        QJsonDocument doc = QJsonDocument::fromJson(
-            QByteArray::fromStdString(data));
-        if (doc.isArray()) {
-            for (const QJsonValue& v : doc.array())
-                qData.append(v.toVariant());
-        } else {
-            qData.append(QString::fromStdString(data));
-        }
-        callback(QString::fromStdString(eventName), qData);
-    });
-}
+// The LogosProviderObject universal-interface defaults and Std bridges moved
+// to logos-protocol (logos_provider_interface.cpp) together with the abstract
+// interface. What remains here is LogosProviderBase — the developer-facing
+// base class — because it talks to LogosAPI, which layers above the protocol.
 
 // ---------------------------------------------------------------------------
 // LogosProviderBase
