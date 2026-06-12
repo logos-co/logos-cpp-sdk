@@ -448,10 +448,9 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
     s << "#include <exception>\n\n";
 
     // --- callMethod ---
-    // The dispatch body is wrapped in a catch-all: anything the author's code
-    // (or a generated typed wrapper — see logos::LogosCallError) lets escape
-    // becomes an ordinary method failure (invalid QVariant) instead of an
-    // exception unwinding through Qt event dispatch and killing the module
+    // The dispatch body is wrapped in a catch-all: any exception the author's
+    // code lets escape becomes an ordinary method failure (invalid QVariant)
+    // instead of unwinding through Qt event dispatch and killing the module
     // process.
     s << "QVariant " << providerObjectClass
       << "::callMethod(const QString& methodName, const QVariantList& args)\n{\n";

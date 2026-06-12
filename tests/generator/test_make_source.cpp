@@ -44,7 +44,7 @@ TEST(MakeSourceTest, ZeroParams)
     QJsonArray methods;
     methods.append(makeMethod("doStuff", "int", 0));
     QString src = makeSource("mod", "Mod", "mod.h", methods);
-    EXPECT_TRUE(src.contains("m_client->invokeRemoteMethod(\"mod\", \"doStuff\")"));
+    EXPECT_TRUE(src.contains("m_client->invokeRemoteMethod(\"mod\", \"doStuff\", QVariantList{}, Timeout(), &_err)"));
     EXPECT_TRUE(src.contains("return _result.toInt()"));
 }
 
@@ -53,7 +53,7 @@ TEST(MakeSourceTest, OneParam)
     QJsonArray methods;
     methods.append(makeMethod("fn", "bool", 1));
     QString src = makeSource("mod", "Mod", "mod.h", methods);
-    EXPECT_TRUE(src.contains("m_client->invokeRemoteMethod(\"mod\", \"fn\", p0)"));
+    EXPECT_TRUE(src.contains("m_client->invokeRemoteMethod(\"mod\", \"fn\", QVariantList{p0}, Timeout(), &_err)"));
     EXPECT_TRUE(src.contains("return _result.toBool()"));
 }
 
@@ -62,7 +62,7 @@ TEST(MakeSourceTest, TwoParams)
     QJsonArray methods;
     methods.append(makeMethod("fn", "void", 2));
     QString src = makeSource("mod", "Mod", "mod.h", methods);
-    EXPECT_TRUE(src.contains("m_client->invokeRemoteMethod(\"mod\", \"fn\", p0, p1)"));
+    EXPECT_TRUE(src.contains("m_client->invokeRemoteMethod(\"mod\", \"fn\", QVariantList{p0, p1}, Timeout(), &_err)"));
 }
 
 TEST(MakeSourceTest, ThreeParams)

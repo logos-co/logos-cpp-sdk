@@ -213,6 +213,7 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
         s << "#include \"logos_result.h\"\n";
         s << "#include \"logos_api.h\"\n";
         s << "#include \"logos_api_client.h\"\n";
+        s << "#include \"logos_call_error.h\"\n";
         // Needed for the m_eventReplica member when the module declares
         // any events. Cheap to include unconditionally — keeps the
         // header symmetric with the Qt-style branch.
@@ -230,6 +231,7 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
         s << "#include \"logos_types.h\"\n";
         s << "#include \"logos_api.h\"\n";
         s << "#include \"logos_api_client.h\"\n";
+        s << "#include \"logos_call_error.h\"\n";
         s << "#include \"logos_object.h\"\n\n";
     }
     s << "class " << className << " {\n";
@@ -318,7 +320,11 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
             else       s << pt << " " << pn;
             if (i + 1 < params.size()) s << ", ";
         }
-        s << ");\n";
+        // Optional error out-channel: pass a logos::CallError* to distinguish
+        // a failed remote call from a legitimately default-valued result.
+        // Existing call sites compile unchanged.
+        if (!params.isEmpty()) s << ", ";
+        s << "logos::CallError* err = nullptr);\n";
         // Async overload: same params + callback + optional Timeout
         QString asyncCallbackType = (ret == "void")
             ? QString("std::function<void()>")
@@ -581,14 +587,15 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
             emitParam(params.at(i).toObject(), byRef);
             if (i + 1 < params.size()) s << ", ";
         }
-        s << ") {\n";
+        if (!params.isEmpty()) s << ", ";
+        s << "logos::CallError* err) {\n";
 
-        // Body: perform call through the err-out overload. A failed call
-        // (e.g. the bound module is missing) throws logos::LogosCallError
-        // instead of silently degrading to the return type's default value —
-        // a caller cannot otherwise tell failure from a legitimate 0 / "".
-        // Generated provider dispatch catches anything the author lets
-        // escape and converts it into an ordinary method failure.
+        // Body: perform call through the err-out overload. When the caller
+        // passes a logos::CallError* it can distinguish a failed remote call
+        // (e.g. the bound module is missing) from a legitimately
+        // default-valued result; without it the historical default-on-failure
+        // behavior is kept, now with a warning so failures are at least
+        // visible in the module log.
         s << "    logos::CallError _err;\n";
         if (ret != "void") s << "    QVariant _result = ";
         else               s << "    ";
@@ -599,7 +606,9 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
             if (i + 1 < params.size()) s << ", ";
         }
         s << "}, Timeout(), &_err);\n";
-        s << "    if (!_err.ok()) throw logos::LogosCallError(_err);\n";
+        s << "    if (err) *err = _err;\n";
+        s << "    else if (!_err.ok()) qWarning() << \"" << className << "::" << name
+          << ": remote call failed:\" << QString::fromStdString(_err.message);\n";
 
         // Return conversion
         if (ret == "void") {
