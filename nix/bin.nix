@@ -32,6 +32,19 @@ pkgs.stdenv.mkDerivation {
     if [ -f build-generator/bin/logos-cpp-generator ]; then
       cp build-generator/bin/logos-cpp-generator $out/bin/
     fi
+
+    # LIDL frontend sources for external generators (logos-qt-sdk's
+    # logos-qt-generator compiles these in — source-level sharing, no
+    # binary ABI between the two generators).
+    mkdir -p $out/share/lidl-frontend
+    cp cpp-generator/experimental/lidl_ast.h \
+       cpp-generator/experimental/lidl_lexer.h cpp-generator/experimental/lidl_lexer.cpp \
+       cpp-generator/experimental/lidl_parser.h cpp-generator/experimental/lidl_parser.cpp \
+       cpp-generator/experimental/lidl_serializer.h cpp-generator/experimental/lidl_serializer.cpp \
+       cpp-generator/experimental/lidl_validator.h cpp-generator/experimental/lidl_validator.cpp \
+       cpp-generator/experimental/impl_header_parser.h cpp-generator/experimental/impl_header_parser.cpp \
+       cpp-generator/experimental/lidl_emit_common.h cpp-generator/experimental/lidl_emit_common.cpp \
+       $out/share/lidl-frontend/
     
     runHook postInstall
   '';

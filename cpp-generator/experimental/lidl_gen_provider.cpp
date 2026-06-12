@@ -1,4 +1,5 @@
 #include "lidl_gen_provider.h"
+#include "lidl_emit_common.h"
 #include "lidl_gen_client.h"  // lidlToPascalCase, lidlTypeToQt
 #include "lidl_parser.h"
 #include "lidl_serializer.h"
@@ -16,54 +17,7 @@
 // Type mapping: LIDL → C++ std types
 // ---------------------------------------------------------------------------
 
-bool lidlIsStdConvertible(const TypeExpr& te)
-{
-    if (te.kind == TypeExpr::Primitive) {
-        return te.name == "tstr" || te.name == "bstr"
-            || te.name == "int" || te.name == "uint"
-            || te.name == "float64" || te.name == "bool";
-    }
-    if (te.kind == TypeExpr::Array && te.elements.size() == 1) {
-        const TypeExpr& elem = te.elements[0];
-        if (elem.kind == TypeExpr::Primitive) {
-            return elem.name == "tstr" || elem.name == "bstr"
-                || elem.name == "int" || elem.name == "uint"
-                || elem.name == "float64" || elem.name == "bool";
-        }
-    }
-    return false;
-}
 
-QString lidlTypeToStd(const TypeExpr& te)
-{
-    if (te.kind == TypeExpr::Primitive) {
-        if (te.name == "tstr")    return "std::string";
-        if (te.name == "bstr")    return "std::vector<uint8_t>";
-        if (te.name == "int")     return "int64_t";
-        if (te.name == "uint")    return "uint64_t";
-        if (te.name == "float64") return "double";
-        if (te.name == "bool")    return "bool";
-        if (te.name == "result")  return "LogosResult";
-        if (te.name == "any")     return "QVariant";
-        return "QVariant";
-    }
-    if (te.kind == TypeExpr::Array && te.elements.size() == 1) {
-        const TypeExpr& elem = te.elements[0];
-        if (elem.kind == TypeExpr::Primitive) {
-            if (elem.name == "tstr")    return "std::vector<std::string>";
-            if (elem.name == "bstr")    return "std::vector<std::vector<uint8_t>>";
-            if (elem.name == "int")     return "std::vector<int64_t>";
-            if (elem.name == "uint")    return "std::vector<uint64_t>";
-            if (elem.name == "float64") return "std::vector<double>";
-            if (elem.name == "bool")    return "std::vector<bool>";
-        }
-        return "QVariantList";
-    }
-    if (te.kind == TypeExpr::Map)      return "QVariantMap";
-    if (te.kind == TypeExpr::Optional) return "QVariant";
-    if (te.kind == TypeExpr::Named)    return "QVariant";
-    return "QVariant";
-}
 
 // ---------------------------------------------------------------------------
 // Conversion helpers: Qt type ↔ std type
@@ -357,10 +311,11 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
     s << "protected:\n";
     s << "    void onInit(LogosAPI* api) override {\n";
     s << "        if (!api) return;\n";
-    s << "        _logos_codegen_::maybeSetContext(m_impl,\n";
-    s << "            api->property(\"modulePath\").toString().toStdString(),\n";
-    s << "            api->property(\"instanceId\").toString().toStdString(),\n";
-    s << "            api->property(\"instancePersistencePath\").toString().toStdString());\n";
+    // Order matters: the modules() aggregate and the event wiring must be
+    // in place BEFORE maybeSetContext — setting the context fires the
+    // impl's onContextReady() hook, whose documented contract is "do your
+    // one-time setup here", which includes typed dependency calls
+    // (modules().dep.method()) and typed event subscriptions/emission.
     s << "        m_logosModules = std::make_unique<LogosModules>(api);\n";
     s << "        _logos_codegen_::maybeSetLogosModules(m_impl, m_logosModules.get());\n";
     // Wire the impl's `logos_events:` declarations to LogosProviderBase's
@@ -372,6 +327,12 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
     s << "                emitEvent(QString::fromStdString(name),\n";
     s << "                          *static_cast<QVariantList*>(args));\n";
     s << "            });\n";
+    // Context LAST: _logosCoreSetContext_ fires onContextReady() — by then
+    // the impl must be fully wired (see ordering note above).
+    s << "        _logos_codegen_::maybeSetContext(m_impl,\n";
+    s << "            api->property(\"modulePath\").toString().toStdString(),\n";
+    s << "            api->property(\"instanceId\").toString().toStdString(),\n";
+    s << "            api->property(\"instancePersistencePath\").toString().toStdString());\n";
     s << "    }\n\n";
 
     if (!module.events.isEmpty()) {
@@ -444,11 +405,17 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
     s << "#include <QJsonObject>\n";
     s << "#include <QVariant>\n";
     s << "#include <QString>\n";
-    s << "#include \"logos_types.h\"\n\n";
+    s << "#include \"logos_types.h\"\n";
+    s << "#include <exception>\n\n";
 
     // --- callMethod ---
+    // The dispatch body is wrapped in a catch-all: any exception the author's
+    // code lets escape becomes an ordinary method failure (invalid QVariant)
+    // instead of unwinding through Qt event dispatch and killing the module
+    // process.
     s << "QVariant " << providerObjectClass
       << "::callMethod(const QString& methodName, const QVariantList& args)\n{\n";
+    s << "    try {\n";
 
     for (const MethodDecl& md : module.methods) {
         QString qtRet = lidlTypeToQt(md.returnType);
@@ -473,6 +440,11 @@ QString lidlMakeProviderDispatch(const ModuleDecl& module)
         s << "    }\n";
     }
 
+    s << "    } catch (const std::exception& e) {\n";
+    s << "        qWarning() << \"" << providerObjectClass
+      << "::callMethod:\" << methodName << \"failed:\" << e.what();\n";
+    s << "        return QVariant();\n";
+    s << "    }\n";
     s << "    qWarning() << \"" << providerObjectClass
       << "::callMethod: unknown method:\" << methodName;\n";
     s << "    return QVariant();\n";

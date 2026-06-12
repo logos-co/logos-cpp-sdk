@@ -1,59 +1,17 @@
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../cpp ${CMAKE_CURRENT_BINARY_DIR}/logos_sdk)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator ${CMAKE_CURRENT_BINARY_DIR}/logos_generator)
-
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Test)
-
-# --- Generate dispatch code for the sample provider fixture ---
-set(SAMPLE_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sample_provider.h)
-set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set(GENERATED_DISPATCH ${GENERATED_DIR}/logos_provider_dispatch.cpp)
-
-file(MAKE_DIRECTORY ${GENERATED_DIR})
-
-add_custom_command(
-    OUTPUT ${GENERATED_DISPATCH}
-    COMMAND logos-cpp-generator --provider-header ${SAMPLE_HEADER} --output-dir ${GENERATED_DIR}
-    DEPENDS logos-cpp-generator ${SAMPLE_HEADER}
-    COMMENT "Generating provider dispatch for sample_provider"
-)
+# Std-only tests for the Qt-free base SDK headers. The Qt-typed suites
+# (LogosAPI, provider, auth, events, async, worker-thread IPC) moved to
+# logos-qt-sdk with the code they exercise; the transport/component suites
+# moved to logos-protocol.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../cpp ${CMAKE_CURRENT_BINARY_DIR}/logos_headers)
 
 add_executable(sdk_tests
-    test_main.cpp
-    test_logos_result.cpp
-    test_logos_mock_setup.cpp
-    test_logos_api_client_mock.cpp
-    test_logos_api.cpp
-    test_logos_api_client_overloads.cpp
-    test_logos_provider_base.cpp
     test_logos_module_context.cpp
-    test_module_proxy.cpp
-    test_auth_token_enforcement.cpp
-    test_inform_module_token_auth.cpp
-    test_logos_api_provider.cpp
-    test_local_transport_integration.cpp
-    test_worker_thread_ipc.cpp
-    test_event_system.cpp
-    test_async_calls.cpp
-    test_provider_dispatch.cpp
-    test_std_string_overloads.cpp
-    # Transport/protocol component tests moved to logos-protocol
-    # (tests/protocol) together with the code they exercise.
-    fixtures/sample_provider.cpp
-    ${GENERATED_DISPATCH}
-)
-
-target_include_directories(sdk_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures
-    ${GENERATED_DIR}
 )
 
 target_link_libraries(sdk_tests PRIVATE
-    logos_sdk
+    logos_headers
     GTest::gtest
-    Qt${QT_VERSION_MAJOR}::Core
-    Qt${QT_VERSION_MAJOR}::RemoteObjects
-    Qt${QT_VERSION_MAJOR}::Test
+    GTest::gtest_main
 )
 
 gtest_discover_tests(sdk_tests)

@@ -1,4 +1,5 @@
 #include "lidl_gen_client.h"
+#include "lidl_emit_common.h"
 #include "lidl_parser.h"
 #include "lidl_validator.h"
 
@@ -14,49 +15,7 @@
 // Helpers
 // ---------------------------------------------------------------------------
 
-QString lidlToPascalCase(const QString& name)
-{
-    QString out;
-    bool cap = true;
-    for (QChar c : name) {
-        if (!c.isLetterOrNumber()) { cap = true; continue; }
-        if (cap) { out.append(c.toUpper()); cap = false; }
-        else { out.append(c.toLower()); }
-    }
-    if (out.isEmpty()) return QString("Module");
-    return out;
-}
 
-QString lidlTypeToQt(const TypeExpr& te)
-{
-    switch (te.kind) {
-    case TypeExpr::Primitive:
-        if (te.name == "void")    return "void";
-        if (te.name == "tstr")    return "QString";
-        if (te.name == "bstr")    return "QByteArray";
-        if (te.name == "int")     return "int";
-        if (te.name == "uint")    return "int";
-        if (te.name == "float64") return "double";
-        if (te.name == "bool")    return "bool";
-        if (te.name == "result")  return "LogosResult";
-        if (te.name == "any")     return "QVariant";
-        return "QVariant";
-    case TypeExpr::Array:
-        if (te.elements.size() == 1
-            && te.elements[0].kind == TypeExpr::Primitive
-            && te.elements[0].name == "tstr") {
-            return "QStringList";
-        }
-        return "QVariantList";
-    case TypeExpr::Map:
-        return "QVariantMap";
-    case TypeExpr::Optional:
-        return "QVariant";
-    case TypeExpr::Named:
-        return "QVariant";
-    }
-    return "QVariant";
-}
 
 static bool isRefType(const QString& qt)
 {
@@ -121,6 +80,7 @@ QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode)
     s << "#include \"logos_types.h\"\n";
     s << "#include \"logos_api.h\"\n";
     s << "#include \"logos_api_client.h\"\n";
+    s << "#include \"logos_call_error.h\"\n";
     s << "#include \"logos_object.h\"\n\n";
 
     s << "class " << className << " {\n";
@@ -155,7 +115,10 @@ QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode)
             emitParam(s, lidlTypeToQt(md.params[i].type), md.params[i].name);
             if (i + 1 < md.params.size()) s << ", ";
         }
-        s << ");\n";
+        // Optional error out-channel: pass a logos::CallError* to distinguish
+        // a failed remote call from a legitimately default-valued result.
+        if (!md.params.isEmpty()) s << ", ";
+        s << "logos::CallError* err = nullptr);\n";
         QString asyncCb = (ret == "void")
             ? QString("std::function<void()>")
             : QString("std::function<void(") + ret + ")>";
@@ -261,24 +224,26 @@ QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
             emitParam(s, lidlTypeToQt(md.params[i].type), md.params[i].name);
             if (i + 1 < nParams) s << ", ";
         }
-        s << ") {\n";
+        if (nParams > 0) s << ", ";
+        s << "logos::CallError* err) {\n";
 
+        // Call through the err-out overload: with a logos::CallError* the
+        // caller can distinguish a failed remote call from a legitimately
+        // default-valued result; without it the historical default-on-failure
+        // behavior is kept, plus a warning in the module log.
+        s << "    logos::CallError _err;\n";
         if (ret != "void") s << "    QVariant _result = ";
         else                s << "    ";
 
-        if (nParams <= 5) {
-            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\"";
-            for (int i = 0; i < nParams; ++i)
-                s << ", " << md.params[i].name;
-            s << ");\n";
-        } else {
-            s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\", QVariantList{";
-            for (int i = 0; i < nParams; ++i) {
-                s << md.params[i].name;
-                if (i + 1 < nParams) s << ", ";
-            }
-            s << "});\n";
+        s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\", QVariantList{";
+        for (int i = 0; i < nParams; ++i) {
+            s << md.params[i].name;
+            if (i + 1 < nParams) s << ", ";
         }
+        s << "}, Timeout(), &_err);\n";
+        s << "    if (err) *err = _err;\n";
+        s << "    else if (!_err.ok()) qWarning() << \"" << className << "::" << md.name
+          << ": remote call failed:\" << QString::fromStdString(_err.message);\n";
 
         if (ret != "void")
             s << "    " << returnConversion(ret) << "\n";

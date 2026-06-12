@@ -14,7 +14,7 @@
 #include <QSet>
 #include <QRegularExpression>
 #include <QtGlobal>
-#include "logos_provider_object.h"
+#include "logos_provider_interface.h"
 #include "generator_lib.h"
 #include "../experimental/lidl_parser.h"
 #include "../experimental/impl_header_parser.h"
@@ -603,7 +603,8 @@ static int generateProviderDispatch(const QString& headerPath, const QString& ou
     s << "#include <QJsonObject>\n";
     s << "#include <QVariant>\n";
     s << "#include <QString>\n";
-    s << "#include \"logos_types.h\"\n\n";
+    s << "#include \"logos_types.h\"\n";
+    s << "#include <exception>\n\n";
 
     // callMethod() — group by name to support overloaded methods
     QMap<QString, QVector<const ParsedMethod*>> methodsByName;
@@ -611,8 +612,13 @@ static int generateProviderDispatch(const QString& headerPath, const QString& ou
         methodsByName[m.name].append(&m);
     }
 
+    // The dispatch body is wrapped in a catch-all: any exception the author's
+    // code lets escape becomes an ordinary method failure (invalid QVariant)
+    // instead of unwinding through Qt event dispatch and killing the module
+    // process.
     s << "QVariant " << className << "::callMethod(const QString& methodName, const QVariantList& args)\n";
     s << "{\n";
+    s << "    try {\n";
     for (auto it = methodsByName.constBegin(); it != methodsByName.constEnd(); ++it) {
         const QString& name = it.key();
         const QVector<const ParsedMethod*>& overloads = it.value();
@@ -646,6 +652,11 @@ static int generateProviderDispatch(const QString& headerPath, const QString& ou
         }
         s << "    }\n";
     }
+    s << "    } catch (const std::exception& e) {\n";
+    s << "        qWarning() << \"" << className
+      << "::callMethod:\" << methodName << \"failed:\" << e.what();\n";
+    s << "        return QVariant();\n";
+    s << "    }\n";
     s << "    qWarning() << \"" << className << "::callMethod: unknown method:\" << methodName;\n";
     s << "    return QVariant();\n";
     s << "}\n\n";

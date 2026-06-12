@@ -1,3 +1,12 @@
+> **Layering note:** since the protocol extraction and the Qt split, this
+> repo is the **Qt-free base SDK** — header-only developer surface for
+> universal module implementations (`logos_module_context.h`,
+> `logos_result.h`, `logos_json.h`) plus the `logos-cpp-generator` code
+> generator. Transports, the consumer core and the `lp_*` C ABI live in
+> [logos-protocol](https://github.com/logos-co/logos-protocol); the Qt
+> developer layer (LogosAPI, provider base classes, QObject glue) lives in
+> [logos-qt-sdk](https://github.com/logos-co/logos-qt-sdk).
+
 # logos-cpp-sdk
 
 ## How to Build
