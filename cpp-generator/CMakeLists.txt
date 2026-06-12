@@ -19,9 +19,7 @@ add_executable(logos-cpp-generator
     experimental/lidl_serializer.cpp
     experimental/lidl_validator.cpp
     experimental/lidl_gen_client.cpp
-    experimental/lidl_gen_provider.cpp
     experimental/lidl_gen_cdylib.cpp
-    experimental/lidl_gen_ui.cpp
     experimental/impl_header_parser.cpp
 )
 

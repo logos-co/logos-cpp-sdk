@@ -37,7 +37,5 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
                                    const QString& implClass,
                                    const QString& implHeader);
 
-QString lidlMakeCdylibGlueHeader(const ModuleDecl& module);
-QString lidlMakeCdylibGlueSource(const ModuleDecl& module);
 
 #endif // LIDL_GEN_CDYLIB_H

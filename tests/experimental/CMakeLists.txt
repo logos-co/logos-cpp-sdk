@@ -11,7 +11,6 @@ add_executable(experimental_tests
     test_lidl_type_mapping.cpp
 
     # Code generation tests
-    test_lidl_gen_provider.cpp
     test_lidl_gen_client.cpp
 
     # Impl header parser tests
@@ -24,7 +23,6 @@ add_executable(experimental_tests
     ${EXPERIMENTAL_SRC_DIR}/lidl_validator.cpp
     ${EXPERIMENTAL_SRC_DIR}/lidl_serializer.cpp
     ${EXPERIMENTAL_SRC_DIR}/lidl_gen_client.cpp
-    ${EXPERIMENTAL_SRC_DIR}/lidl_gen_provider.cpp
     ${EXPERIMENTAL_SRC_DIR}/impl_header_parser.cpp
 )
 
