@@ -92,6 +92,10 @@ jobs:
       # (github:logos-co/logos-doctest). The flake bundles Python + PyYAML
       # (+ rich), so no pip install step is needed.
       #
+      # CHAIN PINS (drop at merge): in repo CI only cpp-sdk's {release} is the
+      # commit under test; logoscore-cli/module-builder must come from the
+      # extraction-chain branches — their masters don't link against the chain
+      # SDK that the spec overrides in.
       # --release-for pins the {release} placeholder for logos-cpp-sdk to the
       # commit under test, so every `github:logos-co/logos-cpp-sdk{release}`
       # override URL in the spec becomes `.../<sha>` — logoscore, liblogos, the
@@ -114,6 +118,8 @@ jobs:
             --verbose \
             --continue-on-fail \
             --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \
+            --release-for logos-logoscore-cli=f1a6294d86aa46257b106d6f08c9bed9f940c3eb \
+            --release-for logos-module-builder=c849834b9d7b7eff1f94624c9126d7fdb77a3c48 \
             --report "${{ runner.temp }}/cpp-sdk-doctest-report.html"
 
       - name: Stage report for upload
@@ -142,6 +148,8 @@ jobs:
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/$spec.test.yaml" \
               --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \
+            --release-for logos-logoscore-cli=f1a6294d86aa46257b106d6f08c9bed9f940c3eb \
+            --release-for logos-module-builder=c849834b9d7b7eff1f94624c9126d7fdb77a3c48 \
               -o "/tmp/$spec.md"
             test -s "/tmp/$spec.md"
           done
