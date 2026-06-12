@@ -357,10 +357,11 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
     s << "protected:\n";
     s << "    void onInit(LogosAPI* api) override {\n";
     s << "        if (!api) return;\n";
-    s << "        _logos_codegen_::maybeSetContext(m_impl,\n";
-    s << "            api->property(\"modulePath\").toString().toStdString(),\n";
-    s << "            api->property(\"instanceId\").toString().toStdString(),\n";
-    s << "            api->property(\"instancePersistencePath\").toString().toStdString());\n";
+    // Order matters: the modules() aggregate and the event wiring must be
+    // in place BEFORE maybeSetContext — setting the context fires the
+    // impl's onContextReady() hook, whose documented contract is "do your
+    // one-time setup here", which includes typed dependency calls
+    // (modules().dep.method()) and typed event subscriptions/emission.
     s << "        m_logosModules = std::make_unique<LogosModules>(api);\n";
     s << "        _logos_codegen_::maybeSetLogosModules(m_impl, m_logosModules.get());\n";
     // Wire the impl's `logos_events:` declarations to LogosProviderBase's
@@ -372,6 +373,12 @@ QString lidlMakeProviderHeader(const ModuleDecl& module,
     s << "                emitEvent(QString::fromStdString(name),\n";
     s << "                          *static_cast<QVariantList*>(args));\n";
     s << "            });\n";
+    // Context LAST: _logosCoreSetContext_ fires onContextReady() — by then
+    // the impl must be fully wired (see ordering note above).
+    s << "        _logos_codegen_::maybeSetContext(m_impl,\n";
+    s << "            api->property(\"modulePath\").toString().toStdString(),\n";
+    s << "            api->property(\"instanceId\").toString().toStdString(),\n";
+    s << "            api->property(\"instancePersistencePath\").toString().toStdString());\n";
     s << "    }\n\n";
 
     if (!module.events.isEmpty()) {
