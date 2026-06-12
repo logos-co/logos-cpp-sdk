@@ -2,6 +2,7 @@
 #include "experimental/lidl_gen_client.h"
 #include "experimental/lidl_gen_provider.h"
 #include "experimental/lidl_gen_cdylib.h"
+#include "experimental/lidl_gen_ui.h"
 #include "experimental/lidl_parser.h"
 #include "experimental/lidl_serializer.h"
 #include "experimental/impl_header_parser.h"
@@ -188,6 +189,40 @@ int main(int argc, char* argv[])
                     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
                         err << "Failed to write: " << abs << "\n";
                         return 11;
+                    }
+                    f.write(o.content.toUtf8());
+                    out << "Generated: " << abs << "\n";
+                }
+                out.flush();
+                return 0;
+            }
+
+            if (backend == "ui") {
+                // UI-backend authoring (type=ui_qml + interface=universal):
+                // derive the .rep view contract from the impl header and emit
+                // the plugin glue that forwards slots to the impl and wires
+                // LogosModules/context in initLogos. Typed dependency callers,
+                // typed event subscriptions and bind_<interface> binders come
+                // from the umbrella pass (logos_sdk.h), same as core modules.
+                QString uiErr;
+                if (!lidlUiSupported(mod, &uiErr)) {
+                    err << "Error: module not ui-backend-eligible: " << uiErr << "\n";
+                    return 12;
+                }
+                struct Out { QString file; QString content; };
+                QList<Out> outs;
+                outs.append({mod.name + ".rep", lidlMakeUiRepFile(mod)});
+                outs.append({mod.name + "_ui_interface.h", lidlMakeUiInterfaceHeader(mod)});
+                outs.append({mod.name + "_ui_glue.h",
+                             lidlMakeUiGlueHeader(mod, implClass, implHeader)});
+                outs.append({mod.name + "_ui_glue.cpp",
+                             lidlMakeUiGlueSource(mod, implClass)});
+                for (const Out& o : outs) {
+                    const QString abs = QDir(genDirPath).filePath(o.file);
+                    QFile f(abs);
+                    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                        err << "Failed to write: " << abs << "\n";
+                        return 13;
                     }
                     f.write(o.content.toUtf8());
                     out << "Generated: " << abs << "\n";
