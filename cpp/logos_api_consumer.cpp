@@ -217,8 +217,9 @@ std::string LogosAPIConsumer::requestModule(const std::string& authToken, const 
         return {};
     }
 
-    QVariant result = plugin->callMethod(QString::fromStdString(authToken), QStringLiteral("requestModule"),
-                                         QVariantList() << qOrigin << qTarget, 20000);
+    const QString qAuthToken = QString::fromStdString(authToken);
+    QVariant result = plugin->callMethod(qAuthToken, QStringLiteral("requestModule"),
+                                         QVariantList() << qAuthToken << qOrigin << qTarget, 20000);
     plugin->release();
     return result.toString().toStdString();
 }
