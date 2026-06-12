@@ -2,7 +2,9 @@
 > repo is the **Qt-free base SDK** — header-only developer surface for
 > universal module implementations (`logos_module_context.h`,
 > `logos_result.h`, `logos_json.h`) plus the `logos-cpp-generator` code
-> generator. Transports, the consumer core and the `lp_*` C ABI live in
+> generator (Qt-free outputs: std typed wrappers, the `logos_sdk` umbrella,
+> cdylib C-ABI impl-exports, LIDL derivation — ALL generated Qt glue comes
+> from logos-qt-sdk's `logos-qt-generator`). Transports, the consumer core and the `lp_*` C ABI live in
 > [logos-protocol](https://github.com/logos-co/logos-protocol); the Qt
 > developer layer (LogosAPI, provider base classes, QObject glue) lives in
 > [logos-qt-sdk](https://github.com/logos-co/logos-qt-sdk).
