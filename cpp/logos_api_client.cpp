@@ -183,7 +183,7 @@ void LogosAPIClient::invokeRemoteMethodAsync(const QString& objectName, const QS
             capabilityToken,
             QStringLiteral("capability_module"),
             QStringLiteral("requestModule"),
-            QVariantList() << origin << objectName,
+            QVariantList() << capabilityToken << origin << objectName,
             [consumer, objectName, methodName, args, timeout,
              outerCallback = std::move(outerCallback)]
             (const QVariant& tokenResult) mutable {
