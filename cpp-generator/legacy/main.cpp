@@ -422,6 +422,10 @@ static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonAr
         QTextStream s(&content);
         s << "#pragma once\n";
         s << "#include <string>\n";
+        if (!interfaceNames.isEmpty()) {
+            s << "#include <map>\n";
+            s << "#include <memory>\n";
+        }
         for (const QJsonValue& v : deps) {
             if (!v.isString()) continue;
             s << "#include \"" << v.toString() << "_api.h\"\n";
@@ -444,12 +448,24 @@ static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonAr
             const QString depName = v.toString();
             s << "    " << toPascalCase(depName) << " " << depName << ";\n";
         }
-        // Interface dependencies: bound at runtime. Pass this module as origin.
+        // Interface dependencies: bound at runtime. The bound wrapper is a
+        // THIN handle over per-provider State the umbrella OWNS for the
+        // module's lifetime — so a transient `modules().bind_x(p)` temporary
+        // can register an async callback / event subscription that outlives
+        // it (the LpClient + RAII subscriptions persist in the map). Keyed by
+        // provider so repeated binds to the same provider share one client.
         for (const QString& ifaceName : interfaceNames) {
             const QString className = toPascalCase(ifaceName);
             s << "    " << className << " bind_" << ifaceName << "(const std::string& moduleName) {\n";
-            s << "        return " << className << "(\"" << originName << "\", moduleName);\n";
+            s << "        auto& _st = m_" << ifaceName << "_bound[moduleName];\n";
+            s << "        if (!_st) _st = std::make_unique<" << className << "::State>(moduleName, \"" << originName << "\");\n";
+            s << "        return " << className << "(_st.get());\n";
             s << "    }\n";
+        }
+        for (const QString& ifaceName : interfaceNames) {
+            const QString className = toPascalCase(ifaceName);
+            s << "    std::map<std::string, std::unique_ptr<" << className << "::State>> m_"
+              << ifaceName << "_bound;\n";
         }
         s << "};\n";
         QFile outFile(genDir.filePath("logos_sdk.h"));

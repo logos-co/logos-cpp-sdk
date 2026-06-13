@@ -895,10 +895,24 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
 
     s << "class " << className << " {\n";
     s << "public:\n";
-    if (bindMode == BindMode::Bound)
-        s << "    explicit " << className << "(const std::string& origin, const std::string& moduleName);\n\n";
-    else
+    if (bindMode == BindMode::Bound) {
+        // Bound (interface) wrappers are THIN, copyable handles over
+        // umbrella-owned persistent State, so a transient
+        // `modules().bind_x(provider)` temporary can register an async
+        // callback / event subscription that OUTLIVES the temporary: the
+        // LpClient and its RAII subscriptions live in the umbrella for the
+        // module's lifetime (mirroring the LogosAPI-owned-client model the
+        // Qt/std flavor relies on). Owning the client by-value in the handle
+        // would tear the subscription down when the temporary dies.
+        s << "    struct State {\n";
+        s << "        logos::LpClient client;\n";
+        s << "        std::vector<logos::LpSubscription> subs;\n";
+        s << "        State(const std::string& target, const std::string& origin) : client(target, origin) {}\n";
+        s << "    };\n";
+        s << "    explicit " << className << "(State* state) : m_state(state) {}\n\n";
+    } else {
         s << "    explicit " << className << "(const std::string& origin);\n\n";
+    }
 
     // Typed event subscribers — one per declared event.
     for (const QJsonValue& ev : events) {
@@ -945,8 +959,12 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
     }
 
     s << "\nprivate:\n";
-    s << "    logos::LpClient m_client;\n";
-    if (!events.isEmpty()) s << "    std::vector<logos::LpSubscription> m_subs;\n";
+    if (bindMode == BindMode::Bound) {
+        s << "    State* m_state;  // umbrella-owned; the handle does not own it\n";
+    } else {
+        s << "    logos::LpClient m_client;\n";
+        if (!events.isEmpty()) s << "    std::vector<logos::LpSubscription> m_subs;\n";
+    }
     s << "};\n";
     return h;
 }
@@ -958,12 +976,17 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
     s << "#include \"" << headerBaseName << "\"\n";
     s << "#include <nlohmann/json.hpp>\n\n";
 
-    // Constructor: LpClient(target, origin). Static bakes the dep name;
-    // Bound takes the (runtime-chosen) module name as the target.
-    if (bindMode == BindMode::Bound)
-        s << className << "::" << className << "(const std::string& origin, const std::string& moduleName)"
-          << " : m_client(moduleName, origin) {}\n\n";
-    else
+    // How the wrapper reaches its persistent LpClient + subscription store.
+    // Static (concrete dep): owns them by value — the wrapper itself is a
+    // persistent member of the umbrella. Bound (interface): a thin handle
+    // over umbrella-owned State, so a transient handle's async/event
+    // registrations survive (the ctor is inline in the header).
+    const QString clientExpr = (bindMode == BindMode::Bound) ? "m_state->client" : "m_client";
+    const QString subsExpr   = (bindMode == BindMode::Bound) ? "m_state->subs"   : "m_subs";
+
+    // Constructor: LpClient(target, origin). Static bakes the dep name in the
+    // .cpp ctor; Bound's ctor is inline (takes the umbrella-owned State*).
+    if (bindMode != BindMode::Bound)
         s << className << "::" << className << "(const std::string& origin)"
           << " : m_client(\"" << moduleName << "\", origin) {}\n\n";
 
@@ -977,7 +1000,7 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         s << "bool " << className << "::" << lpEventAccessorName(evName)
           << "(std::function<void(" << lpEventCbParams(evParams) << ")> callback) {\n";
         s << "    if (!callback) return false;\n";
-        s << "    auto _sub = m_client.subscribe(\"" << evName << "\", [callback](nlohmann::json _a) {\n";
+        s << "    auto _sub = " << clientExpr << ".subscribe(\"" << evName << "\", [callback](nlohmann::json _a) {\n";
         s << "        if (!_a.is_array() || _a.size() < " << evParams.size() << ") return;\n";
         s << "        callback(";
         for (int i = 0; i < evParams.size(); ++i) {
@@ -988,7 +1011,7 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         s << ");\n";
         s << "    });\n";
         s << "    if (!_sub.valid()) return false;\n";
-        s << "    m_subs.push_back(std::move(_sub));\n";
+        s << "    " << subsExpr << ".push_back(std::move(_sub));\n";
         s << "    return true;\n";
         s << "}\n\n";
     }
@@ -1026,9 +1049,9 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         s << "logos::CallError* err) {\n";
         emitArgsArray();
         if (ret == "void") {
-            s << "    m_client.invoke(\"" << name << "\", _args, err);\n";
+            s << "    " << clientExpr << ".invoke(\"" << name << "\", _args, err);\n";
         } else {
-            s << "    nlohmann::json _r = m_client.invoke(\"" << name << "\", _args, err);\n";
+            s << "    nlohmann::json _r = " << clientExpr << ".invoke(\"" << name << "\", _args, err);\n";
             s << "    return " << lpFromJsonExpr(qtRet, "_r") << ";\n";
         }
         s << "}\n\n";
@@ -1043,7 +1066,7 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         s << asyncCb << " callback) {\n";
         s << "    if (!callback) return;\n";
         emitArgsArray();
-        s << "    m_client.invokeAsync(\"" << name << "\", _args, [callback](nlohmann::json _r) {\n";
+        s << "    " << clientExpr << ".invokeAsync(\"" << name << "\", _args, [callback](nlohmann::json _r) {\n";
         if (ret == "void") {
             s << "        (void)_r; callback();\n";
         } else {
