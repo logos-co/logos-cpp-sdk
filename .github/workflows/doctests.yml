@@ -118,8 +118,6 @@ jobs:
             --verbose \
             --continue-on-fail \
             --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \
-            --release-for logos-logoscore-cli=f1a6294d86aa46257b106d6f08c9bed9f940c3eb \
-            --release-for logos-module-builder=c849834b9d7b7eff1f94624c9126d7fdb77a3c48 \
             --report "${{ runner.temp }}/cpp-sdk-doctest-report.html"
 
       - name: Stage report for upload
@@ -148,8 +146,6 @@ jobs:
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/$spec.test.yaml" \
               --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \
-            --release-for logos-logoscore-cli=f1a6294d86aa46257b106d6f08c9bed9f940c3eb \
-            --release-for logos-module-builder=c849834b9d7b7eff1f94624c9126d7fdb77a3c48 \
               -o "/tmp/$spec.md"
             test -s "/tmp/$spec.md"
           done
