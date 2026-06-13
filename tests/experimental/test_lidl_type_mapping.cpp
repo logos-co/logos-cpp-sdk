@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include "lidl_gen_client.h"
-#include "lidl_gen_provider.h"
+#include "lidl_emit_common.h"
 
 // ---------------------------------------------------------------------------
 // lidlTypeToQt

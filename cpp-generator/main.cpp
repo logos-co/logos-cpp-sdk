@@ -1,6 +1,7 @@
 #include "legacy/legacy_main.h"
 #include "experimental/lidl_gen_client.h"
-#include "experimental/lidl_gen_provider.h"
+#include "experimental/lidl_gen_cdylib.h"
+#include "experimental/lidl_parser.h"
 #include "experimental/lidl_serializer.h"
 #include "experimental/impl_header_parser.h"
 
@@ -161,66 +162,46 @@ int main(int argc, char* argv[])
                 : outputDir;
             QDir().mkpath(genDirPath);
 
-            if (backend == "qt") {
-                // Generate provider header (Qt glue)
-                QString glueHeaderAbs = QDir(genDirPath).filePath(mod.name + "_qt_glue.h");
-                {
-                    QFile f(glueHeaderAbs);
+            if (backend == "cdylib") {
+                // Cdylib authoring: the common module-impl C ABI exports +
+                // the uniform Qt-plugin glue (language-agnostic, forwards to
+                // the C symbols). See logos_module_impl.h in logos-protocol.
+                QString cdErr;
+                if (!lidlCdylibSupported(mod, &cdErr)) {
+                    err << "Error: module not cdylib-eligible: " << cdErr << "\n";
+                    return 10;
+                }
+                struct Out { QString file; QString content; };
+                QList<Out> outs;
+                outs.append({mod.name + "_module_impl.cpp",
+                             lidlMakeModuleImplExports(mod, implClass, implHeader)});
+                if (!mod.events.isEmpty())
+                    outs.append({mod.name + "_events_cdylib.cpp",
+                                 lidlMakeEventsSourceCdylib(mod, implClass, implHeader)});
+                outs.append({mod.name + ".lidl", lidlSerialize(mod)});
+                for (const Out& o : outs) {
+                    const QString abs = QDir(genDirPath).filePath(o.file);
+                    QFile f(abs);
                     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                        err << "Failed to write glue header: " << glueHeaderAbs << "\n";
-                        return 6;
+                        err << "Failed to write: " << abs << "\n";
+                        return 11;
                     }
-                    f.write(lidlMakeProviderHeader(mod, implClass, implHeader).toUtf8());
+                    f.write(o.content.toUtf8());
+                    out << "Generated: " << abs << "\n";
                 }
-
-                // Generate dispatch source
-                QString dispatchAbs = QDir(genDirPath).filePath(mod.name + "_dispatch.cpp");
-                {
-                    QFile f(dispatchAbs);
-                    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                        err << "Failed to write dispatch source: " << dispatchAbs << "\n";
-                        return 7;
-                    }
-                    f.write(lidlMakeProviderDispatch(mod).toUtf8());
-                }
-
-                out << "Generated: " << glueHeaderAbs << "\n";
-                out << "Generated: " << dispatchAbs << "\n";
-
-                // Events bodies (Qt-MOC-style) and LIDL sidecar — emitted
-                // when the impl declares any `logos_events:` prototypes.
-                // The sidecar travels in the dep's headers-* output so
-                // consumer-side codegen can generate typed `on<X>()`
-                // accessors without reintrospecting the .dylib.
-                if (!mod.events.isEmpty()) {
-                    QString eventsAbs = QDir(genDirPath).filePath(mod.name + "_events.cpp");
-                    {
-                        QFile f(eventsAbs);
-                        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                            err << "Failed to write events source: " << eventsAbs << "\n";
-                            return 8;
-                        }
-                        f.write(lidlMakeEventsSource(mod, implClass, implHeader).toUtf8());
-                    }
-                    out << "Generated: " << eventsAbs << "\n";
-
-                    QString lidlAbs = QDir(genDirPath).filePath(mod.name + ".lidl");
-                    {
-                        QFile f(lidlAbs);
-                        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                            err << "Failed to write LIDL sidecar: " << lidlAbs << "\n";
-                            return 9;
-                        }
-                        f.write(lidlSerialize(mod).toUtf8());
-                    }
-                    out << "Generated: " << lidlAbs << "\n";
-                }
-
                 out.flush();
                 return 0;
             }
 
-            err << "Error: --from-header currently only supports --backend qt\n";
+            if (backend == "qt") {
+                err << "Error: Qt glue generation moved to logos-qt-generator "
+                       "(logos-qt-sdk). Use it for --backend qt; this tool "
+                       "keeps the Qt-free outputs (--header-to-lidl emits the "
+                       ".lidl sidecar).\n";
+                return 6;
+            }
+
+            err << "Error: --from-header supports --backend cdylib (Qt glue: logos-qt-generator)\n";
             return 1;
         }
 
@@ -231,6 +212,8 @@ int main(int argc, char* argv[])
                 << " --lidl /path/to/module.lidl [--output-dir /path] [--module-only]\n"
                 << "       " << QFileInfo(app.applicationFilePath()).fileName()
                 << " --lidl /path/to/module.lidl --backend qt --impl-class Class --impl-header header.h [--output-dir /path]\n"
+                << "       " << QFileInfo(app.applicationFilePath()).fileName()
+                << " --lidl /path/to/module.lidl --backend cdylib [--output-dir /path]   (glue-only: C exports come from the module's own language backend)\n"
                 << "       " << QFileInfo(app.applicationFilePath()).fileName()
                 << " --from-header src/impl.h --backend qt --impl-class Class --metadata metadata.json [--output-dir /path]\n";
             return 1;
@@ -248,6 +231,76 @@ int main(int argc, char* argv[])
 
             const int implClassIdx = args.indexOf("--impl-class");
             const int implHeaderIdx = args.indexOf("--impl-header");
+
+            // Cdylib-from-LIDL (contract-first):
+            //   - with no --impl-class: GLUE-ONLY — the C exports come from
+            //     the module's own language backend (e.g. the Rust SDK's
+            //     lidl-gen --provider); the glue only knows the C symbols.
+            //   - with --impl-class/--impl-header: the FULL set — the C-ABI
+            //     export wrapper around the named (hand-written, Qt-free)
+            //     C++ impl class, plus the same uniform glue. The contract
+            //     stays the .lidl; the author just implements the class.
+            if (backend == "cdylib") {
+                QFile f(lidlPath);
+                if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                    err << "Error: cannot read " << lidlPath << "\n";
+                    return 1;
+                }
+                LidlParseResult pr = lidlParse(QString::fromUtf8(f.readAll()));
+                if (pr.hasError()) {
+                    err << "Error parsing " << lidlPath << ": " << pr.error
+                        << " (line " << pr.errorLine << ")\n";
+                    return 4;
+                }
+                const ModuleDecl& mod = pr.module;
+                QString cdErr;
+                if (!lidlCdylibSupported(mod, &cdErr)) {
+                    err << "Error: module not cdylib-eligible: " << cdErr << "\n";
+                    return 10;
+                }
+                QString genDirPath = outputDir.isEmpty()
+                    ? QDir::current().filePath("generated")
+                    : outputDir;
+                QDir().mkpath(genDirPath);
+                struct Out { QString file; QString content; };
+                QList<Out> outs;
+                if (implClassIdx != -1) {
+                    if (implClassIdx + 1 >= args.size()) {
+                        err << "Error: --impl-class requires a class name\n";
+                        return 1;
+                    }
+                    const QString implClass = args.at(implClassIdx + 1);
+                    QString implHeader;
+                    if (implHeaderIdx != -1 && implHeaderIdx + 1 < args.size())
+                        implHeader = args.at(implHeaderIdx + 1);
+                    else
+                        implHeader = mod.name + "_impl.h";
+                    outs.append({mod.name + "_module_impl.cpp",
+                                 lidlMakeModuleImplExports(mod, implClass, implHeader)});
+                    if (!mod.events.isEmpty())
+                        outs.append({mod.name + "_events_cdylib.cpp",
+                                     lidlMakeEventsSourceCdylib(mod, implClass, implHeader)});
+                } else {
+                    err << "Error: the uniform cdylib Qt glue is generated by "
+                           "logos-qt-generator (logos-qt-sdk); this tool emits "
+                           "the Qt-free C-ABI export wrapper, which requires "
+                           "--impl-class.\n";
+                    return 12;
+                }
+                for (const Out& o : outs) {
+                    const QString abs = QDir(genDirPath).filePath(o.file);
+                    QFile of(abs);
+                    if (!of.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                        err << "Failed to write: " << abs << "\n";
+                        return 11;
+                    }
+                    of.write(o.content.toUtf8());
+                    out << "Generated: " << abs << "\n";
+                }
+                out.flush();
+                return 0;
+            }
+
             if (implClassIdx == -1 || implClassIdx + 1 >= args.size()) {
                 err << "Error: --backend " << backend << " requires --impl-class <ClassName>\n";
                 return 1;
@@ -260,10 +313,13 @@ int main(int argc, char* argv[])
             QString implClass = args.at(implClassIdx + 1);
             QString implHeader = args.at(implHeaderIdx + 1);
 
-            if (backend == "qt")
-                return lidlGenerateProviderGlue(lidlPath, implClass, implHeader, outputDir, out, err);
+            if (backend == "qt") {
+                err << "Error: Qt glue generation moved to logos-qt-generator "
+                       "(logos-qt-sdk).\n";
+                return 6;
+            }
 
-            err << "Error: unsupported backend '" << backend << "' (supported: qt)\n";
+            err << "Error: unsupported backend '" << backend << "' (supported: cdylib)\n";
             return 1;
         }
 

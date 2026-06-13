@@ -18,7 +18,7 @@ cpp-generator/
 │   ├── lidl_validator.h/cpp       # Semantic validation
 │   ├── lidl_serializer.h/cpp      # AST → LIDL text pretty-printer
 │   ├── lidl_gen_client.h/cpp      # Client stub generation + helpers
-│   ├── lidl_gen_provider.h/cpp    # Provider glue + dispatch generation
+│   ├── (Qt glue emitters live in logos-qt-sdk's logos-qt-generator)
 │   └── impl_header_parser.h/cpp   # C++ header → ModuleDecl parser
 └── docs/                          # This documentation
 ```
