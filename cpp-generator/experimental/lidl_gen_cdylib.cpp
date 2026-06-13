@@ -9,16 +9,21 @@ bool lidlIsStdConvertible(const TypeExpr& te);
 
 namespace {
 
-// The cdylib-supported subset: std-convertible LIDL types only.
+// The cdylib-supported subset: std-convertible LIDL types only — the same
+// Qt-free set the std apiStyle handled, so any universal module that built
+// under std also builds as a header-first cdylib.
 bool typeSupported(const TypeExpr& te, bool isReturn)
 {
     if (te.kind == TypeExpr::Primitive) {
         if (te.name == "tstr" || te.name == "bstr" || te.name == "int"
             || te.name == "uint" || te.name == "float64" || te.name == "bool")
             return true;
-        // result (StdLogosResult) and any (LogosMap/LogosList via jsonReturn)
-        // are fine as RETURNS — the generator routes them through nlohmann.
-        if (isReturn && (te.name == "result" || te.name == "any"))
+        // any (LogosMap/LogosList/json) routes through nlohmann in either
+        // direction; result (StdLogosResult) and void only make sense as a
+        // return. All Qt-free.
+        if (te.name == "any")
+            return true;
+        if (isReturn && (te.name == "result" || te.name == "void"))
             return true;
         return false;
     }
@@ -26,8 +31,11 @@ bool typeSupported(const TypeExpr& te, bool isReturn)
         const TypeExpr& e = te.elements[0];
         return e.kind == TypeExpr::Primitive
             && (e.name == "tstr" || e.name == "int" || e.name == "uint"
-                || e.name == "float64" || e.name == "bool");
+                || e.name == "float64" || e.name == "bool" || e.name == "any");
     }
+    // Maps ({k: v}, i.e. LogosMap) round-trip through nlohmann too.
+    if (te.kind == TypeExpr::Map)
+        return true;
     return false;
 }
 
@@ -142,8 +150,12 @@ bool lidlCdylibSupported(const ModuleDecl& module, QString* error)
                 return false;
             }
         }
+        // `void` is not a lidlBuiltinType, so the .lidl parser yields it as a
+        // Named type "void" (the impl-header parser writes "-> void"); an empty
+        // name is the in-memory void from the header path. Treat both as void.
         const bool voidReturn =
-            md.returnType.kind == TypeExpr::Primitive && md.returnType.name.isEmpty();
+            md.returnType.name == "void"
+            || (md.returnType.kind == TypeExpr::Primitive && md.returnType.name.isEmpty());
         if (!voidReturn && !md.jsonReturn && !md.resultReturn
             && !typeSupported(md.returnType, /*isReturn=*/true)) {
             if (error)
@@ -345,7 +357,12 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
             if (i + 1 < md.params.size()) call += ", ";
         }
         call += ")";
-        const bool voidReturn = lidlTypeToQt(md.returnType) == "void";
+        // `void` parses as a Named type "void" from a .lidl (it isn't a
+        // lidlBuiltinType); empty name is the header path's in-memory void.
+        const bool voidReturn =
+            md.returnType.name == "void"
+            || (md.returnType.kind == TypeExpr::Primitive && md.returnType.name.isEmpty())
+            || lidlTypeToQt(md.returnType) == "void";
         if (voidReturn) {
             s << "            " << call << ";\n";
             s << "            return lidlStrdup(\"true\");\n";

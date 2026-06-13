@@ -158,6 +158,22 @@ private:
         if (!expect(LidlToken::RParen, "method parameters")) return false;
         if (!expect(LidlToken::Arrow, "method return type")) return false;
         if (!parseTypeExpr(md.returnType)) return false;
+        // Restore the return-shape flags from the parsed type so a .lidl
+        // round-trip carries the same semantics the impl-header parser sets
+        // (it derives them from C++ types: StdLogosResult -> result,
+        // LogosMap/LogosList -> json). Without this, a header-first universal
+        // module (header -> .lidl -> cdylib backend) loses the flags and the
+        // cdylib codegen/eligibility mis-handles result / map / list returns.
+        {
+            const TypeExpr& rt = md.returnType;
+            md.resultReturn = (rt.kind == TypeExpr::Primitive && rt.name == "result");
+            md.jsonReturn =
+                rt.kind == TypeExpr::Map
+                || (rt.kind == TypeExpr::Primitive && rt.name == "any")
+                || (rt.kind == TypeExpr::Array && rt.elements.size() == 1
+                    && rt.elements[0].kind == TypeExpr::Primitive
+                    && rt.elements[0].name == "any");
+        }
         mod.methods.append(md); return true;
     }
 
