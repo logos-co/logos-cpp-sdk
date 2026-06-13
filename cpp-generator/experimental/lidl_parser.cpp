@@ -158,6 +158,14 @@ private:
         if (!expect(LidlToken::RParen, "method parameters")) return false;
         if (!expect(LidlToken::Arrow, "method return type")) return false;
         if (!parseTypeExpr(md.returnType)) return false;
+        // Optional trailing doc: `-> ret description "..."`. Carries the
+        // method's doc comment across a .lidl round-trip so introspection
+        // (lm / getMethods) still surfaces it.
+        if (at(LidlToken::Description)) {
+            ++m_pos;
+            if (!at(LidlToken::StringLit)) { error("Expected string after method 'description'"); return false; }
+            md.description = current().text; ++m_pos;
+        }
         // Restore the return-shape flags from the parsed type so a .lidl
         // round-trip carries the same semantics the impl-header parser sets
         // (it derives them from C++ types: StdLogosResult -> result,
@@ -185,6 +193,11 @@ private:
         if (!expect(LidlToken::LParen, "event parameters")) return false;
         if (!parseParams(ed.params)) return false;
         if (!expect(LidlToken::RParen, "event parameters")) return false;
+        if (at(LidlToken::Description)) {
+            ++m_pos;
+            if (!at(LidlToken::StringLit)) { error("Expected string after event 'description'"); return false; }
+            ed.description = current().text; ++m_pos;
+        }
         mod.events.append(ed); return true;
     }
 
