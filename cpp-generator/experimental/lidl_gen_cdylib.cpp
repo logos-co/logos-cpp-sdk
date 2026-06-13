@@ -191,7 +191,14 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "#include <map>\n";
     s << "#include <mutex>\n";
     s << "#include <string>\n";
-    s << "#include <vector>\n\n";
+    s << "#include <vector>\n";
+    if (!module.depends.isEmpty()) {
+        // The Qt-free typed dependency surface: LogosModules (behind
+        // modules()) built from this module's dependencies, calling the
+        // lp_* C ABI — no Qt in the cdylib.
+        s << "#include \"logos_sdk.h\"\n";
+    }
+    s << "\n";
 
     // -- shared statics ------------------------------------------------------
     s << "namespace {\n\n";
@@ -307,6 +314,12 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "        if (!g_emitCb) return;\n";
     s << "    }\n";
     s << "    g_hookFired.store(true, std::memory_order_release);\n";
+    if (!module.depends.isEmpty()) {
+        // Wire the Qt-free typed dependency surface BEFORE onContextReady, so
+        // the author can call modules().<dep>... / subscribe to events from
+        // the hook. The LogosModules instance lives for the module's lifetime.
+        s << "    _logos_codegen_::maybeSetLogosModules(lidlImpl(), new LogosModules());\n";
+    }
     s << "    _logos_codegen_::maybeSetContext(lidlImpl(), path, id, persist);\n";
     s << "}\n\n";
 
