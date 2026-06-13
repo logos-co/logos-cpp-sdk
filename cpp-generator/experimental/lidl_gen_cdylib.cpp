@@ -206,8 +206,6 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "logos_module_emit_cb g_emitCb = nullptr;\n";
     s << "void* g_emitUd = nullptr;\n";
     s << "std::mutex g_emitMutex;\n";
-    s << "std::map<std::string, std::string> g_tokens;\n";
-    s << "std::mutex g_tokensMutex;\n";
     s << "std::mutex g_ctxMutex;\n";
     s << "bool g_ctxStored = false;\n";
     s << "std::string g_ctxPath, g_ctxId, g_ctxPersist;\n";
@@ -393,9 +391,13 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
 
     s << "int logos_module_accept_token(const char* module_name, const char* token)\n{\n";
     s << "    if (!module_name || !token) return -1;\n";
-    s << "    std::lock_guard<std::mutex> lock(g_tokensMutex);\n";
-    s << "    g_tokens[module_name] = token;\n";
-    s << "    return 0;\n}\n\n";
+    s << "    // Seed the protocol's shared TokenManager so this module's OUTBOUND\n";
+    s << "    // lp_client (modules().<dep>...) can authenticate calls. In\n";
+    s << "    // particular the capability_module bootstrap token the host\n";
+    s << "    // delivers at load lets the automatic requestModule flow fetch a\n";
+    s << "    // per-target token on the first cross-module call. lp_token_save\n";
+    s << "    // writes the same TokenManager::instance() the lp_client reads.\n";
+    s << "    return lp_token_save(module_name, token);\n}\n\n";
 
     s << "const char* logos_module_get_protocol_version(void)\n{\n";
     s << "    return LOGOS_PROTOCOL_VERSION_STRING;\n}\n\n";
