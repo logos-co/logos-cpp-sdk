@@ -192,12 +192,12 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "#include <mutex>\n";
     s << "#include <string>\n";
     s << "#include <vector>\n";
-    if (!module.depends.isEmpty()) {
-        // The Qt-free typed dependency surface: LogosModules (behind
-        // modules()) built from this module's dependencies, calling the
-        // lp_* C ABI — no Qt in the cdylib.
-        s << "#include \"logos_sdk.h\"\n";
-    }
+    // The Qt-free typed dependency surface: LogosModules (behind modules())
+    // built from this module's dependencies (metadata.json#dependencies),
+    // calling the lp_* C ABI — no Qt in the cdylib. The umbrella codegen
+    // emits logos_sdk.h for every cdylib module (empty when there are no
+    // dependencies), so this include is always available.
+    s << "#include \"logos_sdk.h\"\n";
     s << "\n";
 
     // -- shared statics ------------------------------------------------------
@@ -314,12 +314,12 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "        if (!g_emitCb) return;\n";
     s << "    }\n";
     s << "    g_hookFired.store(true, std::memory_order_release);\n";
-    if (!module.depends.isEmpty()) {
-        // Wire the Qt-free typed dependency surface BEFORE onContextReady, so
-        // the author can call modules().<dep>... / subscribe to events from
-        // the hook. The LogosModules instance lives for the module's lifetime.
-        s << "    _logos_codegen_::maybeSetLogosModules(lidlImpl(), new LogosModules());\n";
-    }
+    // Wire the Qt-free typed dependency surface BEFORE onContextReady, so the
+    // author can call modules().<dep>... / subscribe to events from the hook.
+    // maybeSetLogosModules is a no-op for impls that don't derive
+    // LogosModuleContext, so this is safe for context-less cdylibs. The
+    // LogosModules instance lives for the module's lifetime.
+    s << "    _logos_codegen_::maybeSetLogosModules(lidlImpl(), new LogosModules());\n";
     s << "    _logos_codegen_::maybeSetContext(lidlImpl(), path, id, persist);\n";
     s << "}\n\n";
 
