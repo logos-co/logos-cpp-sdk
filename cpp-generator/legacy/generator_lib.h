@@ -19,7 +19,16 @@ struct ParsedMethod {
 // is Qt for backward compatibility; `interface: "universal"` modules
 // flip to Std via the -DLOGOS_API_STYLE=std CMake flag the module
 // builder threads through.
-enum class ApiStyle { Qt, Std };
+// Qt — legacy Qt-typed surface (QString/QVariant…), body via LogosAPIClient.
+// Std — std-typed surface, but the body still bridges through QVariant +
+//       LogosAPIClient (so the wrapper .cpp links qt-sdk).
+// Lp  — std-typed surface AND a Qt-free body: the wrapper calls the
+//       logos-protocol C ABI (lp_*) directly via logos::LpClient, so the
+//       module's translation units never include Qt or link qt-sdk. This is
+//       the path that lets a cdylib module do outbound typed calls/event
+//       subscriptions while staying Qt-free (Qt confined to the QRO transport
+//       inside logos-protocol + the generated plugin glue).
+enum class ApiStyle { Qt, Std, Lp };
 
 // Whether the generated wrapper targets ONE fixed module (the historical
 // behaviour) or binds to a module name chosen at runtime.
@@ -65,6 +74,13 @@ QString toQVariantConversion(const QString& type, const QString& argExpr);
 // already decided; the emitted code never bakes it into a call.
 QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle = ApiStyle::Qt, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static);
 QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle = ApiStyle::Qt, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static);
+
+// Qt-free (ApiStyle::Lp) wrapper emission. Same std-typed surface as the Std
+// flavor, but the generated body calls the logos-protocol C ABI through
+// logos::LpClient instead of LogosAPIClient — no Qt in the wrapper's TU.
+// makeHeader/makeSource dispatch here when apiStyle == ApiStyle::Lp.
+QString makeHeaderLp(const QString& moduleName, const QString& className, const QJsonArray& methods, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static);
+QString makeSourceLp(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static);
 QVector<ParsedMethod> parseProviderHeader(const QString& headerPath, QTextStream& err);
 
 #endif // GENERATOR_LIB_H
