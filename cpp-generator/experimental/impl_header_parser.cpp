@@ -167,6 +167,17 @@ static bool parseMethodLine(const QString& line, MethodDecl& out)
         for (const QString& part : parts) {
             if (part.isEmpty()) continue;
             QString p = part.trimmed();
+            // Strip a C++ default-argument value (e.g. `int64_t chunkSize =
+            // 65536`, `bool local = false`) before extracting the name —
+            // otherwise the trailing-token scan below picks up the default
+            // literal ("65536"/"false") as the parameter name and emits an
+            // invalid signature (`QVariant 65536`, `QVariant false`) into the
+            // generated Qt glue. A top-level '=' in a parameter only ever
+            // introduces a default; template args carry no '='.
+            {
+                const int eq = p.indexOf(QLatin1Char('='));
+                if (eq >= 0) p = p.left(eq).trimmed();
+            }
             int pNameEnd = p.size();
             while (pNameEnd > 0 && p[pNameEnd - 1].isSpace())
                 pNameEnd--;
@@ -258,8 +269,31 @@ ImplParseResult parseImplHeader(const QString& headerPath,
     QRegularExpression accessRe("^\\s*(public|private|protected)\\s*:");
     QRegularExpression ctorDtorRe("^\\s*~?" + QRegularExpression::escape(className) + "\\s*\\(");
 
-    for (const QString& rawLine : lines) {
-        QString line = rawLine.trimmed();
+    for (int _li = 0; _li < lines.size(); ++_li) {
+        QString line = lines[_li].trimmed();
+
+        // Join multi-line method declarations: when a non-comment code line
+        // inside the class opens more parens than it closes, the declaration
+        // continues on following physical lines, e.g.
+        //     StdLogosResult downloadToUrl(const std::string& cid,
+        //                                  const std::string& path,
+        //                                  bool local = false);
+        // The declaration parser below only fires when the trimmed line ends
+        // with ';', so without this join the first line is dropped and the
+        // method silently vanishes from the generated surface. Skip comment
+        // lines so doc/scope handling is untouched.
+        if (state != LookingForClass
+            && !(line.startsWith("//") || line.startsWith("/*")
+                 || line.startsWith("*") || line.startsWith("#"))) {
+            int paren = 0;
+            for (QChar c : line) { if (c == '(') ++paren; else if (c == ')') --paren; }
+            while (paren > 0 && _li + 1 < lines.size()) {
+                const QString cont = lines[++_li].trimmed();
+                line += QLatin1Char(' ');
+                line += cont;
+                for (QChar c : cont) { if (c == '(') ++paren; else if (c == ')') --paren; }
+            }
+        }
 
         switch (state) {
         case LookingForClass:
