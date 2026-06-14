@@ -253,6 +253,21 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
 
     s << "std::vector<uint8_t> lidlBytesFromJson(const nlohmann::json& j)\n{\n";
     s << "    std::vector<uint8_t> out;\n";
+    s << "    // Lenient bytes decode (matches the std path, where a QString or\n";
+    s << "    // QByteArray arg both became bytes): a caller may send the tagged\n";
+    s << "    // {\"_bytes\": base64url} form, a plain string (raw UTF-8 bytes), or\n";
+    s << "    // an array of byte values. Only the tagged form needs base64.\n";
+    s << "    if (j.is_string()) {\n";
+    s << "        const std::string s = j.get<std::string>();\n";
+    s << "        out.assign(s.begin(), s.end());\n";
+    s << "        return out;\n";
+    s << "    }\n";
+    s << "    if (j.is_array()) {\n";
+    s << "        for (const auto& e : j)\n";
+    s << "            if (e.is_number_integer() || e.is_number_unsigned())\n";
+    s << "                out.push_back(static_cast<uint8_t>(e.get<int64_t>() & 0xff));\n";
+    s << "        return out;\n";
+    s << "    }\n";
     s << "    if (!j.is_object() || j.size() != 1 || !j.contains(\"_bytes\") || !j[\"_bytes\"].is_string())\n";
     s << "        return out;\n";
     s << "    const std::string s64 = j[\"_bytes\"].get<std::string>();\n";
