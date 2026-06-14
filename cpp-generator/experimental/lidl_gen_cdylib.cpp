@@ -262,6 +262,15 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "        out.assign(s.begin(), s.end());\n";
     s << "        return out;\n";
     s << "    }\n";
+    s << "    if (j.is_number()) {\n";
+    s << "        // A number arg becomes its decimal text as bytes — matches\n";
+    s << "        // Qt's QVariant(int)->QByteArray, so a caller (or the\n";
+    s << "        // logoscore CLI's type auto-detection) passing a bare number\n";
+    s << "        // to a bytes param behaves the same as the Qt path.\n";
+    s << "        const std::string s = j.dump();\n";
+    s << "        out.assign(s.begin(), s.end());\n";
+    s << "        return out;\n";
+    s << "    }\n";
     s << "    if (j.is_array()) {\n";
     s << "        for (const auto& e : j)\n";
     s << "            if (e.is_number_integer() || e.is_number_unsigned())\n";
