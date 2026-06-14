@@ -445,8 +445,22 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                 QString decl = line.left(line.size() - 1).trimmed();
                 MethodDecl md;
                 if (parseMethodLine(decl, md)) {
-                    md.description = joinDocLines(pendingDoc);
-                    result.module.methods.append(md);
+                    // LogosModuleContext lifecycle hooks / context accessors are
+                    // framework plumbing, not part of the module's API contract.
+                    // An impl commonly overrides `onContextReady()` (and could
+                    // re-declare an accessor) in its own public section, so the
+                    // header parser would otherwise emit them into the derived
+                    // LIDL — breaking cdylib eligibility (e.g. the inherited
+                    // accessors' Qt-free-subset check) and exposing non-API
+                    // methods. Skip the reserved names regardless of access.
+                    static const QSet<QString> reserved = {
+                        "onContextReady", "modules", "modulePath",
+                        "instanceId", "instancePersistencePath"
+                    };
+                    if (!reserved.contains(md.name)) {
+                        md.description = joinDocLines(pendingDoc);
+                        result.module.methods.append(md);
+                    }
                 }
             }
             pendingDoc.clear();

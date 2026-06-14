@@ -9,16 +9,21 @@ bool lidlIsStdConvertible(const TypeExpr& te);
 
 namespace {
 
-// The cdylib-supported subset: std-convertible LIDL types only.
+// The cdylib-supported subset: std-convertible LIDL types only — the same
+// Qt-free set the std apiStyle handled, so any universal module that built
+// under std also builds as a header-first cdylib.
 bool typeSupported(const TypeExpr& te, bool isReturn)
 {
     if (te.kind == TypeExpr::Primitive) {
         if (te.name == "tstr" || te.name == "bstr" || te.name == "int"
             || te.name == "uint" || te.name == "float64" || te.name == "bool")
             return true;
-        // result (StdLogosResult) and any (LogosMap/LogosList via jsonReturn)
-        // are fine as RETURNS — the generator routes them through nlohmann.
-        if (isReturn && (te.name == "result" || te.name == "any"))
+        // any (LogosMap/LogosList/json) routes through nlohmann in either
+        // direction; result (StdLogosResult) and void only make sense as a
+        // return. All Qt-free.
+        if (te.name == "any")
+            return true;
+        if (isReturn && (te.name == "result" || te.name == "void"))
             return true;
         return false;
     }
@@ -26,8 +31,11 @@ bool typeSupported(const TypeExpr& te, bool isReturn)
         const TypeExpr& e = te.elements[0];
         return e.kind == TypeExpr::Primitive
             && (e.name == "tstr" || e.name == "int" || e.name == "uint"
-                || e.name == "float64" || e.name == "bool");
+                || e.name == "float64" || e.name == "bool" || e.name == "any");
     }
+    // Maps ({k: v}, i.e. LogosMap) round-trip through nlohmann too.
+    if (te.kind == TypeExpr::Map)
+        return true;
     return false;
 }
 
@@ -142,8 +150,12 @@ bool lidlCdylibSupported(const ModuleDecl& module, QString* error)
                 return false;
             }
         }
+        // `void` is not a lidlBuiltinType, so the .lidl parser yields it as a
+        // Named type "void" (the impl-header parser writes "-> void"); an empty
+        // name is the in-memory void from the header path. Treat both as void.
         const bool voidReturn =
-            md.returnType.kind == TypeExpr::Primitive && md.returnType.name.isEmpty();
+            md.returnType.name == "void"
+            || (md.returnType.kind == TypeExpr::Primitive && md.returnType.name.isEmpty());
         if (!voidReturn && !md.jsonReturn && !md.resultReturn
             && !typeSupported(md.returnType, /*isReturn=*/true)) {
             if (error)
@@ -191,7 +203,14 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "#include <map>\n";
     s << "#include <mutex>\n";
     s << "#include <string>\n";
-    s << "#include <vector>\n\n";
+    s << "#include <vector>\n";
+    // The Qt-free typed dependency surface: LogosModules (behind modules())
+    // built from this module's dependencies (metadata.json#dependencies),
+    // calling the lp_* C ABI — no Qt in the cdylib. The umbrella codegen
+    // emits logos_sdk.h for every cdylib module (empty when there are no
+    // dependencies), so this include is always available.
+    s << "#include \"logos_sdk.h\"\n";
+    s << "\n";
 
     // -- shared statics ------------------------------------------------------
     s << "namespace {\n\n";
@@ -199,8 +218,6 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "logos_module_emit_cb g_emitCb = nullptr;\n";
     s << "void* g_emitUd = nullptr;\n";
     s << "std::mutex g_emitMutex;\n";
-    s << "std::map<std::string, std::string> g_tokens;\n";
-    s << "std::mutex g_tokensMutex;\n";
     s << "std::mutex g_ctxMutex;\n";
     s << "bool g_ctxStored = false;\n";
     s << "std::string g_ctxPath, g_ctxId, g_ctxPersist;\n";
@@ -236,6 +253,30 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
 
     s << "std::vector<uint8_t> lidlBytesFromJson(const nlohmann::json& j)\n{\n";
     s << "    std::vector<uint8_t> out;\n";
+    s << "    // Lenient bytes decode (matches the std path, where a QString or\n";
+    s << "    // QByteArray arg both became bytes): a caller may send the tagged\n";
+    s << "    // {\"_bytes\": base64url} form, a plain string (raw UTF-8 bytes), or\n";
+    s << "    // an array of byte values. Only the tagged form needs base64.\n";
+    s << "    if (j.is_string()) {\n";
+    s << "        const std::string s = j.get<std::string>();\n";
+    s << "        out.assign(s.begin(), s.end());\n";
+    s << "        return out;\n";
+    s << "    }\n";
+    s << "    if (j.is_number()) {\n";
+    s << "        // A number arg becomes its decimal text as bytes — matches\n";
+    s << "        // Qt's QVariant(int)->QByteArray, so a caller (or the\n";
+    s << "        // logoscore CLI's type auto-detection) passing a bare number\n";
+    s << "        // to a bytes param behaves the same as the Qt path.\n";
+    s << "        const std::string s = j.dump();\n";
+    s << "        out.assign(s.begin(), s.end());\n";
+    s << "        return out;\n";
+    s << "    }\n";
+    s << "    if (j.is_array()) {\n";
+    s << "        for (const auto& e : j)\n";
+    s << "            if (e.is_number_integer() || e.is_number_unsigned())\n";
+    s << "                out.push_back(static_cast<uint8_t>(e.get<int64_t>() & 0xff));\n";
+    s << "        return out;\n";
+    s << "    }\n";
     s << "    if (!j.is_object() || j.size() != 1 || !j.contains(\"_bytes\") || !j[\"_bytes\"].is_string())\n";
     s << "        return out;\n";
     s << "    const std::string s64 = j[\"_bytes\"].get<std::string>();\n";
@@ -307,6 +348,12 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "        if (!g_emitCb) return;\n";
     s << "    }\n";
     s << "    g_hookFired.store(true, std::memory_order_release);\n";
+    // Wire the Qt-free typed dependency surface BEFORE onContextReady, so the
+    // author can call modules().<dep>... / subscribe to events from the hook.
+    // maybeSetLogosModules is a no-op for impls that don't derive
+    // LogosModuleContext, so this is safe for context-less cdylibs. The
+    // LogosModules instance lives for the module's lifetime.
+    s << "    _logos_codegen_::maybeSetLogosModules(lidlImpl(), new LogosModules());\n";
     s << "    _logos_codegen_::maybeSetContext(lidlImpl(), path, id, persist);\n";
     s << "}\n\n";
 
@@ -334,7 +381,12 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
             if (i + 1 < md.params.size()) call += ", ";
         }
         call += ")";
-        const bool voidReturn = lidlTypeToQt(md.returnType) == "void";
+        // `void` parses as a Named type "void" from a .lidl (it isn't a
+        // lidlBuiltinType); empty name is the header path's in-memory void.
+        const bool voidReturn =
+            md.returnType.name == "void"
+            || (md.returnType.kind == TypeExpr::Primitive && md.returnType.name.isEmpty())
+            || lidlTypeToQt(md.returnType) == "void";
         if (voidReturn) {
             s << "            " << call << ";\n";
             s << "            return lidlStrdup(\"true\");\n";
@@ -380,9 +432,13 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
 
     s << "int logos_module_accept_token(const char* module_name, const char* token)\n{\n";
     s << "    if (!module_name || !token) return -1;\n";
-    s << "    std::lock_guard<std::mutex> lock(g_tokensMutex);\n";
-    s << "    g_tokens[module_name] = token;\n";
-    s << "    return 0;\n}\n\n";
+    s << "    // Seed the protocol's shared TokenManager so this module's OUTBOUND\n";
+    s << "    // lp_client (modules().<dep>...) can authenticate calls. In\n";
+    s << "    // particular the capability_module bootstrap token the host\n";
+    s << "    // delivers at load lets the automatic requestModule flow fetch a\n";
+    s << "    // per-target token on the first cross-module call. lp_token_save\n";
+    s << "    // writes the same TokenManager::instance() the lp_client reads.\n";
+    s << "    return lp_token_save(module_name, token);\n}\n\n";
 
     s << "const char* logos_module_get_protocol_version(void)\n{\n";
     s << "    return LOGOS_PROTOCOL_VERSION_STRING;\n}\n\n";

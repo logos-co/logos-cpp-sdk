@@ -411,8 +411,73 @@ static bool writeUmbrellaHeader(const QString& genDirPath, QTextStream& err)
     return true;
 }
 
-static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonArray& deps, const QStringList& interfaceNames, QTextStream& err)
+static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonArray& deps, const QStringList& interfaceNames, QTextStream& err, ApiStyle apiStyle = ApiStyle::Qt, const QString& originName = QString())
 {
+    // Lp (Qt-free) umbrella: no LogosAPI. Each dep wrapper self-creates its
+    // lp_client on behalf of `originName` (this module), so the struct is
+    // default-constructible and the glue just does `new LogosModules()`.
+    if (apiStyle == ApiStyle::Lp) {
+        QDir genDir(genDirPath);
+        QString content;
+        QTextStream s(&content);
+        s << "#pragma once\n";
+        s << "#include <string>\n";
+        if (!interfaceNames.isEmpty()) {
+            s << "#include <map>\n";
+            s << "#include <memory>\n";
+        }
+        for (const QJsonValue& v : deps) {
+            if (!v.isString()) continue;
+            s << "#include \"" << v.toString() << "_api.h\"\n";
+        }
+        for (const QString& ifaceName : interfaceNames)
+            s << "#include \"" << ifaceName << "_api.h\"\n";
+        s << "\n";
+        s << "struct LogosModules {\n";
+        s << "    LogosModules()";
+        bool first = true;
+        for (const QJsonValue& v : deps) {
+            if (!v.isString()) continue;
+            s << (first ? " : " : ",\n        ");
+            first = false;
+            s << v.toString() << "(\"" << originName << "\")";
+        }
+        s << " {}\n";
+        for (const QJsonValue& v : deps) {
+            if (!v.isString()) continue;
+            const QString depName = v.toString();
+            s << "    " << toPascalCase(depName) << " " << depName << ";\n";
+        }
+        // Interface dependencies: bound at runtime. The bound wrapper is a
+        // THIN handle over per-provider State the umbrella OWNS for the
+        // module's lifetime — so a transient `modules().bind_x(p)` temporary
+        // can register an async callback / event subscription that outlives
+        // it (the LpClient + RAII subscriptions persist in the map). Keyed by
+        // provider so repeated binds to the same provider share one client.
+        for (const QString& ifaceName : interfaceNames) {
+            const QString className = toPascalCase(ifaceName);
+            s << "    " << className << " bind_" << ifaceName << "(const std::string& moduleName) {\n";
+            s << "        auto& _st = m_" << ifaceName << "_bound[moduleName];\n";
+            s << "        if (!_st) _st = std::make_unique<" << className << "::State>(moduleName, \"" << originName << "\");\n";
+            s << "        return " << className << "(_st.get());\n";
+            s << "    }\n";
+        }
+        for (const QString& ifaceName : interfaceNames) {
+            const QString className = toPascalCase(ifaceName);
+            s << "    std::map<std::string, std::unique_ptr<" << className << "::State>> m_"
+              << ifaceName << "_bound;\n";
+        }
+        s << "};\n";
+        QFile outFile(genDir.filePath("logos_sdk.h"));
+        if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            err << "Failed to write umbrella header: " << outFile.fileName() << "\n";
+            return false;
+        }
+        outFile.write(content.toUtf8());
+        outFile.close();
+        return true;
+    }
+
     // Generate logos_sdk.h from metadata.json's dependencies list. The
     // shape doesn't depend on apiStyle — each dep emits a single
     // `<name>_api.h` whose class signature shape was already decided
@@ -868,9 +933,10 @@ int legacy_main(int argc, char* argv[])
             }
         }
         if (apiVal == "std") apiStyle = ApiStyle::Std;
+        else if (apiVal == "lp") apiStyle = ApiStyle::Lp;
         else if (!apiVal.isEmpty() && apiVal != "qt") {
             err << "Unknown --api-style value: " << apiVal
-                << " (expected 'qt' or 'std')\n";
+                << " (expected 'qt', 'std', or 'lp')\n";
             return 1;
         }
     }
@@ -1014,8 +1080,11 @@ int legacy_main(int argc, char* argv[])
                 QStringList interfaceNames;
                 for (const InterfaceSpec& sp : ifaceSpecs) interfaceNames.append(sp.name);
 
-                // Generate umbrella headers based on dependencies + interfaces
-                if (!writeUmbrellaHeaderFromDeps(genDirPath, deps, interfaceNames, err)) {
+                // Generate umbrella headers based on dependencies + interfaces.
+                // For the Lp (Qt-free) flavor the umbrella bakes this module's
+                // name as the lp_client origin.
+                const QString originName = obj.value("name").toString();
+                if (!writeUmbrellaHeaderFromDeps(genDirPath, deps, interfaceNames, err, apiStyle, originName)) {
                     return 7;
                 }
                 if (!writeUmbrellaSourceFromDeps(genDirPath, deps, interfaceNames, err)) {

@@ -196,6 +196,8 @@ static bool isQtRefType(const QString& t)
 
 QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode)
 {
+    if (apiStyle == ApiStyle::Lp)
+        return makeHeaderLp(moduleName, className, methods, events, bindMode);
     QString h;
     QTextStream s(&h);
     s << "#pragma once\n";
@@ -379,6 +381,8 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
 
 QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode)
 {
+    if (apiStyle == ApiStyle::Lp)
+        return makeSourceLp(moduleName, className, headerBaseName, methods, events, bindMode);
     QString c;
     QTextStream s(&c);
     s << "#include \"" << headerBaseName << "\"\n\n";
@@ -811,3 +815,265 @@ QVector<ParsedMethod> parseProviderHeader(const QString& headerPath, QTextStream
     return methods;
 }
 
+
+// ─── ApiStyle::Lp (Qt-free) wrapper emission ─────────────────────────────
+//
+// Same std-typed surface as ApiStyle::Std, but the generated body calls the
+// logos-protocol C ABI through logos::LpClient instead of LogosAPIClient, so
+// the wrapper's translation unit pulls in no Qt. Used for the cdylib outbound
+// path (a Qt-free module calling its dependencies / subscribing to their
+// events). The class still holds a single target; Static bakes it, Bound takes
+// it at construction (interface dependencies).
+
+// std value -> nlohmann::json push expression. nlohmann handles
+// string/int64/double/bool/vector<string>/json (LogosMap/LogosList) directly;
+// StdLogosResult is encoded as its {success,value,error} object.
+static QString lpPushExpr(const QString& qtType, const QString& argName)
+{
+    const QString std = mapParamTypeStd(qtType);
+    if (std == "StdLogosResult")
+        return "nlohmann::json{{\"success\", " + argName + ".success}, {\"value\", "
+             + argName + ".value}, {\"error\", " + argName + ".error}}";
+    return argName;
+}
+
+// nlohmann::json -> std value expression for a return value or an event arg.
+// Lenient: a type mismatch yields the default-constructed value.
+static QString lpFromJsonExpr(const QString& qtType, const QString& jv)
+{
+    const QString t = mapReturnTypeStd(qtType);
+    if (t == "void")                     return QString();
+    if (t == "std::string")              return "(" + jv + ".is_string() ? " + jv + ".get<std::string>() : std::string())";
+    if (t == "int64_t")                  return "(" + jv + ".is_number_integer() ? " + jv + ".get<int64_t>() : (" + jv + ".is_number() ? static_cast<int64_t>(" + jv + ".get<double>()) : (int64_t)0))";
+    if (t == "double")                   return "(" + jv + ".is_number() ? " + jv + ".get<double>() : 0.0)";
+    if (t == "bool")                     return "(" + jv + ".is_boolean() ? " + jv + ".get<bool>() : false)";
+    if (t == "std::vector<std::string>") return "logos::jsonToStringVec(" + jv + ")";
+    if (t == "LogosMap")                 return "(" + jv + ".is_object() ? " + jv + " : LogosMap::object())";
+    if (t == "LogosList")                return "(" + jv + ".is_array() ? " + jv + " : LogosList::array())";
+    if (t == "StdLogosResult")           return "logos::jsonToStdResult(" + jv + ")";
+    return jv;
+}
+
+// Build the callback parameter list (std types, by-ref where appropriate) for
+// a typed event accessor `on<Event>`.
+static QString lpEventCbParams(const QJsonArray& evParams)
+{
+    QString cbParams;
+    for (int i = 0; i < evParams.size(); ++i) {
+        const QJsonObject p = evParams.at(i).toObject();
+        const QString pt = mapParamTypeStd(p.value("type").toString());
+        if (isStdRefType(pt)) cbParams += "const " + pt + "& ";
+        else                  cbParams += pt + " ";
+        cbParams += p.value("name").toString();
+        if (i + 1 < evParams.size()) cbParams += ", ";
+    }
+    return cbParams;
+}
+
+static QString lpEventAccessorName(const QString& evName)
+{
+    QString cap = evName;
+    if (!cap.isEmpty()) cap[0] = cap[0].toUpper();
+    return QString("on") + cap;
+}
+
+QString makeHeaderLp(const QString& moduleName, const QString& className, const QJsonArray& methods, const QJsonArray& events, BindMode bindMode)
+{
+    (void)moduleName;
+    QString h;
+    QTextStream s(&h);
+    s << "#pragma once\n";
+    s << "#include <cstdint>\n";
+    s << "#include <string>\n";
+    s << "#include <vector>\n";
+    s << "#include <functional>\n";
+    s << "#include <nlohmann/json.hpp>\n";
+    s << "#include \"logos_json.h\"\n";
+    s << "#include \"logos_result.h\"\n";
+    s << "#include \"logos_call_error.h\"\n";
+    s << "#include \"logos_lp_client.h\"\n\n";
+
+    s << "class " << className << " {\n";
+    s << "public:\n";
+    if (bindMode == BindMode::Bound) {
+        // Bound (interface) wrappers are THIN, copyable handles over
+        // umbrella-owned persistent State, so a transient
+        // `modules().bind_x(provider)` temporary can register an async
+        // callback / event subscription that OUTLIVES the temporary: the
+        // LpClient and its RAII subscriptions live in the umbrella for the
+        // module's lifetime (mirroring the LogosAPI-owned-client model the
+        // Qt/std flavor relies on). Owning the client by-value in the handle
+        // would tear the subscription down when the temporary dies.
+        s << "    struct State {\n";
+        s << "        logos::LpClient client;\n";
+        s << "        std::vector<logos::LpSubscription> subs;\n";
+        s << "        State(const std::string& target, const std::string& origin) : client(target, origin) {}\n";
+        s << "    };\n";
+        s << "    explicit " << className << "(State* state) : m_state(state) {}\n\n";
+    } else {
+        s << "    explicit " << className << "(const std::string& origin);\n\n";
+    }
+
+    // Typed event subscribers — one per declared event.
+    for (const QJsonValue& ev : events) {
+        const QJsonObject eo = ev.toObject();
+        const QString evName = eo.value("name").toString();
+        if (evName.isEmpty()) continue;
+        s << "    bool " << lpEventAccessorName(evName)
+          << "(std::function<void(" << lpEventCbParams(eo.value("params").toArray()) << ")> callback);\n";
+    }
+    if (!events.isEmpty()) s << "\n";
+
+    // Methods: sync (with optional CallError out-param) + async overload.
+    for (const QJsonValue& v : methods) {
+        const QJsonObject o = v.toObject();
+        if (!o.value("isInvokable").toBool()) continue;
+        const QString name = o.value("name").toString();
+        const QString ret = mapReturnTypeStd(o.value("returnType").toString());
+        const QJsonArray params = o.value("parameters").toArray();
+
+        s << "    " << ret << " " << name << "(";
+        for (int i = 0; i < params.size(); ++i) {
+            const QJsonObject p = params.at(i).toObject();
+            const QString pt = mapParamTypeStd(p.value("type").toString());
+            if (isStdRefType(pt)) s << "const " << pt << "& " << p.value("name").toString();
+            else                  s << pt << " " << p.value("name").toString();
+            if (i + 1 < params.size()) s << ", ";
+        }
+        if (!params.isEmpty()) s << ", ";
+        s << "logos::CallError* err = nullptr);\n";
+
+        const QString asyncCb = (ret == "void")
+            ? QString("std::function<void()>")
+            : QString("std::function<void(") + ret + ")>";
+        s << "    void " << name << "Async(";
+        for (int i = 0; i < params.size(); ++i) {
+            const QJsonObject p = params.at(i).toObject();
+            const QString pt = mapParamTypeStd(p.value("type").toString());
+            if (isStdRefType(pt)) s << "const " << pt << "& " << p.value("name").toString();
+            else                  s << pt << " " << p.value("name").toString();
+            if (i + 1 < params.size()) s << ", ";
+        }
+        if (!params.isEmpty()) s << ", ";
+        s << asyncCb << " callback);\n";
+    }
+
+    s << "\nprivate:\n";
+    if (bindMode == BindMode::Bound) {
+        s << "    State* m_state;  // umbrella-owned; the handle does not own it\n";
+    } else {
+        s << "    logos::LpClient m_client;\n";
+        if (!events.isEmpty()) s << "    std::vector<logos::LpSubscription> m_subs;\n";
+    }
+    s << "};\n";
+    return h;
+}
+
+QString makeSourceLp(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, const QJsonArray& events, BindMode bindMode)
+{
+    QString c;
+    QTextStream s(&c);
+    s << "#include \"" << headerBaseName << "\"\n";
+    s << "#include <nlohmann/json.hpp>\n\n";
+
+    // How the wrapper reaches its persistent LpClient + subscription store.
+    // Static (concrete dep): owns them by value — the wrapper itself is a
+    // persistent member of the umbrella. Bound (interface): a thin handle
+    // over umbrella-owned State, so a transient handle's async/event
+    // registrations survive (the ctor is inline in the header).
+    const QString clientExpr = (bindMode == BindMode::Bound) ? "m_state->client" : "m_client";
+    const QString subsExpr   = (bindMode == BindMode::Bound) ? "m_state->subs"   : "m_subs";
+
+    // Constructor: LpClient(target, origin). Static bakes the dep name in the
+    // .cpp ctor; Bound's ctor is inline (takes the umbrella-owned State*).
+    if (bindMode != BindMode::Bound)
+        s << className << "::" << className << "(const std::string& origin)"
+          << " : m_client(\"" << moduleName << "\", origin) {}\n\n";
+
+    // Typed event adapters: subscribe via lp_subscribe (JSON array payload),
+    // decode into typed args, keep the RAII subscription alive in m_subs.
+    for (const QJsonValue& ev : events) {
+        const QJsonObject eo = ev.toObject();
+        const QString evName = eo.value("name").toString();
+        if (evName.isEmpty()) continue;
+        const QJsonArray evParams = eo.value("params").toArray();
+        s << "bool " << className << "::" << lpEventAccessorName(evName)
+          << "(std::function<void(" << lpEventCbParams(evParams) << ")> callback) {\n";
+        s << "    if (!callback) return false;\n";
+        s << "    auto _sub = " << clientExpr << ".subscribe(\"" << evName << "\", [callback](nlohmann::json _a) {\n";
+        s << "        if (!_a.is_array() || _a.size() < " << evParams.size() << ") return;\n";
+        s << "        callback(";
+        for (int i = 0; i < evParams.size(); ++i) {
+            const QJsonObject p = evParams.at(i).toObject();
+            s << lpFromJsonExpr(p.value("type").toString(), QString("_a.at(%1)").arg(i));
+            if (i + 1 < evParams.size()) s << ", ";
+        }
+        s << ");\n";
+        s << "    });\n";
+        s << "    if (!_sub.valid()) return false;\n";
+        s << "    " << subsExpr << ".push_back(std::move(_sub));\n";
+        s << "    return true;\n";
+        s << "}\n\n";
+    }
+
+    // Methods.
+    for (const QJsonValue& v : methods) {
+        const QJsonObject o = v.toObject();
+        if (!o.value("isInvokable").toBool()) continue;
+        const QString name = o.value("name").toString();
+        const QString qtRet = o.value("returnType").toString();
+        const QString ret = mapReturnTypeStd(qtRet);
+        const QJsonArray params = o.value("parameters").toArray();
+
+        auto emitParams = [&]() {
+            for (int i = 0; i < params.size(); ++i) {
+                const QJsonObject p = params.at(i).toObject();
+                const QString pt = mapParamTypeStd(p.value("type").toString());
+                if (isStdRefType(pt)) s << "const " << pt << "& " << p.value("name").toString();
+                else                  s << pt << " " << p.value("name").toString();
+                if (i + 1 < params.size()) s << ", ";
+            }
+        };
+        auto emitArgsArray = [&]() {
+            s << "    nlohmann::json _args = nlohmann::json::array();\n";
+            for (const QJsonValue& pv : params) {
+                const QJsonObject p = pv.toObject();
+                s << "    _args.push_back(" << lpPushExpr(p.value("type").toString(), p.value("name").toString()) << ");\n";
+            }
+        };
+
+        // Sync
+        s << ret << " " << className << "::" << name << "(";
+        emitParams();
+        if (!params.isEmpty()) s << ", ";
+        s << "logos::CallError* err) {\n";
+        emitArgsArray();
+        if (ret == "void") {
+            s << "    " << clientExpr << ".invoke(\"" << name << "\", _args, err);\n";
+        } else {
+            s << "    nlohmann::json _r = " << clientExpr << ".invoke(\"" << name << "\", _args, err);\n";
+            s << "    return " << lpFromJsonExpr(qtRet, "_r") << ";\n";
+        }
+        s << "}\n\n";
+
+        // Async
+        const QString asyncCb = (ret == "void")
+            ? QString("std::function<void()>")
+            : QString("std::function<void(") + ret + ")>";
+        s << "void " << className << "::" << name << "Async(";
+        emitParams();
+        if (!params.isEmpty()) s << ", ";
+        s << asyncCb << " callback) {\n";
+        s << "    if (!callback) return;\n";
+        emitArgsArray();
+        s << "    " << clientExpr << ".invokeAsync(\"" << name << "\", _args, [callback](nlohmann::json _r) {\n";
+        if (ret == "void") {
+            s << "        (void)_r; callback();\n";
+        } else {
+            s << "        callback(" << lpFromJsonExpr(qtRet, "_r") << ");\n";
+        }
+        s << "    });\n";
+        s << "}\n\n";
+    }
+    return c;
+}

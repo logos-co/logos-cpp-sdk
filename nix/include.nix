@@ -19,7 +19,16 @@ pkgs.stdenv.mkDerivation {
 
     mkdir -p $out/include/cpp
 
-    for file in logos_module_context.h logos_json.h logos_result.h; do
+    # logos_lp_client.h MUST sit in the same directory as the headers it
+    # includes (logos_result.h, logos_json.h). A cdylib module's generated
+    # dep wrapper includes "logos_lp_client.h" via the include/cpp source-
+    # export root, and a quoted include resolves siblings relative to the
+    # including file. If logos_lp_client.h lived only at the top-level
+    # include/ (the CMake-export layout) while logos_result.h is reached via
+    # include/cpp/, a single TU would pull logos_result.h through two
+    # distinct realpaths and #pragma once could not dedup them
+    # (redefinition of StdLogosResult). Ship every std header in BOTH roots.
+    for file in logos_module_context.h logos_json.h logos_result.h logos_lp_client.h; do
       cp cpp/$file $out/include/cpp/
       cp cpp/$file $out/include/
     done
