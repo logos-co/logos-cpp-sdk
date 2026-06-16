@@ -8,8 +8,13 @@
   # wire is Qt-version-sensitive.
   inputs.logos-protocol.url = "github:logos-co/logos-protocol";
   inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
+  # The canonical, language-neutral LIDL frontend (lexer/parser/AST/serializer/
+  # validator) the code generator links. Follows our logos-nix so it resolves
+  # the identical nixpkgs pin.
+  inputs.logos-lidl.url = "github:logos-co/logos-lidl";
+  inputs.logos-lidl.inputs.logos-nix.follows = "logos-nix";
 
-  outputs = { self, nixpkgs, logos-nix, logos-protocol }:
+  outputs = { self, nixpkgs, logos-nix, logos-protocol, logos-lidl }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
@@ -24,10 +29,10 @@
           src = ./.;
           
           # Individual package components
-          bin = import ./nix/bin.nix { inherit pkgs common src logos-protocol; };
+          bin = import ./nix/bin.nix { inherit pkgs common src logos-protocol; logos-lidl = logos-lidl.packages.${pkgs.system}.logos-lidl; };
           lib = import ./nix/lib.nix { inherit pkgs common src logos-protocol; };
           include = import ./nix/include.nix { inherit pkgs common src logos-protocol; };
-          tests = import ./nix/tests.nix { inherit pkgs common src logos-protocol; };
+          tests = import ./nix/tests.nix { inherit pkgs common src logos-protocol; logos-lidl = logos-lidl.packages.${pkgs.system}.logos-lidl; };
           
           # Combined SDK package. We re-declare propagatedBuildInputs on
           # the join so downstream Nix derivations that depend on the
@@ -63,7 +68,7 @@
         let
           common = import ./nix/default.nix { inherit pkgs; };
           src = ./.;
-          tests = import ./nix/tests.nix { inherit pkgs common src logos-protocol; };
+          tests = import ./nix/tests.nix { inherit pkgs common src logos-protocol; logos-lidl = logos-lidl.packages.${pkgs.system}.logos-lidl; };
         in
         {
           inherit tests;

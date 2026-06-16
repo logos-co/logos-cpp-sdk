@@ -126,7 +126,7 @@ static bool parseMethodLine(const QString& line, MethodDecl& out)
     if (nameStart >= nameEnd)
         return false;
 
-    out.name = prefix.mid(nameStart, nameEnd - nameStart);
+    const QString methodName = prefix.mid(nameStart, nameEnd - nameStart);
 
     // Reject if the extracted name is a C++ keyword — this filters out
     // member variable declarations like "std::function<void(...)> onEvent"
@@ -136,8 +136,9 @@ static bool parseMethodLine(const QString& line, MethodDecl& out)
         "auto", "return", "if", "else", "for", "while", "do", "switch",
         "case", "break", "continue", "const", "static", "inline", "virtual"
     };
-    if (cppKeywords.contains(out.name))
+    if (cppKeywords.contains(methodName))
         return false;
+    out.name = methodName.toStdString();
     QString retTypeStr = prefix.left(nameStart).trimmed();
     out.returnType = cppTypeToLidl(retTypeStr);
     // Flag methods whose impl returns LogosMap / LogosList so the generator
@@ -177,9 +178,9 @@ static bool parseMethodLine(const QString& line, MethodDecl& out)
             if (pNameStart >= pNameEnd) continue;
 
             ParamDecl pd;
-            pd.name = p.mid(pNameStart, pNameEnd - pNameStart);
+            pd.name = p.mid(pNameStart, pNameEnd - pNameStart).toStdString();
             pd.type = cppTypeToLidl(p.left(pNameStart));
-            out.params.append(pd);
+            out.params.push_back(pd);
         }
     }
 
@@ -219,31 +220,31 @@ ImplParseResult parseImplHeader(const QString& headerPath,
             return result;
         }
         QJsonObject obj = doc.object();
-        result.module.name = obj.value("name").toString();
-        result.module.version = obj.value("version").toString();
-        result.module.description = obj.value("description").toString();
-        result.module.category = obj.value("category").toString();
+        result.module.name = obj.value("name").toString().toStdString();
+        result.module.version = obj.value("version").toString().toStdString();
+        result.module.description = obj.value("description").toString().toStdString();
+        result.module.category = obj.value("category").toString().toStdString();
         QJsonArray deps = obj.value("dependencies").toArray();
         for (const QJsonValue& v : deps)
-            result.module.depends.append(v.toString());
+            result.module.depends.push_back(v.toString().toStdString());
 
         // Read events declared in metadata.json
         QJsonArray events = obj.value("events").toArray();
         for (const QJsonValue& ev : events) {
             QJsonObject evObj = ev.toObject();
             EventDecl ed;
-            ed.name = evObj.value("name").toString();
-            ed.description = evObj.value("description").toString();
+            ed.name = evObj.value("name").toString().toStdString();
+            ed.description = evObj.value("description").toString().toStdString();
             QJsonArray params = evObj.value("params").toArray();
             for (const QJsonValue& pv : params) {
                 QJsonObject po = pv.toObject();
                 ParamDecl pd;
-                pd.name = po.value("name").toString();
+                pd.name = po.value("name").toString().toStdString();
                 pd.type = cppTypeToLidl(po.value("type").toString());
-                ed.params.append(pd);
+                ed.params.push_back(pd);
             }
-            if (!ed.name.isEmpty())
-                result.module.events.append(ed);
+            if (!ed.name.empty())
+                result.module.events.push_back(ed);
         }
     }
 
@@ -421,8 +422,8 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                         EventDecl ed;
                         ed.name = md.name;
                         ed.params = md.params;
-                        ed.description = joinDocLines(pendingDoc);
-                        result.module.events.append(ed);
+                        ed.description = joinDocLines(pendingDoc).toStdString();
+                        result.module.events.push_back(ed);
                     }
                 }
                 pendingDoc.clear();
@@ -457,9 +458,9 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                         "onContextReady", "modules", "modulePath",
                         "instanceId", "instancePersistencePath"
                     };
-                    if (!reserved.contains(md.name)) {
-                        md.description = joinDocLines(pendingDoc);
-                        result.module.methods.append(md);
+                    if (!reserved.contains(qs(md.name))) {
+                        md.description = joinDocLines(pendingDoc).toStdString();
+                        result.module.methods.push_back(md);
                     }
                 }
             }
@@ -469,7 +470,7 @@ ImplParseResult parseImplHeader(const QString& headerPath,
     }
 
 done:
-    if (result.module.methods.isEmpty()) {
+    if (result.module.methods.empty()) {
         err << "Warning: no public methods found in class " << className
             << " in " << headerPath << "\n";
     }

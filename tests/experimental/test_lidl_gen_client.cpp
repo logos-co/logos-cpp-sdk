@@ -8,37 +8,37 @@ static ModuleDecl makeTestModule()
     m.version = "1.0.0";
     m.description = "Wallet";
     m.category = "finance";
-    m.depends << "crypto";
+    m.depends.push_back("crypto");
 
     {
         MethodDecl md;
         md.name = "createAccount";
         md.returnType = { TypeExpr::Primitive, "tstr", {} };
         ParamDecl p; p.name = "passphrase"; p.type = { TypeExpr::Primitive, "tstr", {} };
-        md.params.append(p);
-        m.methods.append(md);
+        md.params.push_back(p);
+        m.methods.push_back(md);
     }
     {
         MethodDecl md;
         md.name = "getBalance";
         md.returnType = { TypeExpr::Primitive, "uint", {} };
         ParamDecl p; p.name = "address"; p.type = { TypeExpr::Primitive, "tstr", {} };
-        md.params.append(p);
-        m.methods.append(md);
+        md.params.push_back(p);
+        m.methods.push_back(md);
     }
     {
         MethodDecl md;
         md.name = "listAccounts";
         TypeExpr elem = { TypeExpr::Primitive, "tstr", {} };
         md.returnType = { TypeExpr::Array, "", { elem } };
-        m.methods.append(md);
+        m.methods.push_back(md);
     }
 
     EventDecl ed;
     ed.name = "onTransfer";
     ParamDecl ep; ep.name = "hash"; ep.type = { TypeExpr::Primitive, "tstr", {} };
-    ed.params.append(ep);
-    m.events.append(ed);
+    ed.params.push_back(ep);
+    m.events.push_back(ed);
 
     return m;
 }
@@ -191,11 +191,11 @@ TEST(LidlGenClient, MethodWithManyParams)
     md.returnType = { TypeExpr::Primitive, "tstr", {} };
     for (int i = 0; i < 7; ++i) {
         ParamDecl p;
-        p.name = QString("p%1").arg(i);
+        p.name = QString("p%1").arg(i).toStdString();
         p.type = { TypeExpr::Primitive, "tstr", {} };
-        md.params.append(p);
+        md.params.push_back(p);
     }
-    m.methods.append(md);
+    m.methods.push_back(md);
 
     QString s = lidlMakeSource(m);
     // >5 params should use QVariantList{} syntax
@@ -209,7 +209,7 @@ TEST(LidlGenClient, VoidReturnMethod)
     MethodDecl md;
     md.name = "doStuff";
     md.returnType = { TypeExpr::Primitive, "void", {} };
-    m.methods.append(md);
+    m.methods.push_back(md);
 
     QString h = lidlMakeHeader(m);
     // void return should have async callback with void()

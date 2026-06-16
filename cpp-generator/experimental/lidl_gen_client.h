@@ -1,7 +1,7 @@
 #ifndef LIDL_GEN_CLIENT_H
 #define LIDL_GEN_CLIENT_H
 
-#include "lidl_ast.h"
+#include "lidl_compat.h"
 #include "../legacy/generator_lib.h"  // BindMode
 #include <QString>
 #include <QTextStream>
