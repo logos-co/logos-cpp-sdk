@@ -10,8 +10,9 @@
   inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
   # The canonical, language-neutral LIDL frontend (lexer/parser/AST/serializer/
   # validator) the code generator links. Follows our logos-nix so it resolves
-  # the identical nixpkgs pin.
-  inputs.logos-lidl.url = "github:logos-co/logos-lidl";
+  # the identical nixpkgs pin. Temporary branch pin (descriptions + C ABI) —
+  # re-point at master once logos-lidl lands.
+  inputs.logos-lidl.url = "github:logos-co/logos-lidl/636b06b9f24a993b7f8dc3d31672a9c9634801f7";
   inputs.logos-lidl.inputs.logos-nix.follows = "logos-nix";
 
   outputs = { self, nixpkgs, logos-nix, logos-protocol, logos-lidl }:
