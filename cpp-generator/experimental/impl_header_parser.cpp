@@ -257,7 +257,56 @@ ImplParseResult parseImplHeader(const QString& headerPath,
     QString source = QString::fromUtf8(hf.readAll());
     hf.close();
 
-    QStringList lines = source.split('\n');
+    // Split into physical lines, then merge any whose parentheses are still
+    // open into one logical line. The scanner below is line-based — it only
+    // accepts a method when a single trimmed line ends in ';' and
+    // parseMethodLine finds a balanced '(...)' on it — so without this a method
+    // signature wrapped across several physical lines is silently dropped.
+    // Parens inside comments / string / char literals are ignored.
+    QStringList lines;
+    {
+        const QStringList physical = source.split('\n');
+        QString acc;
+        int parenDepth = 0;
+        bool inBlockComment = false;
+        for (const QString& phys : physical) {
+            bool inStr = false;
+            bool inChr = false;
+            for (int i = 0; i < phys.size(); ++i) {
+                const QChar c = phys[i];
+                const QChar n = (i + 1 < phys.size()) ? phys[i + 1] : QChar();
+                if (inBlockComment) {
+                    if (c == '*' && n == '/') { inBlockComment = false; ++i; }
+                } else if (inStr) {
+                    if (c == '\\') ++i; else if (c == '"') inStr = false;
+                } else if (inChr) {
+                    if (c == '\\') ++i; else if (c == '\'') inChr = false;
+                } else if (c == '/' && n == '*') {
+                    inBlockComment = true; ++i;
+                } else if (c == '/' && n == '/') {
+                    break;
+                } else if (c == '"') {
+                    inStr = true;
+                } else if (c == '\'') {
+                    inChr = true;
+                } else if (c == '(') {
+                    ++parenDepth;
+                } else if (c == ')') {
+                    if (parenDepth > 0) --parenDepth;
+                }
+            }
+            if (acc.isEmpty())
+                acc = phys;
+            else
+                acc += ' ' + phys.trimmed();
+            if (parenDepth <= 0) {
+                lines.append(acc);
+                acc.clear();
+            }
+        }
+        if (!acc.isEmpty())
+            lines.append(acc);
+    }
 
     // State machine: find "class <className>", then collect declarations.
     // `InLogosEvents` is entered by the literal `logos_events:` token

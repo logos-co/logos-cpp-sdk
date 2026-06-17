@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <QTemporaryDir>
 #include "impl_header_parser.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -419,4 +420,34 @@ TEST_F(ImplHeaderParserTest, SameLineSectionSpecifiers)
     // The same-line events must land in events[], never leak into methods[].
     EXPECT_EQ(findMethod("versionReady"), nullptr);
     EXPECT_EQ(findMethod("downloadProgress"), nullptr);
+}
+
+
+TEST_F(ImplHeaderParserTest, ParsesMultiLineSignature)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString hp = dir.filePath("ml_impl.h");
+    {
+        QFile f(hp);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write(
+            "#pragma once\n"
+            "#include <string>\n"
+            "class MlImpl {\n"
+            "public:\n"
+            "    std::string single(const std::string& a);\n"
+            "    std::string wrapped(const std::string& first,\n"
+            "                        const std::string& second);\n"
+            "};\n");
+    }
+    auto r = parseImplHeader(hp, "MlImpl",
+                             fixturesDir() + "/sample_metadata.json", err);
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+
+    QStringList names;
+    for (const auto& m : r.module.methods) names << QString::fromStdString(m.name);
+    EXPECT_TRUE(names.contains("single"));
+    EXPECT_TRUE(names.contains("wrapped"))
+        << "got: " << names.join(",").toStdString();
 }
