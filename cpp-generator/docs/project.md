@@ -11,15 +11,15 @@ cpp-generator/
 │   ├── main.cpp                    # legacy_main() — plugin/metadata/provider-header modes
 │   ├── generator_lib.h/cpp         # Shared utilities, type mapping, header parser
 │   └── legacy_main.h              # Forward declaration
-├── experimental/                   # New LIDL + impl-header generator
-│   ├── lidl_ast.h                 # AST types (TypeExpr, ModuleDecl, MethodDecl, etc.)
-│   ├── lidl_lexer.h/cpp           # LIDL tokenizer
-│   ├── lidl_parser.h/cpp          # LIDL recursive descent parser
-│   ├── lidl_validator.h/cpp       # Semantic validation
-│   ├── lidl_serializer.h/cpp      # AST → LIDL text pretty-printer
-│   ├── lidl_gen_client.h/cpp      # Client stub generation + helpers
-│   ├── (Qt glue emitters live in logos-qt-sdk's logos-qt-generator)
-│   └── impl_header_parser.h/cpp   # C++ header → ModuleDecl parser
+├── experimental/                   # C++/Qt-specific generator backends
+│   ├── lidl_compat.h              # Bridges the backends onto logos-lidl's std AST
+│   ├── lidl_emit_common.h/cpp     # LIDL type → Qt/std type-name mapping
+│   ├── lidl_gen_client.h/cpp      # Typed client stub generation (+ Doxygen /// docs)
+│   ├── lidl_gen_cdylib.h/cpp      # cdylib module-impl C-ABI export generation
+│   └── impl_header_parser.h/cpp   # C++ impl header → lidl::ModuleDecl
+│   # The lexer/parser/AST/serializer/validator now live in the standalone
+│   # logos-lidl repo (linked via find_package(logos-lidl)); the Qt glue
+│   # emitters live in logos-qt-sdk's logos-qt-generator.
 └── docs/                          # This documentation
 ```
 
@@ -29,27 +29,18 @@ cpp-generator/
 
 Checks for `--from-header` or `--lidl` flags before creating `QCoreApplication`. If neither is present, falls through to `legacy_main()`.
 
-### AST (`lidl_ast.h`)
+### LIDL frontend — `logos-lidl` (consumed as a library)
 
-Shared data model used by all pipelines:
+The lexer, parser, AST, serializer, and validator are **no longer embedded here** — they live in the standalone **`logos-lidl`** repo, the language-neutral (Qt-free) common frontend every Logos SDK shares (C++ here, Rust in logos-rust-sdk, …). cpp-generator links it via `find_package(logos-lidl)` and reaches it through `experimental/lidl_compat.h`.
 
-- **`TypeExpr`** — type expression with `Kind` (Primitive, Array, Map, Optional, Named), `name`, and `elements`
-- **`ParamDecl`** — parameter name + type
-- **`MethodDecl`** — method name, params, return type, `description` (doc comment above the declaration, emitted into `getMethods()`), `jsonReturn` flag (true when impl returns `LogosMap`/`LogosList`)
-- **`EventDecl`** — event name, params, `description` (doc comment above the `logos_events:` declaration, emitted as a `type: "event"` entry inside `getMethods()`)
-- **`FieldDecl`** — struct field name, type, optional flag
-- **`TypeDecl`** — named struct type with fields
-- **`ModuleDecl`** — complete module: name, version, description, category, depends, types, methods, events
+`logos-lidl` exposes (`namespace lidl`):
 
-All types have `operator==` for testing.
+- `lidl::parse(std::string) → ParseResult` (`ModuleDecl` + error/line/column)
+- `lidl::serialize(ModuleDecl) → std::string`
+- `lidl::validate(ModuleDecl) → ValidationResult`
+- the **AST**: `TypeExpr` (`Kind`: Primitive/Array/Map/Optional/Named, `name`, `elements`), `ParamDecl`, `FieldDecl`, `MethodDecl` (name, params, returnType, `description`, `jsonReturn`, `resultReturn`), `EventDecl` (name, params, `description`), `TypeDecl`, `ModuleDecl`. (logos-lidl also exposes an AST↔JSON bridge and a C ABI that the Rust SDK consumes over FFI — not used by this generator.)
 
-### Lexer (`lidl_lexer.h/cpp`)
-
-Tokenizes LIDL source. Token types: `Module`, `TypeKw`, `Method`, `Event`, `Version`, `Description`, `Category`, `Depends`, `Ident`, `StringLit`, symbols (`{`, `}`, `(`, `)`, `[`, `]`, `:`, `,`, `->`, `?`), `Eof`, `Error`. Tracks line/column for error reporting.
-
-### Parser (`lidl_parser.h/cpp`)
-
-Recursive descent parser. Grammar:
+The `.lidl` grammar (defined in logos-lidl):
 
 ```
 module     = "module" IDENT "{" body "}"
@@ -58,28 +49,41 @@ metadata   = "version" STRING | "description" STRING | "category" STRING
            | "depends" "[" (IDENT ("," IDENT)*)? "]"
 type_def   = "type" IDENT "{" field* "}"
 field      = "?"? IDENT ":" type_expr
-method_def = "method" IDENT "(" params ")" "->" type_expr
-event_def  = "event" IDENT "(" params ")"
+method_def = "method" IDENT "(" params ")" "->" type_expr ("description" STRING)?
+event_def  = "event" IDENT "(" params ")" ("description" STRING)?
 params     = (IDENT ":" type_expr ("," IDENT ":" type_expr)*)?
 type_expr  = IDENT | "[" type_expr "]" | "{" type_expr ":" type_expr "}"
            | "?" type_expr
 ```
 
-### Validator (`lidl_validator.h/cpp`)
+Validation (in logos-lidl) checks: empty module name, duplicate type/method/event names, builtin type shadowing, unknown named type references, duplicate parameter names. Serialization round-trips `ModuleDecl` back to `.lidl` text (incl. the trailing `description "…"` clause).
 
-Checks: empty module name, duplicate type/method/event names, builtin type shadowing, unknown named type references, duplicate parameter names within methods.
+### Compat shim (`lidl_compat.h`)
 
-### Serializer (`lidl_serializer.h/cpp`)
+Bridges the existing Qt-flavored backends onto logos-lidl's std AST so they compile unchanged:
 
-Converts `ModuleDecl` back to LIDL text. Used for roundtrip testing (parse → serialize → parse → compare).
+- brings the `lidl::` AST types into the global scope the backends use (via `using`)
+- `qs(std::string) → QString` plus a `QTextStream << std::string` overload, so emission of AST string fields just works
+- name-compatible shims `lidlParse` / `lidlSerialize` / `lidlValidate` over `lidl::parse`/`serialize`/`validate`
 
-### Type Mapping (`lidl_gen_client.h/cpp`)
+### Type Mapping (`lidl_emit_common.h/cpp`)
 
-- `lidlTypeToQt(TypeExpr)` — maps LIDL types to Qt type strings
+- `lidlTypeToQt(TypeExpr)` / `lidlTypeToStd(TypeExpr)` — LIDL type → Qt / std type-name strings
+- `lidlIsStdConvertible(TypeExpr)` — whether a type has a pure-C++ (Qt-free) representation
 - `lidlToPascalCase(name)` — converts `snake_case` to `PascalCase`
-- `lidlMakeHeader(ModuleDecl)` — generates client API header
-- `lidlMakeSource(ModuleDecl)` — generates client API source
+
+### Client stubs (`lidl_gen_client.h/cpp`)
+
+- `lidlMakeHeader(ModuleDecl)` / `lidlMakeSource(ModuleDecl)` — typed `<Module>` client wrapper; each method (and its `…Async` twin) carries a Doxygen `///` comment generated from the method's `description`
 - `lidlGenerateMetadataJson(ModuleDecl)` — generates metadata.json content
+
+### cdylib backend (`lidl_gen_cdylib.h/cpp`)
+
+Emits the Qt-free half of a universal C++ cdylib module:
+
+- `lidlCdylibSupported(ModuleDecl)` — gate to the std-convertible (Qt-free) type subset
+- `lidlMakeModuleImplExports(...)` — the `logos_module_impl.h` C-ABI export wrapper around the universal impl class (compiled into the module's cdylib; dispatches via nlohmann::json)
+- `lidlMakeEventsSourceCdylib(...)` — typed `logos_events:` bodies marshalling into nlohmann::json
 
 ### Per-build API-style choice (`legacy/generator_lib.{h,cpp}`)
 
@@ -119,10 +123,10 @@ Flag plumbing:
 2. `LogosModule.cmake` reads `${LOGOS_API_STYLE}` (default `qt`) and forwards `--api-style=${LOGOS_API_STYLE}` to the `logos-cpp-generator --general-only` invocation that writes the umbrella. Each module's Nix build emits **two** header derivations (`<name>.headers-qt` and `<name>.headers-std`) via `buildHeaders.nix` — one `logos-cpp-generator --api-style=…` run per style, at the dep's build time. A consumer's `buildPlugin.nix` picks `dep.headers-${apiStyle}` and copies its `include/` straight into the build sandbox; no codegen runs at consume time. Nix's laziness means only the variant a downstream actually depends on is realised.
 3. `legacy/main.cpp` parses `--api-style` once and threads the resulting `ApiStyle` through `generateFromPlugin`, `writeUmbrellaHeader{,FromDeps}`. No `_api_std.{h,cpp}` files are ever emitted; each module gets a single `<name>_api.h` + `<name>_api.cpp` pair regardless of style.
 
-### Provider Generation (`lidl_gen_provider.h/cpp`)
+### Provider Generation (logos-qt-generator)
 
-- `lidlTypeToStd(TypeExpr)` — maps LIDL types to C++ std type strings
-- `lidlIsStdConvertible(TypeExpr)` — checks if a type has a pure C++ representation
+> The Qt provider glue (`lidl_gen_provider.{h,cpp}`) is emitted by **logos-qt-sdk's `logos-qt-generator`**, not this binary — it consumes the same `logos-lidl` frontend (+ the shared `lidl_emit_common` / `impl_header_parser` / `lidl_compat.h` helpers, distributed under `share/lidl-frontend`). Documented here for reference.
+
 - `lidlMakeProviderHeader(ModuleDecl, implClass, implHeader)` — generates Qt glue header
   - Emits `nlohmannToQVariant()` helper when any method has `jsonReturn = true`
   - Always emits an `onInit(LogosAPI*) override` that, via SFINAE'd helpers in `logos_module_context.h`, (a) copies the three runtime-injected properties (`modulePath`, `instanceId`, `instancePersistencePath`) into the impl, (b) constructs a per-module `LogosModules` aggregate and threads its pointer through the same base, and (c) installs the typed-event callback (`maybeSetEmitEvent`) consumed by `<name>_events.cpp` method bodies. Impls that don't inherit `LogosModuleContext` compile unchanged — the helper overloads collapse to no-ops. The full `LogosAPI` is never exposed past the provider boundary.
@@ -212,18 +216,15 @@ Tests are in `tests/experimental/`:
 ws test logos-cpp-sdk      # runs all tests including experimental
 ```
 
-Test coverage:
+The frontend tests (lexer/parser/validator/serializer) moved to the **logos-lidl** repo along with the code; only the C++/Qt-specific backends are tested here:
 
 | Test file | What it tests |
 |-----------|---------------|
-| `test_lidl_lexer.cpp` | Tokenization: keywords, identifiers, symbols, strings, escapes, comments, errors, line/column tracking |
-| `test_lidl_parser.cpp` | Parsing: metadata, methods, events, types, type expressions (array, map, optional, all primitives), error cases |
-| `test_lidl_validator.cpp` | Validation: duplicates, shadowing, unknown types, duplicate params |
-| `test_lidl_serializer.cpp` | Serialization: all constructs, roundtrip (parse → serialize → parse → compare) |
 | `test_lidl_type_mapping.cpp` | `lidlTypeToQt`, `lidlTypeToStd`, `lidlIsStdConvertible`, `lidlToPascalCase` |
-| `test_lidl_gen_provider.cpp` | Provider header + dispatch generation: class names, includes, macros, wrapper methods, conversions, events |
 | `test_lidl_gen_client.cpp` | Client stub generation: sync/async methods, events, metadata JSON, edge cases |
 | `test_impl_header_parser.cpp` | Header parsing: type mapping, access specifiers, skipping private/protected, error cases |
+
+(The lexer/parser/AST/serializer/validator round-trip + description tests live in logos-lidl's own `tests/test_lidl.cpp`.)
 
 Fixture files in `tests/experimental/fixtures/`:
 - `sample_impl.h` — module with all supported type variations
@@ -242,5 +243,5 @@ Fixture files in `tests/experimental/fixtures/`:
   - Template methods
   - `std::function` members are silently skipped (never treated as methods)
 - LIDL does not support generic/parameterized types or inheritance
-- Only the `qt` backend is implemented for `--from-header`; future backends (CBOR, Rust) are planned
+- `--from-header` emits the **cdylib** backend here (the `qt` glue backend moved to logos-qt-generator); the **Rust** backend lives in logos-rust-sdk's `lidl-gen`, generating over logos-lidl's C ABI
 - Client stub generation (`lidlMakeHeader`/`lidlMakeSource`) is only available from LIDL files, not from `--from-header`
