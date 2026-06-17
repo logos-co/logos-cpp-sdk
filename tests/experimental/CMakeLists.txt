@@ -1,12 +1,11 @@
 set(EXPERIMENTAL_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/experimental)
 
-add_executable(experimental_tests
-    # LIDL language tests
-    test_lidl_lexer.cpp
-    test_lidl_parser.cpp
-    test_lidl_validator.cpp
-    test_lidl_serializer.cpp
+# The LIDL frontend (lexer/parser/AST/serializer/validator) now lives in
+# logos-lidl and is covered by its own test suite; only the C++/Qt-specific
+# backends (type mapping, gen_client, impl-header parsing) are tested here.
+find_package(logos-lidl REQUIRED)
 
+add_executable(experimental_tests
     # Type mapping tests
     test_lidl_type_mapping.cpp
 
@@ -18,10 +17,6 @@ add_executable(experimental_tests
 
     # Sources under test
     ${EXPERIMENTAL_SRC_DIR}/lidl_emit_common.cpp
-    ${EXPERIMENTAL_SRC_DIR}/lidl_lexer.cpp
-    ${EXPERIMENTAL_SRC_DIR}/lidl_parser.cpp
-    ${EXPERIMENTAL_SRC_DIR}/lidl_validator.cpp
-    ${EXPERIMENTAL_SRC_DIR}/lidl_serializer.cpp
     ${EXPERIMENTAL_SRC_DIR}/lidl_gen_client.cpp
     ${EXPERIMENTAL_SRC_DIR}/impl_header_parser.cpp
 )
@@ -40,6 +35,7 @@ target_compile_definitions(experimental_tests PRIVATE
 target_link_libraries(experimental_tests PRIVATE
     GTest::gtest_main
     Qt${QT_VERSION_MAJOR}::Core
+    logos-lidl::logos_lidl
 )
 
 gtest_discover_tests(experimental_tests)

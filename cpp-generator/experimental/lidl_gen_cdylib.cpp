@@ -83,12 +83,12 @@ void emitInterfaceJson(QTextStream& s, const ModuleDecl& module)
     for (const MethodDecl& md : module.methods) {
         s << "    {\n        nlohmann::json obj;\n";
         s << "        obj[\"name\"] = \"" << md.name << "\";\n";
-        if (!md.description.isEmpty()) {
-            QString esc = md.description;
+        if (!md.description.empty()) {
+            QString esc = qs(md.description);
             esc.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
             s << "        obj[\"description\"] = \"" << esc << "\";\n";
         }
-        QString sig = md.name + "(";
+        QString sig = qs(md.name) + "(";
         for (int i = 0; i < md.params.size(); ++i) {
             sig += lidlTypeToQt(md.params[i].type);
             if (i + 1 < md.params.size()) sig += ",";
@@ -97,7 +97,7 @@ void emitInterfaceJson(QTextStream& s, const ModuleDecl& module)
         s << "        obj[\"signature\"] = \"" << sig << "\";\n";
         s << "        obj[\"returnType\"] = \"" << lidlTypeToQt(md.returnType) << "\";\n";
         s << "        obj[\"isInvokable\"] = true;\n";
-        if (!md.params.isEmpty()) {
+        if (!md.params.empty()) {
             s << "        nlohmann::json params = nlohmann::json::array();\n";
             for (const ParamDecl& pd : md.params) {
                 s << "        params.push_back({{\"type\", \"" << lidlTypeToQt(pd.type)
@@ -111,19 +111,19 @@ void emitInterfaceJson(QTextStream& s, const ModuleDecl& module)
         s << "    {\n        nlohmann::json obj;\n";
         s << "        obj[\"type\"] = \"event\";\n";
         s << "        obj[\"name\"] = \"" << ed.name << "\";\n";
-        if (!ed.description.isEmpty()) {
-            QString esc = ed.description;
+        if (!ed.description.empty()) {
+            QString esc = qs(ed.description);
             esc.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
             s << "        obj[\"description\"] = \"" << esc << "\";\n";
         }
-        QString sig = ed.name + "(";
+        QString sig = qs(ed.name) + "(";
         for (int i = 0; i < ed.params.size(); ++i) {
             sig += lidlTypeToQt(ed.params[i].type);
             if (i + 1 < ed.params.size()) sig += ",";
         }
         sig += ")";
         s << "        obj[\"signature\"] = \"" << sig << "\";\n";
-        if (!ed.params.isEmpty()) {
+        if (!ed.params.empty()) {
             s << "        nlohmann::json params = nlohmann::json::array();\n";
             for (const ParamDecl& pd : ed.params) {
                 s << "        params.push_back({{\"type\", \"" << lidlTypeToQt(pd.type)
@@ -146,7 +146,7 @@ bool lidlCdylibSupported(const ModuleDecl& module, QString* error)
                 if (error)
                     *error = QString("method '%1': parameter '%2' has a type outside the "
                                      "cdylib-supported (Qt-free) subset")
-                                 .arg(md.name, pd.name);
+                                 .arg(qs(md.name), qs(pd.name));
                 return false;
             }
         }
@@ -155,12 +155,12 @@ bool lidlCdylibSupported(const ModuleDecl& module, QString* error)
         // name is the in-memory void from the header path. Treat both as void.
         const bool voidReturn =
             md.returnType.name == "void"
-            || (md.returnType.kind == TypeExpr::Primitive && md.returnType.name.isEmpty());
+            || (md.returnType.kind == TypeExpr::Primitive && md.returnType.name.empty());
         if (!voidReturn && !md.jsonReturn && !md.resultReturn
             && !typeSupported(md.returnType, /*isReturn=*/true)) {
             if (error)
                 *error = QString("method '%1': return type outside the cdylib-supported "
-                                 "(Qt-free) subset").arg(md.name);
+                                 "(Qt-free) subset").arg(qs(md.name));
             return false;
         }
     }
@@ -170,7 +170,7 @@ bool lidlCdylibSupported(const ModuleDecl& module, QString* error)
                 if (error)
                     *error = QString("event '%1': parameter '%2' has a type outside the "
                                      "cdylib-supported (Qt-free) subset")
-                                 .arg(ed.name, pd.name);
+                                 .arg(qs(ed.name), qs(pd.name));
                 return false;
             }
         }
@@ -374,7 +374,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     for (const MethodDecl& md : module.methods) {
         s << "        if (m == \"" << md.name << "\") {\n";
         s << "            if (args.size() < " << md.params.size() << ") return nullptr;\n";
-        QString call = "lidlImpl()." + md.name + "(";
+        QString call = "lidlImpl()." + qs(md.name) + "(";
         for (int i = 0; i < md.params.size(); ++i) {
             call += jsonArgToStd(md.params[i].type,
                                  QString("args.at(%1)").arg(i));
@@ -385,7 +385,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
         // lidlBuiltinType); empty name is the header path's in-memory void.
         const bool voidReturn =
             md.returnType.name == "void"
-            || (md.returnType.kind == TypeExpr::Primitive && md.returnType.name.isEmpty())
+            || (md.returnType.kind == TypeExpr::Primitive && md.returnType.name.empty())
             || lidlTypeToQt(md.returnType) == "void";
         if (voidReturn) {
             s << "            " << call << ";\n";

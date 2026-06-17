@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.14)
 project(LogosCppGenerator)
 
-set(CMAKE_CXX_STANDARD 11)
+# C++17: the generator consumes logos-lidl (built with C++17), and its AST
+# aggregate-initialization (e.g. `{TypeExpr::Primitive, "bool", {}}` in the
+# impl-header parser) needs aggregates-with-default-member-initializers.
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
@@ -9,21 +12,23 @@ set(CMAKE_AUTOMOC ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
 
+# logos-lidl: the canonical, language-neutral LIDL frontend (lexer/parser/AST/
+# serializer/validator). The generator links it instead of embedding its own
+# copy; only the C++/Qt-specific backends (impl-header parsing, gen_client,
+# gen_cdylib) live here now.
+find_package(logos-lidl REQUIRED)
+
 add_executable(logos-cpp-generator
     main.cpp
     legacy/main.cpp
     legacy/generator_lib.cpp
     experimental/lidl_emit_common.cpp
-    experimental/lidl_lexer.cpp
-    experimental/lidl_parser.cpp
-    experimental/lidl_serializer.cpp
-    experimental/lidl_validator.cpp
     experimental/lidl_gen_client.cpp
     experimental/lidl_gen_cdylib.cpp
     experimental/impl_header_parser.cpp
 )
 
-target_link_libraries(logos-cpp-generator PRIVATE Qt${QT_VERSION_MAJOR}::Core)
+target_link_libraries(logos-cpp-generator PRIVATE Qt${QT_VERSION_MAJOR}::Core logos-lidl::logos_lidl)
 
 # nlohmann_json: pulled in transitively by logos_provider_object.h →
 # logos_provider_interface.h / logos_json_convert.h (header-only use).
@@ -61,25 +66,4 @@ target_include_directories(logos-cpp-generator PRIVATE
 # Output directories
 set_target_properties(logos-cpp-generator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-
-# ── LIDL frontend distribution ───────────────────────────────────────────────
-# logos-qt-sdk's logos-qt-generator (which emits ALL Qt glue: universal,
-# cdylib, ui) compiles these sources directly — source-level sharing keeps the
-# two generators on one frontend without a binary-ABI coupling.
-install(FILES
-    experimental/lidl_ast.h
-    experimental/lidl_lexer.h
-    experimental/lidl_lexer.cpp
-    experimental/lidl_parser.h
-    experimental/lidl_parser.cpp
-    experimental/lidl_serializer.h
-    experimental/lidl_serializer.cpp
-    experimental/lidl_validator.h
-    experimental/lidl_validator.cpp
-    experimental/impl_header_parser.h
-    experimental/impl_header_parser.cpp
-    experimental/lidl_emit_common.h
-    experimental/lidl_emit_common.cpp
-    DESTINATION share/lidl-frontend
 )

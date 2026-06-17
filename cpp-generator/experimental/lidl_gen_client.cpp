@@ -1,7 +1,5 @@
 #include "lidl_gen_client.h"
 #include "lidl_emit_common.h"
-#include "lidl_parser.h"
-#include "lidl_validator.h"
 
 #include <QFile>
 #include <QDir>
@@ -23,7 +21,7 @@ static bool isRefType(const QString& qt)
         || qt == "QVariantList" || qt == "QVariantMap" || qt == "QByteArray";
 }
 
-static void emitParam(QTextStream& s, const QString& qtType, const QString& name)
+static void emitParam(QTextStream& s, const QString& qtType, const std::string& name)
 {
     if (isRefType(qtType))
         s << "const " << qtType << "& " << name;
@@ -64,7 +62,7 @@ static QString asyncDefaultVal(const QString& qt)
 
 QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode)
 {
-    QString className = lidlToPascalCase(module.name);
+    QString className = lidlToPascalCase(qs(module.name));
     QString h;
     QTextStream s(&h);
 
@@ -117,7 +115,7 @@ QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode)
         }
         // Optional error out-channel: pass a logos::CallError* to distinguish
         // a failed remote call from a legitimately default-valued result.
-        if (!md.params.isEmpty()) s << ", ";
+        if (!md.params.empty()) s << ", ";
         s << "logos::CallError* err = nullptr);\n";
         QString asyncCb = (ret == "void")
             ? QString("std::function<void()>")
@@ -127,7 +125,7 @@ QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode)
             emitParam(s, lidlTypeToQt(md.params[i].type), md.params[i].name);
             if (i + 1 < md.params.size()) s << ", ";
         }
-        if (!md.params.isEmpty()) s << ", ";
+        if (!md.params.empty()) s << ", ";
         s << asyncCb << " callback, Timeout timeout = Timeout());\n";
     }
 
@@ -157,8 +155,8 @@ QString lidlMakeHeader(const ModuleDecl& module, BindMode bindMode)
 
 QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
 {
-    QString className = lidlToPascalCase(module.name);
-    QString headerRel = module.name + "_api.h";
+    QString className = lidlToPascalCase(qs(module.name));
+    QString headerRel = qs(module.name) + "_api.h";
     QString c;
     QTextStream s(&c);
 
@@ -169,7 +167,7 @@ QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
     // mode, the runtime m_moduleName member in Bound (interface) mode.
     const QString targetExpr = (bindMode == BindMode::Bound)
         ? QStringLiteral("m_moduleName")
-        : (QStringLiteral("\"") + module.name + QStringLiteral("\""));
+        : (QStringLiteral("\"") + qs(module.name) + QStringLiteral("\""));
     if (bindMode == BindMode::Bound)
         s << className << "::" << className << "(LogosAPI* api, const QString& moduleName) : m_api(api), m_client(api->getClient(moduleName)), m_moduleName(moduleName) {}\n\n";
     else
@@ -292,15 +290,15 @@ QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
 QString lidlGenerateMetadataJson(const ModuleDecl& module)
 {
     QJsonObject obj;
-    obj["name"] = module.name;
-    obj["version"] = module.version.isEmpty() ? "0.0.0" : module.version;
+    obj["name"] = qs(module.name);
+    obj["version"] = module.version.empty() ? QStringLiteral("0.0.0") : qs(module.version);
     obj["type"] = "core";
-    obj["category"] = module.category.isEmpty() ? "general" : module.category;
-    obj["description"] = module.description;
-    obj["main"] = module.name + "_plugin";
+    obj["category"] = module.category.empty() ? QStringLiteral("general") : qs(module.category);
+    obj["description"] = qs(module.description);
+    obj["main"] = qs(module.name) + "_plugin";
     QJsonArray deps;
-    for (const QString& d : module.depends)
-        deps.append(d);
+    for (const std::string& d : module.depends)
+        deps.append(qs(d));
     obj["dependencies"] = deps;
     QJsonDocument doc(obj);
     return doc.toJson(QJsonDocument::Indented);
@@ -324,14 +322,14 @@ int lidlGenerateClientStubs(const QString& lidlPath, const QString& outputDir,
     if (pr.hasError()) { err << lidlPath << ":" << pr.errorLine << ":" << pr.errorColumn << ": " << pr.error << "\n"; return 4; }
 
     LidlValidationResult vr = lidlValidate(pr.module);
-    if (vr.hasErrors()) { for (const QString& e : vr.errors) err << lidlPath << ": " << e << "\n"; return 5; }
+    if (vr.hasErrors()) { for (const std::string& e : vr.errors) err << lidlPath << ": " << e << "\n"; return 5; }
 
     const ModuleDecl& mod = pr.module;
     QString genDirPath = outputDir.isEmpty() ? QDir::current().filePath("logos-cpp-sdk/cpp/generated") : outputDir;
     QDir().mkpath(genDirPath);
 
-    QString headerAbs = QDir(genDirPath).filePath(mod.name + "_api.h");
-    QString sourceAbs = QDir(genDirPath).filePath(mod.name + "_api.cpp");
+    QString headerAbs = QDir(genDirPath).filePath(qs(mod.name) + "_api.h");
+    QString sourceAbs = QDir(genDirPath).filePath(qs(mod.name) + "_api.cpp");
 
     { QFile f(headerAbs); if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) { err << "Failed to write: " << headerAbs << "\n"; return 6; } f.write(lidlMakeHeader(mod).toUtf8()); }
     { QFile f(sourceAbs); if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) { err << "Failed to write: " << sourceAbs << "\n"; return 7; } f.write(lidlMakeSource(mod).toUtf8()); }

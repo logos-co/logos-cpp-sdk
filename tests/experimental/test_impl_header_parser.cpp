@@ -72,7 +72,7 @@ TEST_F(ImplHeaderParserTest, MethodTypes)
     ASSERT_FALSE(r.hasError()) << r.error.toStdString();
 
     // Find specific methods and check their types
-    auto findMethod = [&](const QString& name) -> const MethodDecl* {
+    auto findMethod = [&](const std::string& name) -> const MethodDecl* {
         for (const auto& m : r.module.methods)
             if (m.name == name) return &m;
         return nullptr;
@@ -95,7 +95,7 @@ TEST_F(ImplHeaderParserTest, MethodTypes)
     auto getCount = findMethod("getCount");
     ASSERT_NE(getCount, nullptr);
     EXPECT_EQ(getCount->returnType.name, "int");
-    EXPECT_TRUE(getCount->params.isEmpty());
+    EXPECT_TRUE(getCount->params.empty());
 
     // uint64_t getSize() → uint
     auto getSize = findMethod("getSize");
@@ -166,7 +166,7 @@ TEST_F(ImplHeaderParserTest, EmptyClass)
         fixturesDir() + "/empty_metadata.json",
         err);
     ASSERT_FALSE(r.hasError()) << r.error.toStdString();
-    EXPECT_TRUE(r.module.methods.isEmpty());
+    EXPECT_TRUE(r.module.methods.empty());
     // Should have a warning in err output
     EXPECT_TRUE(errOutput.contains("Warning"));
 }
@@ -184,7 +184,7 @@ TEST_F(ImplHeaderParserTest, ComplexAccessSpecifiers)
         err);
     ASSERT_FALSE(r.hasError()) << r.error.toStdString();
 
-    auto findMethod = [&](const QString& name) -> const MethodDecl* {
+    auto findMethod = [&](const std::string& name) -> const MethodDecl* {
         for (const auto& m : r.module.methods)
             if (m.name == name) return &m;
         return nullptr;
@@ -236,7 +236,7 @@ TEST_F(ImplHeaderParserTest, WrongClassName)
         err);
     // Not an error per se, but should find zero methods and warn
     ASSERT_FALSE(r.hasError());
-    EXPECT_TRUE(r.module.methods.isEmpty());
+    EXPECT_TRUE(r.module.methods.empty());
     EXPECT_TRUE(errOutput.contains("Warning"));
 }
 
@@ -264,7 +264,7 @@ TEST_F(ImplHeaderParserTest, UniversalTypesAndMetadataEvents)
     EXPECT_EQ(r.module.events[0].params[0].name, "info");
     EXPECT_EQ(r.module.events[0].params[0].type.name, "tstr");
 
-    auto findMethod = [&](const QString& name) -> const MethodDecl* {
+    auto findMethod = [&](const std::string& name) -> const MethodDecl* {
         for (const auto& m : r.module.methods)
             if (m.name == name) return &m;
         return nullptr;
@@ -343,7 +343,7 @@ TEST_F(ImplHeaderParserTest, EventDocCommentsFromHeader)
 
     // A plain `//` comment is not a doc comment → no description captured.
     EXPECT_EQ(r.module.events[1].name, "heartbeat");
-    EXPECT_TRUE(r.module.events[1].description.isEmpty());
+    EXPECT_TRUE(r.module.events[1].description.empty());
 
     // Single-line `///` doc comment.
     EXPECT_EQ(r.module.events[2].name, "shutdown");
@@ -366,12 +366,12 @@ TEST_F(ImplHeaderParserTest, SameLineSectionSpecifiers)
         err);
     ASSERT_FALSE(r.hasError()) << r.error.toStdString();
 
-    auto findEvent = [&](const QString& name) -> const EventDecl* {
+    auto findEvent = [&](const std::string& name) -> const EventDecl* {
         for (const auto& e : r.module.events)
             if (e.name == name) return &e;
         return nullptr;
     };
-    auto findMethod = [&](const QString& name) -> const MethodDecl* {
+    auto findMethod = [&](const std::string& name) -> const MethodDecl* {
         for (const auto& m : r.module.methods)
             if (m.name == name) return &m;
         return nullptr;

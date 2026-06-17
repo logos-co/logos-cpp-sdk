@@ -1,7 +1,7 @@
 #ifndef IMPL_HEADER_PARSER_H
 #define IMPL_HEADER_PARSER_H
 
-#include "lidl_ast.h"
+#include "lidl_compat.h"
 #include <QString>
 #include <QTextStream>
 

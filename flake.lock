@@ -1,5 +1,30 @@
 {
   "nodes": {
+    "logos-lidl": {
+      "inputs": {
+        "logos-nix": [
+          "logos-nix"
+        ],
+        "nixpkgs": [
+          "logos-lidl",
+          "logos-nix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1781653473,
+        "narHash": "sha256-8l2tE2K5nY1grcFROQHC1By1jVI0NrfkS3k2v2y6R2I=",
+        "owner": "logos-co",
+        "repo": "logos-lidl",
+        "rev": "8c95d4f0cc6a10195c70ed71e85b7a4cddca02f8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "logos-co",
+        "repo": "logos-lidl",
+        "type": "github"
+      }
+    },
     "logos-nix": {
       "inputs": {
         "nixpkgs": "nixpkgs"
@@ -61,6 +86,7 @@
     },
     "root": {
       "inputs": {
+        "logos-lidl": "logos-lidl",
         "logos-nix": "logos-nix",
         "logos-protocol": "logos-protocol",
         "nixpkgs": [

@@ -1,5 +1,5 @@
 # Builds and runs the test suite
-{ pkgs, common, src, logos-protocol }:
+{ pkgs, common, src, logos-protocol, logos-lidl }:
 
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-tests";
@@ -8,7 +8,9 @@ pkgs.stdenv.mkDerivation {
   inherit src;
 
   nativeBuildInputs = common.nativeBuildInputs;
-  buildInputs = common.buildInputs ++ [ pkgs.gtest ];
+  # logos-lidl: the experimental backend tests link the canonical frontend
+  # (find_package(logos-lidl) in tests/experimental/CMakeLists.txt).
+  buildInputs = common.buildInputs ++ [ pkgs.gtest logos-lidl ];
   cmakeFlags = common.cmakeFlags;
 
   dontUseCmakeConfigure = true;

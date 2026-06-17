@@ -16,7 +16,7 @@
 #include <QtGlobal>
 #include "logos_provider_interface.h"
 #include "generator_lib.h"
-#include "../experimental/lidl_parser.h"
+#include "../experimental/lidl_compat.h"
 #include "../experimental/impl_header_parser.h"
 
 // Escape a string for safe embedding inside a generated C++ string literal.
@@ -82,11 +82,11 @@ static QJsonArray loadEventsFromLidl(const QString& lidlPath, QTextStream& err)
 
     for (const EventDecl& ed : pr.module.events) {
         QJsonObject obj;
-        obj["name"] = ed.name;
+        obj["name"] = qs(ed.name);
         QJsonArray params;
         for (const ParamDecl& pd : ed.params) {
             QJsonObject p;
-            p["name"] = pd.name;
+            p["name"] = qs(pd.name);
             p["type"] = lidlTypeExprToQtTypeName(pd.type);
             params.append(p);
         }
@@ -155,14 +155,14 @@ static QJsonArray moduleMethodsToJson(const ModuleDecl& mod)
     QJsonArray arr;
     for (const MethodDecl& m : mod.methods) {
         QJsonObject o;
-        o["name"] = m.name;
+        o["name"] = qs(m.name);
         o["returnType"] = lidlTypeExprToQtTypeName(m.returnType);
         o["isInvokable"] = true;
         QJsonArray params;
         for (const ParamDecl& p : m.params) {
             QJsonObject po;
             po["type"] = lidlTypeExprToQtTypeName(p.type);
-            po["name"] = p.name;
+            po["name"] = qs(p.name);
             params.append(po);
         }
         o["parameters"] = params;
@@ -178,11 +178,11 @@ static QJsonArray moduleEventsToJson(const ModuleDecl& mod)
     QJsonArray arr;
     for (const EventDecl& ed : mod.events) {
         QJsonObject o;
-        o["name"] = ed.name;
+        o["name"] = qs(ed.name);
         QJsonArray params;
         for (const ParamDecl& pd : ed.params) {
             QJsonObject p;
-            p["name"] = pd.name;
+            p["name"] = qs(pd.name);
             p["type"] = lidlTypeExprToQtTypeName(pd.type);
             params.append(p);
         }
