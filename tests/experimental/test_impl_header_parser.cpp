@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <QTemporaryDir>
 #include "impl_header_parser.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -310,6 +311,41 @@ TEST_F(ImplHeaderParserTest, UniversalTypesAndMetadataEvents)
     EXPECT_FALSE(fetchResult->jsonReturn);
     EXPECT_TRUE(fetchResult->resultReturn);
 
+    auto fetchResultNodiscard = findMethod("fetchResultNodiscard");
+    ASSERT_NE(fetchResultNodiscard, nullptr);
+    EXPECT_EQ(fetchResultNodiscard->returnType.name, "result");
+    EXPECT_TRUE(fetchResultNodiscard->resultReturn);
+
+    auto fetchResultStatic = findMethod("fetchResultStatic");
+    ASSERT_NE(fetchResultStatic, nullptr);
+    EXPECT_EQ(fetchResultStatic->returnType.name, "result");
+    EXPECT_TRUE(fetchResultStatic->resultReturn);
+
+    auto fetchResultNodiscardStatic = findMethod("fetchResultNodiscardStatic");
+    ASSERT_NE(fetchResultNodiscardStatic, nullptr);
+    EXPECT_EQ(fetchResultNodiscardStatic->returnType.name, "result");
+    EXPECT_TRUE(fetchResultNodiscardStatic->resultReturn);
+
+    auto fetchResultStaticNodiscard = findMethod("fetchResultStaticNodiscard");
+    ASSERT_NE(fetchResultStaticNodiscard, nullptr);
+    EXPECT_EQ(fetchResultStaticNodiscard->returnType.name, "result");
+    EXPECT_TRUE(fetchResultStaticNodiscard->resultReturn);
+
+    auto fetchResultMultiAttr = findMethod("fetchResultMultiAttr");
+    ASSERT_NE(fetchResultMultiAttr, nullptr);
+    EXPECT_EQ(fetchResultMultiAttr->returnType.name, "result");
+    EXPECT_TRUE(fetchResultMultiAttr->resultReturn);
+
+    auto fetchResultInlineStatic = findMethod("fetchResultInlineStatic");
+    ASSERT_NE(fetchResultInlineStatic, nullptr);
+    EXPECT_EQ(fetchResultInlineStatic->returnType.name, "result");
+    EXPECT_TRUE(fetchResultInlineStatic->resultReturn);
+
+    auto fetchResultConsteval = findMethod("fetchResultConsteval");
+    ASSERT_NE(fetchResultConsteval, nullptr);
+    EXPECT_EQ(fetchResultConsteval->returnType.name, "result");
+    EXPECT_TRUE(fetchResultConsteval->resultReturn);
+
     for (const auto& m : r.module.methods) {
         EXPECT_NE(m.name, "void") << "Keyword should not appear as method name";
     }
@@ -419,4 +455,34 @@ TEST_F(ImplHeaderParserTest, SameLineSectionSpecifiers)
     // The same-line events must land in events[], never leak into methods[].
     EXPECT_EQ(findMethod("versionReady"), nullptr);
     EXPECT_EQ(findMethod("downloadProgress"), nullptr);
+}
+
+
+TEST_F(ImplHeaderParserTest, ParsesMultiLineSignature)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString hp = dir.filePath("ml_impl.h");
+    {
+        QFile f(hp);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write(
+            "#pragma once\n"
+            "#include <string>\n"
+            "class MlImpl {\n"
+            "public:\n"
+            "    std::string single(const std::string& a);\n"
+            "    std::string wrapped(const std::string& first,\n"
+            "                        const std::string& second);\n"
+            "};\n");
+    }
+    auto r = parseImplHeader(hp, "MlImpl",
+                             fixturesDir() + "/sample_metadata.json", err);
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+
+    QStringList names;
+    for (const auto& m : r.module.methods) names << QString::fromStdString(m.name);
+    EXPECT_TRUE(names.contains("single"));
+    EXPECT_TRUE(names.contains("wrapped"))
+        << "got: " << names.join(",").toStdString();
 }
