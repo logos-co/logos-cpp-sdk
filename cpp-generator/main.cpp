@@ -170,15 +170,10 @@ int main(int argc, char* argv[])
                     err << "Error: module not cdylib-eligible: " << cdErr << "\n";
                     return 10;
                 }
-                // concurrency:"multi" (from metadata.json, fed by the builder) ⇒
-                // also export logos_module_dispatch_async (concurrent dispatch).
-                const int concIdx = args.indexOf("--concurrency");
-                const bool multi = concIdx != -1
-                    && args.value(concIdx + 1) == QStringLiteral("multi");
                 struct Out { QString file; QString content; };
                 QList<Out> outs;
                 outs.append({qs(mod.name) + "_module_impl.cpp",
-                             lidlMakeModuleImplExports(mod, implClass, implHeader, multi)});
+                             lidlMakeModuleImplExports(mod, implClass, implHeader)});
                 if (!mod.events.empty())
                     outs.append({qs(mod.name) + "_events_cdylib.cpp",
                                  lidlMakeEventsSourceCdylib(mod, implClass, implHeader)});

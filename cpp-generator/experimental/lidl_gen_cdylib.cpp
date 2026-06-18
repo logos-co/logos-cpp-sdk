@@ -180,8 +180,7 @@ bool lidlCdylibSupported(const ModuleDecl& module, QString* error)
 
 QString lidlMakeModuleImplExports(const ModuleDecl& module,
                                   const QString& implClass,
-                                  const QString& implHeader,
-                                  bool multi)
+                                  const QString& implHeader)
 {
     QString c;
     QTextStream s(&c);
@@ -204,8 +203,6 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "#include <map>\n";
     s << "#include <mutex>\n";
     s << "#include <string>\n";
-    if (multi)
-        s << "#include <thread>\n";
     s << "#include <vector>\n";
     // The Qt-free typed dependency surface: LogosModules (behind modules())
     // built from this module's dependencies (metadata.json#dependencies),
@@ -407,25 +404,6 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    }\n";
     s << "    return nullptr;  // unknown method\n";
     s << "}\n\n";
-
-    if (multi) {
-        // concurrency:"multi" — run each call on its own worker thread and reply
-        // on completion, so a blocking handler does not stall other callers. The
-        // result string is owned here and freed after the host's reply returns
-        // (it parses synchronously, per the logos_module_async_reply contract).
-        // The impl's methods must be thread-safe.
-        s << "void logos_module_dispatch_async(const char* method, const char* args_json,\n";
-        s << "                                 logos_module_async_reply reply, void* ctx)\n{\n";
-        s << "    // Copy the C strings — they may not outlive this call once we go async.\n";
-        s << "    std::string m(method ? method : \"\");\n";
-        s << "    std::string a(args_json ? args_json : \"\");\n";
-        s << "    std::thread([m, a, reply, ctx]() {\n";
-        s << "        char* result = logos_module_dispatch(m.c_str(), a.c_str());\n";
-        s << "        if (reply) reply(result, ctx);\n";
-        s << "        if (result) logos_module_string_free(result);\n";
-        s << "    }).detach();\n";
-        s << "}\n\n";
-    }
 
     s << "char* logos_module_get_methods(void)\n{\n";
     s << "    return lidlStrdup(lidlInterfaceJson().dump());\n}\n\n";
