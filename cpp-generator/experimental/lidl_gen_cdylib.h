@@ -29,9 +29,13 @@
 // cdylib-supported subset.
 bool lidlCdylibSupported(const ModuleDecl& module, QString* error);
 
+// `multi` ⇒ the module declared concurrency:"multi": also export
+// logos_module_dispatch_async (each call run on a worker thread), so a blocking
+// handler does not stall other callers. The impl's methods must be thread-safe.
 QString lidlMakeModuleImplExports(const ModuleDecl& module,
                                   const QString& implClass,
-                                  const QString& implHeader);
+                                  const QString& implHeader,
+                                  bool multi = false);
 
 QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
                                    const QString& implClass,
