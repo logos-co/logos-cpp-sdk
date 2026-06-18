@@ -9,6 +9,28 @@
 #include <QStringList>
 
 // ---------------------------------------------------------------------------
+// Strip leading declaration specifiers / attributes from a return-type string.
+// ---------------------------------------------------------------------------
+
+static QString stripDeclarationSpecifiers(QString string)
+{
+    static const QRegularExpression attributeRe("\\[\\[[^\\]]*\\]\\]");
+    static const QRegularExpression specifierRe(
+        "^(static|virtual|inline|explicit|constexpr|consteval|friend)\\s+");
+
+    string.remove(attributeRe);
+    string = string.trimmed();
+
+    QRegularExpressionMatch specifierMatch = specifierRe.match(string);
+    while (specifierMatch.hasMatch()) {
+        string = string.mid(specifierMatch.capturedLength()).trimmed();
+        specifierMatch = specifierRe.match(string);
+    }
+
+    return string;
+}
+
+// ---------------------------------------------------------------------------
 // C++ type string → LIDL TypeExpr
 // ---------------------------------------------------------------------------
 
@@ -139,7 +161,7 @@ static bool parseMethodLine(const QString& line, MethodDecl& out)
     if (cppKeywords.contains(methodName))
         return false;
     out.name = methodName.toStdString();
-    QString retTypeStr = prefix.left(nameStart).trimmed();
+    QString retTypeStr = stripDeclarationSpecifiers(prefix.left(nameStart).trimmed());
     out.returnType = cppTypeToLidl(retTypeStr);
     // Flag methods whose impl returns LogosMap / LogosList so the generator
     // can emit nlohmann→Qt conversion code in the glue layer.

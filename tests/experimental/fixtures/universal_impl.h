@@ -14,6 +14,13 @@ public:
     QStringList listNames();
     QVariantList anyList();
     StdLogosResult fetchResult();
+    [[nodiscard]] StdLogosResult fetchResultNodiscard();
+    static StdLogosResult fetchResultStatic();
+    [[nodiscard]] static StdLogosResult fetchResultNodiscardStatic();
+    static [[nodiscard]] StdLogosResult fetchResultStaticNodiscard();
+    [[nodiscard]] [[deprecated]] StdLogosResult fetchResultMultiAttr();
+    inline static StdLogosResult fetchResultInlineStatic();
+    [[nodiscard]] consteval StdLogosResult fetchResultConsteval();
 
     // A std::function member: the parser must skip it (not treat it as a
     // callable method). Used to predate the typed `logos_events:` mechanism

@@ -311,6 +311,41 @@ TEST_F(ImplHeaderParserTest, UniversalTypesAndMetadataEvents)
     EXPECT_FALSE(fetchResult->jsonReturn);
     EXPECT_TRUE(fetchResult->resultReturn);
 
+    auto fetchResultNodiscard = findMethod("fetchResultNodiscard");
+    ASSERT_NE(fetchResultNodiscard, nullptr);
+    EXPECT_EQ(fetchResultNodiscard->returnType.name, "result");
+    EXPECT_TRUE(fetchResultNodiscard->resultReturn);
+
+    auto fetchResultStatic = findMethod("fetchResultStatic");
+    ASSERT_NE(fetchResultStatic, nullptr);
+    EXPECT_EQ(fetchResultStatic->returnType.name, "result");
+    EXPECT_TRUE(fetchResultStatic->resultReturn);
+
+    auto fetchResultNodiscardStatic = findMethod("fetchResultNodiscardStatic");
+    ASSERT_NE(fetchResultNodiscardStatic, nullptr);
+    EXPECT_EQ(fetchResultNodiscardStatic->returnType.name, "result");
+    EXPECT_TRUE(fetchResultNodiscardStatic->resultReturn);
+
+    auto fetchResultStaticNodiscard = findMethod("fetchResultStaticNodiscard");
+    ASSERT_NE(fetchResultStaticNodiscard, nullptr);
+    EXPECT_EQ(fetchResultStaticNodiscard->returnType.name, "result");
+    EXPECT_TRUE(fetchResultStaticNodiscard->resultReturn);
+
+    auto fetchResultMultiAttr = findMethod("fetchResultMultiAttr");
+    ASSERT_NE(fetchResultMultiAttr, nullptr);
+    EXPECT_EQ(fetchResultMultiAttr->returnType.name, "result");
+    EXPECT_TRUE(fetchResultMultiAttr->resultReturn);
+
+    auto fetchResultInlineStatic = findMethod("fetchResultInlineStatic");
+    ASSERT_NE(fetchResultInlineStatic, nullptr);
+    EXPECT_EQ(fetchResultInlineStatic->returnType.name, "result");
+    EXPECT_TRUE(fetchResultInlineStatic->resultReturn);
+
+    auto fetchResultConsteval = findMethod("fetchResultConsteval");
+    ASSERT_NE(fetchResultConsteval, nullptr);
+    EXPECT_EQ(fetchResultConsteval->returnType.name, "result");
+    EXPECT_TRUE(fetchResultConsteval->resultReturn);
+
     for (const auto& m : r.module.methods) {
         EXPECT_NE(m.name, "void") << "Keyword should not appear as method name";
     }
