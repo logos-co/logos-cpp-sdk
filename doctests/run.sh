@@ -29,6 +29,7 @@ SPECS=(
   "cpp-sdk-module-runtime.test.yaml"
   "cpp-sdk-module-composition.test.yaml"
   "cpp-sdk-worker-thread-http.test.yaml"
+  "cpp-sdk-concurrent-dispatch.test.yaml"
   "cpp-sdk-generator-roundtrip.test.yaml"
 )
 
