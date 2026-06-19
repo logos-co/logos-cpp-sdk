@@ -116,6 +116,7 @@ jobs:
             doctests/cpp-sdk-module-composition.test.yaml \
             doctests/cpp-sdk-worker-thread-http.test.yaml \
             doctests/cpp-sdk-concurrent-dispatch.test.yaml \
+            doctests/cpp-sdk-generator-roundtrip.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-cpp-sdk=${{ steps.commit.outputs.sha }} \

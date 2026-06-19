@@ -1,0 +1,329 @@
+name: "The C++ Generator: LIDL ⇄ C++ (provider & consumer)"
+output: cpp-sdk-generator-roundtrip.md
+release: ""
+
+intro: |
+  Every module in Logos has a **contract** — the methods other modules may call,
+  and the events they may subscribe to — written in **LIDL** (the Logos Interface
+  Definition Language). The SDK's code generator (`logos-cpp-generator`) sits
+  between that contract and the C++ on both sides of a call, and this doc-test
+  exercises the three flows it supports, on the SDK commit under test (the
+  generator binary itself comes from this commit):
+
+  1. **provider header → LIDL** (`--header-to-lidl`) — distil the contract out of
+     the plain C++ impl class an author writes, with no Qt glue or dispatch, so a
+     module can publish a cheap, language-neutral contract artifact.
+  2. **LIDL → provider** (`--lidl --backend cdylib`) — from that contract, emit
+     the C-ABI **provider glue** that exports the author's impl class to the host
+     (the Qt-free half of a universal module).
+  3. **LIDL → consumer header** (`--lidl --module-only`) — from the same
+     contract, emit the typed **caller** header a *consumer* compiles against,
+     with synchronous callers, asynchronous callers, and event subscribers.
+
+  The example is deliberately a **complex interface**: methods of every arity
+  (zero to four parameters), the full set of round-trippable types (`int`,
+  `uint`, `float64`, `bool`, `tstr`, byte strings, typed arrays, and the `result`
+  error type), and multi-line documentation on both methods *and* events. Because
+  the contract is distilled from the provider header and then drives both
+  generated sides, the doc-test shows the `.lidl` is the single source of truth:
+  the provider header round-trips into it, and the provider glue and consumer
+  header come back out of it. A final section adds the remaining **composite**
+  types (records, maps, optionals).
+
+what_you_build: "A rich `sensor_module` provider header, the `.lidl` contract distilled from it, and both generated sides — the C-ABI provider glue and the typed consumer caller header — all from this SDK commit."
+
+what_you_learn:
+  - How to extract a `.lidl` contract from a plain C++ impl header (`--header-to-lidl`)
+  - How `///` doc comments (including multi-line) and a `logos_events:` block become contract descriptions and events
+  - How to generate the C-ABI provider glue from a contract (`--lidl --backend cdylib --impl-class`)
+  - How to generate a typed consumer caller header from the same contract (`--lidl --module-only`)
+  - How every LIDL type maps into the generated C++ — scalars, byte strings (`QByteArray`), arrays, and `LogosResult`
+  - How composite types (records, maps, optionals) appear in generated code
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "A Linux or macOS machine."
+
+sections:
+  - title: "Build the generator from this SDK commit"
+    step: true
+    text: |
+      The generator ships in the SDK's `logos-cpp-bin` package as
+      `logos-cpp-generator`. Build it from the commit under test so every flow
+      below runs through *this* generator, not a published release.
+    steps:
+      - title: "Build logos-cpp-generator"
+        text: "`{release}` pins to the commit under test (latest master otherwise)."
+        run: "nix build 'github:logos-co/logos-cpp-sdk{release}#logos-cpp-bin' --out-link ./result"
+        code_block: |
+          nix build 'github:logos-co/logos-cpp-sdk#logos-cpp-bin'
+        check_file: "result/bin/logos-cpp-generator"
+        post_text: "The binary is now at `./result/bin/logos-cpp-generator`."
+
+  - title: "The provider header"
+    step: true
+    text: |
+      A universal C++ module is authored as one plain class — the **provider
+      header** — where every `public` method is part of the module's API. This one
+      is deliberately rich:
+
+      - **Every arity** — `temperature()` takes no parameters; `enable(on)` takes
+        one; `record(id, value, note, valid)` takes four.
+      - **Every round-trippable type** — `int64_t`/`uint64_t`, `double`, `bool`,
+        `std::string`, `std::vector<uint8_t>` (bytes), typed `std::vector<T>`
+        arrays, and `StdLogosResult`.
+      - **Documentation** — every method and event has a `///` doc comment, and
+        several span multiple lines.
+      - **Events of varied arity** — declared in the `logos_events:` block;
+        `ready()` carries no payload, `fault(...)` carries three fields.
+    steps:
+      - title: "metadata.json"
+        text: "Supplies the module name, version, and description the contract carries."
+        file:
+          path: metadata.json
+          language: json
+          content: |
+            {
+              "name": "sensor_module",
+              "version": "2.0.0",
+              "type": "core",
+              "category": "general",
+              "description": "A sensor hub: typed readings, batch queries, and status events",
+              "main": "sensor_module_plugin",
+              "interface": "universal",
+              "dependencies": []
+            }
+      - title: "src/sensor_module_impl.h"
+        text: |
+          Plain C++ inheriting `LogosModuleContext`. The generator parses the
+          header textually, so it needs no SDK headers to resolve.
+        file:
+          path: src/sensor_module_impl.h
+          language: cpp
+          content: |
+            #pragma once
+
+            #include <cstdint>
+            #include <string>
+            #include <vector>
+
+            #include <logos_module_context.h>  // LogosModuleContext base + logos_events
+
+            // A sensor hub written in the pure-C++ (universal) style: one plain
+            // class whose public methods become the module's IPC contract.
+            class SensorModuleImpl : public LogosModuleContext {
+            public:
+                SensorModuleImpl() = default;
+                ~SensorModuleImpl() = default;
+
+                /// Returns the latest temperature reading in degrees Celsius.
+                double temperature() const;
+
+                /// Enables or disables the sensor.
+                /// Returns the new enabled state.
+                bool enable(bool on);
+
+                /// Renames the sensor channel.
+                std::string rename(uint64_t id, const std::string& name);
+
+                /// Calibrates a channel with an offset and a human-readable label.
+                bool calibrate(uint64_t id, double offset, const std::string& label);
+
+                /// Records a reading and returns the new sample count.
+                int64_t record(uint64_t id, double value, const std::string& note, bool valid);
+
+                /// Flashes raw firmware bytes and echoes back the stored image.
+                std::vector<uint8_t> firmware(const std::vector<uint8_t>& image);
+
+                /// Resolves a batch of channel ids to their labels.
+                std::vector<std::string> labels(const std::vector<uint64_t>& ids);
+
+                /// Computes the mean of a batch of samples.
+                double average(const std::vector<double>& samples);
+
+                /// Resets a channel; returns a structured success/error result.
+                StdLogosResult reset(const std::string& id);
+
+            logos_events:
+                /// Fires once the sensor has finished warming up.
+                void ready();
+
+                /// Fires on each new reading with the channel id and value.
+                void reading(uint64_t id, double value);
+
+                /// Fires when a channel faults.
+                /// Carries an error code, a message, and whether the fault is fatal.
+                void fault(int64_t code, const std::string& message, bool fatal);
+            };
+
+  - title: "Flow 1 — provider header → LIDL"
+    step: true
+    text: |
+      `--header-to-lidl` parses the impl class and writes back the `.lidl`
+      contract — no Qt glue, no dispatch. The C++ types map straight to LIDL:
+      `int64_t`→`int`, `uint64_t`→`uint`, `double`→`float64`,
+      `std::string`→`tstr`, `std::vector<uint8_t>`→`bstr`, `std::vector<T>`→`[T]`,
+      and `StdLogosResult`→`result`.
+    steps:
+      - title: "Extract the .lidl"
+        text: "`--output-dir` writes `<module-name>.lidl` (here `extracted/sensor_module.lidl`)."
+        run: "./result/bin/logos-cpp-generator --header-to-lidl src/sensor_module_impl.h --impl-class SensorModuleImpl --metadata metadata.json --output-dir extracted"
+        code_block: |
+          logos-cpp-generator --header-to-lidl src/sensor_module_impl.h \
+            --impl-class SensorModuleImpl \
+            --metadata metadata.json \
+            --output-dir extracted
+        expect_contains:
+          - "Generated LIDL:"
+          - "9 methods, 3 events"
+        check_file: "extracted/sensor_module.lidl"
+      - title: "Inspect the extracted contract"
+        text: |
+          Every type came back intact, the four-parameter `record` kept its shape,
+          and the doc comments — including the multi-line ones, joined with `\n` —
+          are carried through as descriptions on methods and events alike. This
+          `.lidl` is now the single source of truth for both generated sides
+          below.
+        run: "cat extracted/sensor_module.lidl"
+        code_block: "cat extracted/sensor_module.lidl"
+        expect_contains:
+          - "method record(id: uint, value: float64, note: tstr, valid: bool) -> int"
+          - "method firmware(image: bstr) -> bstr"
+          - "method labels(ids: [uint]) -> [tstr]"
+          - "method reset(id: tstr) -> result"
+          - "event fault(code: int, message: tstr, fatal: bool)"
+          - "Returns the new enabled state."
+          - "Carries an error code, a message, and whether the fault is fatal."
+
+  - title: "Flow 2 — LIDL → provider"
+    step: true
+    text: |
+      The provider side. From the contract, `--backend cdylib` emits the C-ABI
+      **provider glue** that wraps the author's impl class and exports the uniform
+      `logos_module_*` symbols the host drives — `logos_module_dispatch`,
+      `logos_module_get_methods`, `logos_module_set_context`, and the event
+      emitters. It is Qt-free; the uniform Qt-plugin glue is layered on separately
+      by `logos-qt-generator`. The author writes only the impl class above; this
+      glue is generated.
+    steps:
+      - title: "Generate the provider glue"
+        run: "./result/bin/logos-cpp-generator --lidl extracted/sensor_module.lidl --backend cdylib --impl-class SensorModuleImpl --impl-header sensor_module_impl.h --output-dir provider"
+        code_block: |
+          logos-cpp-generator --lidl extracted/sensor_module.lidl \
+            --backend cdylib \
+            --impl-class SensorModuleImpl --impl-header sensor_module_impl.h \
+            --output-dir provider
+        expect_contains:
+          - "Generated: "
+          - "sensor_module_module_impl.cpp"
+          - "sensor_module_events_cdylib.cpp"
+        check_file: "provider/sensor_module_module_impl.cpp"
+      - title: "Inspect the provider glue"
+        text: |
+          The exports dispatch JSON calls into the author's `SensorModuleImpl`, and
+          the events file routes each `logos_events:` declaration through the
+          host's emit callback.
+        run: "grep -E 'extern \"C\"|logos_module_dispatch|logos_module_get_methods|logos_module_set_context|SensorModuleImpl' provider/sensor_module_module_impl.cpp"
+        code_block: |
+          grep -E 'extern \"C\"|logos_module_|SensorModuleImpl' provider/sensor_module_module_impl.cpp
+        expect_contains:
+          - "logos_module_dispatch"
+          - "logos_module_get_methods"
+          - "SensorModuleImpl"
+
+  - title: "Flow 3 — LIDL → consumer header"
+    step: true
+    text: |
+      The consumer side. From the same contract, `--module-only` emits the typed
+      wrapper a *consumer* compiles against to call `sensor_module`. Each LIDL
+      `method` becomes a synchronous caller plus an `…Async` variant, and each
+      `event` an `on(...)` subscription. The type mapping is the Qt caller style:
+      `float64`→`double`, `tstr`→`QString`, `int`/`uint`→`int`, `bstr`→
+      `QByteArray`, `[tstr]`→`QStringList`, other arrays→`QVariantList`, and
+      `result`→`LogosResult`.
+    steps:
+      - title: "Generate the consumer header"
+        run: "./result/bin/logos-cpp-generator --lidl extracted/sensor_module.lidl --output-dir consumer --module-only"
+        code_block: |
+          logos-cpp-generator --lidl extracted/sensor_module.lidl \
+            --output-dir consumer --module-only
+        expect_contains:
+          - "Generated: "
+          - "sensor_module_api.h"
+        check_file: "consumer/sensor_module_api.h"
+      - title: "Inspect the consumer API"
+        run: "grep -E 'class SensorModule|double temperature|int record|QByteArray firmware|QStringList labels|LogosResult reset|bool on\\(' consumer/sensor_module_api.h"
+        code_block: |
+          grep -E 'class|temperature|record|firmware|labels|reset|on\(' consumer/sensor_module_api.h
+        expect_contains:
+          - "class SensorModule"
+          - "double temperature("
+          - "int record(int id, double value, const QString& note, bool valid"
+          - "QByteArray firmware(const QByteArray& image"
+          - "QStringList labels(const QVariantList& ids"
+          - "LogosResult reset(const QString& id"
+
+  - title: "The full type system: composite types"
+    step: true
+    text: |
+      Beyond the round-trippable core above, LIDL also has **composite** types:
+      named record types (`type`), maps (`{K: V}`), and optionals (`?T`), plus the
+      untyped escape hatch `any`. These cross the wire as untyped JSON, so the
+      generated wrappers carry them as `QVariant` / `QVariantMap` / `QVariantList`
+      (record/map/optional shapes live in the authored contract; a
+      `--header-to-lidl` extraction recovers the std-friendly subset shown
+      earlier). Here is a contract that uses all of them, taken straight to a
+      consumer header.
+    steps:
+      - title: "geometry_module.lidl"
+        file:
+          path: geometry_module.lidl
+          language: text
+          content: |
+            module geometry_module {
+              version "1.0.0"
+              description "Composite types: records, arrays-of-records, maps, and optionals"
+
+              type Point {
+                x: float64
+                y: float64
+              }
+
+              method translate(p: Point, dx: float64, dy: float64) -> Point description "Translates a point by an offset."
+              method bounds(points: [Point]) -> Point description "Returns the bounding corner of a set of points."
+              method attributes(tags: {tstr: any}) -> {tstr: any} description "Echoes a string-keyed map of arbitrary values."
+              method nearest(p: Point, limit: ?uint) -> ?Point description "Finds the nearest point within an optional limit; may return nothing."
+              method describe(p: Point) -> any description "Returns an arbitrary JSON description of a point."
+
+              event moved(from: Point, to: Point) description "Fires when a point moves, carrying both record values."
+            }
+      - title: "Generate the consumer header"
+        run: "./result/bin/logos-cpp-generator --lidl geometry_module.lidl --output-dir geometry --module-only"
+        code_block: |
+          logos-cpp-generator --lidl geometry_module.lidl \
+            --output-dir geometry --module-only
+        expect_contains:
+          - "Generated: "
+          - "geometry_module_api.h"
+        check_file: "geometry/geometry_module_api.h"
+      - title: "Inspect the composite signatures"
+        text: |
+          Records and optionals surface as `QVariant`, an array-of-records as
+          `QVariantList`, and a map as `QVariantMap` — the untyped carriers for the
+          JSON that crosses the process boundary.
+        run: "grep -E 'class GeometryModule|QVariant translate|QVariantList|QVariantMap attributes|QVariant nearest' geometry/geometry_module_api.h"
+        code_block: |
+          grep -E 'class|translate|bounds|attributes|nearest' geometry/geometry_module_api.h
+        expect_contains:
+          - "class GeometryModule"
+          - "QVariant translate(QVariant p, double dx, double dy"
+          - "QVariantMap attributes(const QVariantMap& tags"
+          - "QVariant nearest(QVariant p, QVariant limit"

@@ -30,6 +30,7 @@ SPECS=(
   "cpp-sdk-module-composition.test.yaml"
   "cpp-sdk-worker-thread-http.test.yaml"
   "cpp-sdk-concurrent-dispatch.test.yaml"
+  "cpp-sdk-generator-roundtrip.test.yaml"
 )
 
 # Build the doc-tests against THIS repo's current commit rather than the latest
