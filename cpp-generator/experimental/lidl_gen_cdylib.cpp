@@ -329,6 +329,22 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "            });\n";
     s << "    });\n}\n\n";
 
+    // -- typed dependency surface (modules().<dep>...) -----------------------
+    // Wire modules() INDEPENDENTLY of the persistence context. Each dependency
+    // client bakes its target+origin at codegen time and creates its lp client
+    // lazily on first call, so modules() needs nothing from the context. A
+    // module with deps but no STORED context still must have it wired — gating
+    // it on the context latch (as it used to be) left m_logosModulesPtr null and
+    // segfaulted the first cross-module call when the daemon never delivered a
+    // context. No-op for impls that don't derive LogosModuleContext. Fired once
+    // from the FIRST lidlTryFireContext (i.e. the first dispatch / set_context /
+    // set_emit_callback), before the context-gated early return below.
+    s << "static void lidlEnsureModulesWired()\n{\n";
+    s << "    static std::once_flag once;\n";
+    s << "    std::call_once(once, []() {\n";
+    s << "        _logos_codegen_::maybeSetLogosModules(lidlImpl(), new LogosModules());\n";
+    s << "    });\n}\n\n";
+
     // The context ready-latch: stamp the context + fire onContextReady ONCE,
     // as soon as the module is fully wired (context stored AND the emit
     // callback delivered) — at module load, before publication. Hosts that
@@ -336,6 +352,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     // (requireEmit = false fallback).
     s << "static void lidlTryFireContext(bool requireEmit)\n{\n";
     s << "    lidlEnsureEmitWiring();\n";
+    s << "    lidlEnsureModulesWired();\n";
     s << "    if (g_hookFired.load(std::memory_order_acquire)) return;\n";
     s << "    std::string path, id, persist;\n";
     s << "    {\n";
@@ -348,12 +365,9 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "        if (!g_emitCb) return;\n";
     s << "    }\n";
     s << "    g_hookFired.store(true, std::memory_order_release);\n";
-    // Wire the Qt-free typed dependency surface BEFORE onContextReady, so the
-    // author can call modules().<dep>... / subscribe to events from the hook.
-    // maybeSetLogosModules is a no-op for impls that don't derive
-    // LogosModuleContext, so this is safe for context-less cdylibs. The
-    // LogosModules instance lives for the module's lifetime.
-    s << "    _logos_codegen_::maybeSetLogosModules(lidlImpl(), new LogosModules());\n";
+    // modules() was already wired by lidlEnsureModulesWired() above (before this
+    // context-gated early return), so onContextReady can safely call
+    // modules().<dep>... / subscribe to dependency events from the hook.
     s << "    _logos_codegen_::maybeSetContext(lidlImpl(), path, id, persist);\n";
     s << "}\n\n";
 

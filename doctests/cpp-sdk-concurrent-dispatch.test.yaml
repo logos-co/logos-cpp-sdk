@@ -71,9 +71,11 @@ sections:
     steps:
       - title: "The implementation — plain C++, header-only"
         text: |
-          Create `slow-worker/src/slow_worker_module_impl.h`. The generator parses
-          this header for the method signatures; the bodies are inline. The
-          counters are atomics because `work` may run on several threads at once:
+          Create `slow-worker/src/slow_worker_module_impl.h` — **declarations only**.
+          The generator parses this header for the method signatures, so the bodies
+          live in a `.cpp` (next step); inline bodies would let the header→`.lidl`
+          extraction pick up the calls *inside* them. The counters are atomics
+          because `work` may run on several threads at once:
         file:
           path: slow-worker/src/slow_worker_module_impl.h
           language: cpp
@@ -81,9 +83,7 @@ sections:
             #pragma once
 
             #include <atomic>
-            #include <chrono>
             #include <cstdint>
-            #include <thread>
 
             #include <logos_module_context.h>  // LogosModuleContext base
 
@@ -92,21 +92,36 @@ sections:
             // methods on worker threads, so the counters are atomic.
             class SlowWorkerModuleImpl : public LogosModuleContext {
             public:
-                int64_t work(int64_t ms) {
-                    int64_t now = m_inFlight.fetch_add(1) + 1;
-                    int64_t prev = m_maxSeen.load();
-                    while (now > prev && !m_maxSeen.compare_exchange_weak(prev, now)) { /* retry */ }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(ms > 0 ? ms : 0));
-                    m_inFlight.fetch_sub(1);
-                    return ms;
-                }
-
-                int64_t peak() { return m_maxSeen.load(); }
+                int64_t work(int64_t ms);
+                int64_t peak();
 
             private:
                 std::atomic<int64_t> m_inFlight{0};
                 std::atomic<int64_t> m_maxSeen{0};
             };
+      - title: "The impl .cpp — the method bodies"
+        text: |
+          The bodies live in the `.cpp` (added to the module's sources via
+          `extra_sources`), keeping the parsed header a clean list of signatures:
+        file:
+          path: slow-worker/src/slow_worker_module_impl.cpp
+          language: cpp
+          content: |
+            #include "slow_worker_module_impl.h"
+
+            #include <chrono>
+            #include <thread>
+
+            int64_t SlowWorkerModuleImpl::work(int64_t ms) {
+                int64_t now = m_inFlight.fetch_add(1) + 1;
+                int64_t prev = m_maxSeen.load();
+                while (now > prev && !m_maxSeen.compare_exchange_weak(prev, now)) { /* retry */ }
+                std::this_thread::sleep_for(std::chrono::milliseconds(ms > 0 ? ms : 0));
+                m_inFlight.fetch_sub(1);
+                return ms;
+            }
+
+            int64_t SlowWorkerModuleImpl::peak() { return m_maxSeen.load(); }
       - title: "metadata.json — note `concurrency: \"multi\"`"
         text: |
           `interface: "universal"` is the pure-C++ path; **`concurrency: "multi"`**
@@ -127,7 +142,7 @@ sections:
               "main": "slow_worker_module_plugin",
               "dependencies": [],
               "codegen": { "impl_class": "SlowWorkerModuleImpl", "impl_header": "slow_worker_module_impl.h" },
-              "nix": { "external_libraries": [], "packages": { "build": [], "runtime": [] }, "cmake": { "find_packages": [], "extra_include_dirs": [] } }
+              "nix": { "external_libraries": [], "packages": { "build": [], "runtime": [] }, "cmake": { "find_packages": [], "extra_include_dirs": [], "extra_sources": ["src/slow_worker_module_impl.cpp"] } }
             }
       - title: "CMakeLists.txt + flake.nix"
         file:
@@ -206,6 +221,8 @@ sections:
             public:
                 // Fire `n` concurrent work(ms) calls at the worker; returns `n`.
                 int64_t fanOut(int64_t n, int64_t ms);
+                // Read the worker's observed peak overlap, THROUGH this driver.
+                int64_t peak();
             };
       - title: "The impl .cpp — the cross-module fan-out"
         text: |
@@ -230,6 +247,17 @@ sections:
                     modules().slow_worker_module.workAsync(ms, [](int64_t) {});
                 }
                 return n;
+            }
+
+            int64_t FanoutDriverModuleImpl::peak()
+            {
+                // Read peak via a SYNC call to the worker. The worker is `multi`, so its
+                // reply is deferred (a pending marker + completion event); this module's
+                // generated client awaits it transparently and returns the real number.
+                // (A protocol-0.1 caller — e.g. the logoscore CLI calling the worker
+                // directly — would instead see the raw pending marker, so we read peak
+                // through the driver.)
+                return modules().slow_worker_module.peak();
             }
       - title: "metadata.json — depends on the worker, no concurrency field"
         file:
@@ -320,7 +348,7 @@ sections:
       - title: "Start the daemon"
         run: "sh -c './logos/bin/logoscore -D -m ./modules > logs.txt 2>&1 &'"
         code_block: "logoscore -D -m ./modules > logs.txt &"
-      - run: "sleep 3"
+      - run: "sleep 6"
       - title: "Load the modules"
         run: "./logos/bin/logoscore load-module fanout_driver_module"
         code_block: "logoscore load-module fanout_driver_module"
@@ -338,9 +366,12 @@ sections:
         text: |
           `peak` is the most calls the worker saw running at once. Because the
           worker is `concurrency: "multi"`, all four overlapped, so the peak is
-          **4**. Had the worker been `"single"`, the peak would be **1**:
-        run: "./logos/bin/logoscore call slow_worker_module peak"
-        code_block: "logoscore call slow_worker_module peak"
+          **4**. Had the worker been `"single"`, the peak would be **1**. We read it
+          **through the driver** (`fanout_driver_module.peak`), which forwards to the
+          worker: the driver is a protocol-0.2 consumer, so it awaits the multi
+          worker's deferred reply and returns the real number:
+        run: "./logos/bin/logoscore call fanout_driver_module peak"
+        code_block: "logoscore call fanout_driver_module peak"
         expect_contains:
           - '"result":4'
       - title: "Stop the daemon"
