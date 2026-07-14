@@ -6,6 +6,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../cpp ${CMAKE_CURRENT_BINARY_DI
 
 add_executable(sdk_tests
     test_logos_module_context.cpp
+    test_logos_json_bytes.cpp
 )
 
 target_link_libraries(sdk_tests PRIVATE
