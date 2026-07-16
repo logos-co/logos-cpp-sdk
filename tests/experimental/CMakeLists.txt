@@ -11,6 +11,7 @@ add_executable(experimental_tests
 
     # Code generation tests
     test_lidl_gen_client.cpp
+    test_lidl_gen_cdylib.cpp
 
     # Impl header parser tests
     test_impl_header_parser.cpp
@@ -18,6 +19,7 @@ add_executable(experimental_tests
     # Sources under test
     ${EXPERIMENTAL_SRC_DIR}/lidl_emit_common.cpp
     ${EXPERIMENTAL_SRC_DIR}/lidl_gen_client.cpp
+    ${EXPERIMENTAL_SRC_DIR}/lidl_gen_cdylib.cpp
     ${EXPERIMENTAL_SRC_DIR}/impl_header_parser.cpp
 )
 

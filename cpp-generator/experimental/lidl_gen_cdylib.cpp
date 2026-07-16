@@ -76,6 +76,29 @@ QString stdReturnToJson(const MethodDecl& md, const QString& var)
     return "nlohmann::json(" + var + ")";
 }
 
+void emitBytesEncodeHelpers(QTextStream& s)
+{
+    s << "// Canonical tagged bytes form {\"_bytes\": base64url} (see logos_protocol.h)\n";
+    s << "std::string lidlB64UrlEncode(const std::vector<uint8_t>& bytes)\n{\n";
+    s << "    static const char* alpha = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_\";\n";
+    s << "    std::string out;\n";
+    s << "    size_t i = 0;\n";
+    s << "    while (i + 3 <= bytes.size()) {\n";
+    s << "        uint32_t n = (uint32_t(bytes[i]) << 16) | (uint32_t(bytes[i+1]) << 8) | uint32_t(bytes[i+2]);\n";
+    s << "        out += alpha[(n >> 18) & 0x3f]; out += alpha[(n >> 12) & 0x3f];\n";
+    s << "        out += alpha[(n >> 6) & 0x3f]; out += alpha[n & 0x3f];\n";
+    s << "        i += 3;\n    }\n";
+    s << "    if (i < bytes.size()) {\n";
+    s << "        uint32_t n = uint32_t(bytes[i]) << 16;\n";
+    s << "        if (i + 1 < bytes.size()) n |= uint32_t(bytes[i+1]) << 8;\n";
+    s << "        out += alpha[(n >> 18) & 0x3f]; out += alpha[(n >> 12) & 0x3f];\n";
+    s << "        if (i + 1 < bytes.size()) out += alpha[(n >> 6) & 0x3f];\n";
+    s << "    }\n    return out;\n}\n\n";
+
+    s << "nlohmann::json lidlBytesToJson(const std::vector<uint8_t>& bytes)\n{\n";
+    s << "    return nlohmann::json{{\"_bytes\", lidlB64UrlEncode(bytes)}};\n}\n\n";
+}
+
 void emitInterfaceJson(QTextStream& s, const ModuleDecl& module)
 {
     s << "static nlohmann::json lidlInterfaceJson()\n{\n";
@@ -228,22 +251,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    if (out) std::memcpy(out, str.data(), str.size() + 1);\n";
     s << "    return out;\n}\n\n";
 
-    s << "// Canonical tagged bytes form {\"_bytes\": base64url} (see logos_protocol.h)\n";
-    s << "std::string lidlB64UrlEncode(const std::vector<uint8_t>& bytes)\n{\n";
-    s << "    static const char* alpha = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_\";\n";
-    s << "    std::string out;\n";
-    s << "    size_t i = 0;\n";
-    s << "    while (i + 3 <= bytes.size()) {\n";
-    s << "        uint32_t n = (uint32_t(bytes[i]) << 16) | (uint32_t(bytes[i+1]) << 8) | uint32_t(bytes[i+2]);\n";
-    s << "        out += alpha[(n >> 18) & 0x3f]; out += alpha[(n >> 12) & 0x3f];\n";
-    s << "        out += alpha[(n >> 6) & 0x3f]; out += alpha[n & 0x3f];\n";
-    s << "        i += 3;\n    }\n";
-    s << "    if (i < bytes.size()) {\n";
-    s << "        uint32_t n = uint32_t(bytes[i]) << 16;\n";
-    s << "        if (i + 1 < bytes.size()) n |= uint32_t(bytes[i+1]) << 8;\n";
-    s << "        out += alpha[(n >> 18) & 0x3f]; out += alpha[(n >> 12) & 0x3f];\n";
-    s << "        if (i + 1 < bytes.size()) out += alpha[(n >> 6) & 0x3f];\n";
-    s << "    }\n    return out;\n}\n\n";
+    emitBytesEncodeHelpers(s);
 
     s << "int lidlB64Idx(char ch)\n{\n";
     s << "    if (ch >= 'A' && ch <= 'Z') return ch - 'A';\n";
@@ -299,9 +307,6 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "            n |= uint32_t(c2) << 6;\n";
     s << "            out.push_back((n >> 8) & 0xff);\n";
     s << "        }\n    }\n    return out;\n}\n\n";
-
-    s << "nlohmann::json lidlBytesToJson(const std::vector<uint8_t>& bytes)\n{\n";
-    s << "    return nlohmann::json{{\"_bytes\", lidlB64UrlEncode(bytes)}};\n}\n\n";
 
     s << "nlohmann::json lidlResultToJson(const StdLogosResult& r)\n{\n";
     s << "    nlohmann::json obj;\n";
@@ -476,6 +481,12 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
     s << "// (the export wrapper forwards to the host's emit callback).\n";
     s << "#include \"" << implHeader << "\"\n";
     s << "#include <nlohmann/json.hpp>\n\n";
+    s << "#include <cstdint>\n";
+    s << "#include <string>\n";
+    s << "#include <vector>\n\n";
+    s << "namespace {\n\n";
+    emitBytesEncodeHelpers(s);
+    s << "} // namespace\n\n";
 
     for (const EventDecl& ed : module.events) {
         s << "void " << implClass << "::" << ed.name << "(";
@@ -491,7 +502,7 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
         s << "    nlohmann::json args = nlohmann::json::array();\n";
         for (const ParamDecl& pd : ed.params) {
             if (pd.type.kind == TypeExpr::Primitive && pd.type.name == "bstr")
-                s << "    args.push_back(nlohmann::json{{\"_bytes\", \"\"}}); // bstr events: encode upstream\n";
+                s << "    args.push_back(lidlBytesToJson(" << pd.name << "));\n";
             else
                 s << "    args.push_back(" << pd.name << ");\n";
         }
@@ -500,4 +511,3 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
     }
     return c;
 }
-
