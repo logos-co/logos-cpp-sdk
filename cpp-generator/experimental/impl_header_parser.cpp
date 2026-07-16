@@ -65,6 +65,15 @@ static TypeExpr cppTypeToLidl(const QString& raw)
         if (inner == "uint8_t") {
             return { TypeExpr::Primitive, "bstr", {} };
         }
+        // std::vector<std::vector<uint8_t>> — an array of byte strings. Spelled
+        // out so it lands on `[bstr]` rather than the opaque `any` fallback
+        // below: `any` would make the cdylib gate admit it and then emit a bare
+        // QVariant into the Qt-free TU. As `[bstr]` the gate rejects it with a
+        // message naming the offending parameter.
+        if (inner == "std::vector<uint8_t>") {
+            TypeExpr elem = { TypeExpr::Primitive, "bstr", {} };
+            return { TypeExpr::Array, "", { elem } };
+        }
         if (inner == "int64_t") {
             TypeExpr elem = { TypeExpr::Primitive, "int", {} };
             return { TypeExpr::Array, "", { elem } };

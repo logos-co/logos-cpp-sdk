@@ -34,7 +34,7 @@ QString mapParamType(const QString& qtType)
 {
     const QString base = normalizeType(qtType);
     static const QSet<QString> known = {
-        "void","bool","int","double","float","QString","QStringList","QJsonArray","QVariantList","QVariantMap","QVariant"
+        "void","bool","int","double","float","QString","QStringList","QByteArray","QJsonArray","QVariantList","QVariantMap","QVariant"
     };
     if (known.contains(base)) return base;
     // Fallback to QVariant for unknown types
@@ -46,7 +46,7 @@ QString mapReturnType(const QString& qtType)
     const QString base = normalizeType(qtType);
     if (base.isEmpty() || base == "void") return QString("void");
     static const QSet<QString> known = {
-        "bool","int","double","float","QString","QStringList","QJsonArray","QVariantList","QVariantMap","QVariant","LogosResult"
+        "bool","int","double","float","QString","QStringList","QByteArray","QJsonArray","QVariantList","QVariantMap","QVariant","LogosResult"
     };
     if (known.contains(base)) return base;
     return QString("QVariant");
@@ -84,6 +84,7 @@ static QString mapParamTypeStd(const QString& qtType)
     const QString base = mapParamType(qtType);
     if (base == "QString")      return "std::string";
     if (base == "QStringList")  return "std::vector<std::string>";
+    if (base == "QByteArray")   return "std::vector<uint8_t>";
     if (base == "QJsonArray")   return "LogosList";
     if (base == "QVariantList") return "LogosList";
     if (base == "QVariantMap")  return "LogosMap";
@@ -98,6 +99,7 @@ static QString mapReturnTypeStd(const QString& qtType)
     if (base == "void")         return "void";
     if (base == "QString")      return "std::string";
     if (base == "QStringList")  return "std::vector<std::string>";
+    if (base == "QByteArray")   return "std::vector<uint8_t>";
     if (base == "QJsonArray")   return "LogosList";
     if (base == "QVariantList") return "LogosList";
     if (base == "QVariantMap")  return "LogosMap";
@@ -119,6 +121,9 @@ static QString stdParamToQVariant(const QString& qtType, const QString& argName)
         return "[&]{ QStringList _q; _q.reserve(static_cast<int>(" + argName +
                ".size())); for (const auto& _s : " + argName +
                ") _q.append(QString::fromStdString(_s)); return _q; }()";
+    if (base == "QByteArray")
+        return "QByteArray(reinterpret_cast<const char*>(" + argName +
+               ".data()), static_cast<int>(" + argName + ".size()))";
     if (base == "QJsonArray")
         return "QJsonDocument::fromJson(QByteArray::fromStdString(" + argName +
                ".dump())).array()";
@@ -157,6 +162,9 @@ static QString qVariantToStdReturn(const QString& qtType, const QString& varExpr
         return "[&]{ std::vector<std::string> _v; const QStringList _q = " +
                varExpr + ".toStringList(); _v.reserve(static_cast<size_t>(_q.size())); "
                "for (const QString& _s : _q) _v.push_back(_s.toStdString()); return _v; }()";
+    if (base == "QByteArray")
+        return "[&]{ const QByteArray _b = " + varExpr +
+               ".toByteArray(); return std::vector<uint8_t>(_b.begin(), _b.end()); }()";
     if (base == "QJsonArray" || base == "QVariantList")
         return "LogosList::parse(QJsonDocument(QJsonArray::fromVariantList(" +
                varExpr + ".toList())).toJson(QJsonDocument::Compact).toStdString())";
@@ -834,6 +842,10 @@ static QString lpPushExpr(const QString& qtType, const QString& argName)
     if (std == "StdLogosResult")
         return "nlohmann::json{{\"success\", " + argName + ".success}, {\"value\", "
              + argName + ".value}, {\"error\", " + argName + ".error}}";
+    // Bytes must go out in the canonical tagged form; pushed raw, nlohmann would
+    // serialize the vector as a plain JSON array of numbers.
+    if (std == "std::vector<uint8_t>")
+        return "logos::bytesToJson(" + argName + ")";
     return argName;
 }
 
@@ -848,6 +860,7 @@ static QString lpFromJsonExpr(const QString& qtType, const QString& jv)
     if (t == "double")                   return "(" + jv + ".is_number() ? " + jv + ".get<double>() : 0.0)";
     if (t == "bool")                     return "(" + jv + ".is_boolean() ? " + jv + ".get<bool>() : false)";
     if (t == "std::vector<std::string>") return "logos::jsonToStringVec(" + jv + ")";
+    if (t == "std::vector<uint8_t>")     return "logos::jsonToBytes(" + jv + ")";
     if (t == "LogosMap")                 return "(" + jv + ".is_object() ? " + jv + " : LogosMap::object())";
     if (t == "LogosList")                return "(" + jv + ".is_array() ? " + jv + " : LogosList::array())";
     if (t == "StdLogosResult")           return "logos::jsonToStdResult(" + jv + ")";

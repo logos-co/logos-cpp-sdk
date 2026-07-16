@@ -76,6 +76,51 @@ QString stdReturnToJson(const MethodDecl& md, const QString& var)
     return "nlohmann::json(" + var + ")";
 }
 
+// Qt-free spelling of a LIDL type. lidlTypeToStd() falls back to Qt containers
+// (QVariant / QVariantMap / QVariantList) for the composite types, but a cdylib
+// TU is Qt-free by definition and typeSupported() admits `any` and maps — so
+// spell those as their nlohmann aliases (LogosMap / LogosList) instead. Without
+// this the events sidecar emits a bare `QVariant` parameter and does not
+// compile.
+QString lidlTypeToStdCdylib(const TypeExpr& te)
+{
+    if (te.kind == TypeExpr::Primitive && te.name == "any")
+        return "LogosMap";
+    if (te.kind == TypeExpr::Map)
+        return "LogosMap";
+    if (te.kind == TypeExpr::Array && te.elements.size() == 1
+        && te.elements[0].kind == TypeExpr::Primitive
+        && te.elements[0].name == "any")
+        return "LogosList";
+    return lidlTypeToStd(te);
+}
+
+// True when the module declares at least one `bstr` event parameter — the only
+// reason the events sidecar needs the bytes encoder. Emitting it unconditionally
+// leaves an unused static function (a -Wunused-function warning) in every module
+// whose events carry no binary data.
+bool hasBytesEventParam(const ModuleDecl& module)
+{
+    for (const EventDecl& ed : module.events)
+        for (const ParamDecl& pd : ed.params)
+            if (pd.type.kind == TypeExpr::Primitive && pd.type.name == "bstr")
+                return true;
+    return false;
+}
+
+// True when any event parameter is spelled LogosMap / LogosList, so the sidecar
+// needs <logos_json.h> for those aliases.
+bool hasJsonEventParam(const ModuleDecl& module)
+{
+    for (const EventDecl& ed : module.events)
+        for (const ParamDecl& pd : ed.params) {
+            const QString t = lidlTypeToStdCdylib(pd.type);
+            if (t == "LogosMap" || t == "LogosList")
+                return true;
+        }
+    return false;
+}
+
 void emitBytesEncodeHelpers(QTextStream& s)
 {
     s << "// Canonical tagged bytes form {\"_bytes\": base64url} (see logos_protocol.h)\n";
@@ -483,16 +528,29 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
     s << "#include <nlohmann/json.hpp>\n\n";
     s << "#include <cstdint>\n";
     s << "#include <string>\n";
-    s << "#include <vector>\n\n";
-    s << "namespace {\n\n";
-    emitBytesEncodeHelpers(s);
-    s << "} // namespace\n\n";
+    s << "#include <vector>\n";
+    // LogosMap / LogosList (nlohmann aliases) appear in the emitted signatures
+    // whenever an event carries a map or an `any` payload.
+    if (hasJsonEventParam(module))
+        s << "#include <logos_json.h>\n";
+    s << "\n";
+
+    // Only the modules that actually emit binary event payloads need the bytes
+    // encoder; emitting it everywhere would leave it unused (and warned about).
+    if (hasBytesEventParam(module)) {
+        s << "namespace {\n\n";
+        emitBytesEncodeHelpers(s);
+        s << "} // namespace\n\n";
+    }
 
     for (const EventDecl& ed : module.events) {
         s << "void " << implClass << "::" << ed.name << "(";
         for (int i = 0; i < ed.params.size(); ++i) {
-            const QString stdType = lidlTypeToStd(ed.params[i].type);
-            if (stdType == "std::string" || stdType.startsWith("std::vector"))
+            const QString stdType = lidlTypeToStdCdylib(ed.params[i].type);
+            // Must match the author's declaration in the `logos_events:` block:
+            // the non-scalar types are conventionally taken by const-ref there.
+            if (stdType == "std::string" || stdType.startsWith("std::vector")
+                || stdType == "LogosMap" || stdType == "LogosList")
                 s << "const " << stdType << "& " << ed.params[i].name;
             else
                 s << stdType << " " << ed.params[i].name;

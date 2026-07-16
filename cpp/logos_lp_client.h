@@ -26,6 +26,7 @@
 
 #include "logos_protocol.h"     // lp_* C ABI
 #include "logos_call_error.h"   // logos::CallError
+#include "logos_json.h"         // logos::bytesToJson / logos::jsonToBytes
 #include "logos_result.h"       // StdLogosResult
 
 namespace logos {
@@ -40,6 +41,10 @@ inline std::vector<std::string> jsonToStringVec(const nlohmann::json& j) {
             if (e.is_string()) out.push_back(e.get<std::string>());
     return out;
 }
+
+// Binary payloads travel in the canonical tagged form
+// {"_bytes": "<base64url, unpadded>"}; logos::bytesToJson / logos::jsonToBytes
+// live in logos_json.h and are used by the generated wrappers on both sides.
 
 inline StdLogosResult jsonToStdResult(const nlohmann::json& j) {
     StdLogosResult r;
