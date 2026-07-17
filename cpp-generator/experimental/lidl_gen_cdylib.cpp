@@ -39,6 +39,11 @@ bool typeSupported(const TypeExpr& te, bool isReturn)
     return false;
 }
 
+// Qt-free spelling of a LIDL type (defined below). Forward-declared so the
+// method-param decoder can spell composite `any` containers as their nlohmann
+// aliases instead of Qt containers in this Qt-free TU.
+QString lidlTypeToStdCdylib(const TypeExpr& te);
+
 // json arg expression -> std-typed C++ expression
 QString jsonArgToStd(const TypeExpr& te, const QString& expr)
 {
@@ -51,7 +56,11 @@ QString jsonArgToStd(const TypeExpr& te, const QString& expr)
         if (te.name == "bool")    return expr + ".get<bool>()";
     }
     if (te.kind == TypeExpr::Array && te.elements.size() == 1) {
-        const QString inner = lidlTypeToStd(te);
+        // Qt-free spelling: `[any]` must decode as LogosList, NOT QVariantList
+        // (lidlTypeToStd's Qt fallback), which is undeclared in this TU. Typed
+        // scalar arrays ([tstr]/[int]/…) are unaffected — Cdylib defers to the
+        // same std spelling for them.
+        const QString inner = lidlTypeToStdCdylib(te);
         return expr + ".get<" + inner + ">()";
     }
     return expr;

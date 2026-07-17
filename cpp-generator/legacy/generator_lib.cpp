@@ -60,6 +60,7 @@ QString toQVariantConversion(const QString& type, const QString& argExpr)
     if (type == "float") return argExpr + ".toFloat()";
     if (type == "QString") return argExpr + ".toString()";
     if (type == "QStringList") return argExpr + ".toStringList()";
+    if (type == "QByteArray") return argExpr + ".toByteArray()";
     if (type == "QJsonArray") return "qvariant_cast<QJsonArray>(" + argExpr + ")";
     if (type == "QVariantList") return argExpr + ".toList()";
     if (type == "QVariantMap") return argExpr + ".toMap()";
@@ -639,6 +640,11 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
             s << "    return _result.toString();\n";
         } else if (ret == "QStringList") {
             s << "    return _result.toStringList();\n";
+        } else if (ret == "QByteArray") {
+            // QVariant has no implicit conversion to QByteArray (unlike the
+            // scalar to* accessors), so a `bstr` return needs an explicit
+            // toByteArray() — matching the async path's qvariant_cast.
+            s << "    return _result.toByteArray();\n";
         } else if (ret == "QJsonArray") {
             s << "    return qvariant_cast<QJsonArray>(_result);\n";
         } else if (ret == "QVariantList") {
