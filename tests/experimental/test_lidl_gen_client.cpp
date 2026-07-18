@@ -198,8 +198,37 @@ TEST(LidlGenClient, MethodWithManyParams)
     m.methods.push_back(md);
 
     QString s = lidlMakeSource(m);
-    // >5 params should use QVariantList{} syntax
-    EXPECT_TRUE(s.contains("QVariantList{"));
+    // Args are packed via packVariantList (one QVariant element per arg),
+    // regardless of arity — never a braced/`<<` list that would spread a
+    // QVariantList-typed arg.
+    EXPECT_TRUE(s.contains("packVariantList(p0, p1, p2, p3, p4, p5, p6)"));
+}
+
+// Regression: a QVariantList-typed ([any]/[int]/...) argument must be packed as
+// ONE element, not concatenated into the args list. `QVariantList{v}` and
+// `QVariantList() << v` both spread a QVariantList; packVariantList wraps each
+// arg with QVariant::fromValue, so a single list arg stays a single arg.
+TEST(LidlGenClient, ListArgIsPackedAsOneElement)
+{
+    ModuleDecl m;
+    m.name = "arrs";
+    MethodDecl md;
+    md.name = "echoList";
+    TypeExpr elem = { TypeExpr::Primitive, "any", {} };
+    md.returnType = { TypeExpr::Array, "", { elem } };
+    ParamDecl p;
+    p.name = "v";
+    p.type = { TypeExpr::Array, "", { elem } };
+    md.params.push_back(p);
+    m.methods.push_back(md);
+
+    QString s = lidlMakeSource(m);
+    // Both sync and async pack the single list arg via packVariantList(v).
+    EXPECT_TRUE(s.contains("invokeRemoteMethod(\"arrs\", \"echoList\", packVariantList(v)"));
+    EXPECT_TRUE(s.contains("invokeRemoteMethodAsync(\"arrs\", \"echoList\", packVariantList(v)"));
+    // Guard against the spreading forms regressing back in.
+    EXPECT_FALSE(s.contains("QVariantList{v}"));
+    EXPECT_FALSE(s.contains("QVariantList() << v"));
 }
 
 TEST(LidlGenClient, VoidReturnMethod)

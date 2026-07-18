@@ -233,12 +233,17 @@ QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
         if (ret != "void") s << "    QVariant _result = ";
         else                s << "    ";
 
-        s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\", QVariantList{";
+        // Pack each argument as ONE element via packVariantList (which wraps
+        // with QVariant::fromValue). A braced `QVariantList{v}` or `<< v` would
+        // CONCATENATE a QVariantList-typed arg (any `[T]` list) into the args
+        // list, sending a 3-element [1,2,3] as three positional args instead of
+        // one — the historical "typed arrays empty over the Qt path" bug.
+        s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << md.name << "\", packVariantList(";
         for (int i = 0; i < nParams; ++i) {
             s << md.params[i].name;
             if (i + 1 < nParams) s << ", ";
         }
-        s << "}, Timeout(), &_err);\n";
+        s << "), Timeout(), &_err);\n";
         s << "    if (err) *err = _err;\n";
         s << "    else if (!_err.ok()) qWarning() << \"" << className << "::" << md.name
           << ": remote call failed:\" << QString::fromStdString(_err.message);\n";
@@ -255,19 +260,14 @@ QString lidlMakeSource(const ModuleDecl& module, BindMode bindMode)
         if (nParams > 0) s << ", ";
         s << "std::function<void(" << (ret == "void" ? "void" : ret) << ")> callback, Timeout timeout) {\n";
         s << "    if (!callback) return;\n";
-        s << "    m_client->invokeRemoteMethodAsync(" << targetExpr << ", \"" << md.name << "\", ";
-        if (nParams == 0) {
-            s << "QVariantList()";
-        } else if (nParams == 1) {
-            s << "QVariantList() << " << md.params[0].name;
-        } else {
-            s << "QVariantList{";
-            for (int i = 0; i < nParams; ++i) {
-                s << md.params[i].name;
-                if (i + 1 < nParams) s << ", ";
-            }
-            s << "}";
+        // Same one-element-per-arg packing as the sync path (see above): a
+        // QVariantList-typed arg must not be spread across the args list.
+        s << "    m_client->invokeRemoteMethodAsync(" << targetExpr << ", \"" << md.name << "\", packVariantList(";
+        for (int i = 0; i < nParams; ++i) {
+            s << md.params[i].name;
+            if (i + 1 < nParams) s << ", ";
         }
+        s << ")";
         s << ", [callback](QVariant v) {\n";
         if (ret == "void") {
             s << "        callback();\n";
