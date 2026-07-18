@@ -875,6 +875,12 @@ static QString lpFromJsonExpr(const QString& qtType, const QString& jv)
     if (t == "bool")                     return "(" + jv + ".is_boolean() ? " + jv + ".get<bool>() : false)";
     if (t == "std::vector<std::string>") return "logos::jsonToStringVec(" + jv + ")";
     if (t == "std::vector<uint8_t>")     return "logos::jsonToBytes(" + jv + ")";
+    // `any` (QVariant) is a raw json value of ANY shape — pass it through
+    // unchanged. It shares the LogosMap std type with the `{tstr:any}` map
+    // (QVariantMap), but only the map is forced to an object below; forcing
+    // `any` to an object collapsed every non-object value (a string, a number,
+    // an array) to `{}` (e.g. a proxy forwarding echoAny returned {} for "x").
+    if (mapReturnType(qtType) == "QVariant") return jv;
     if (t == "LogosMap")                 return "(" + jv + ".is_object() ? " + jv + " : LogosMap::object())";
     if (t == "LogosList")                return "(" + jv + ".is_array() ? " + jv + " : LogosList::array())";
     if (t == "StdLogosResult")           return "logos::jsonToStdResult(" + jv + ")";

@@ -127,6 +127,40 @@ TEST(MakeSourceTest, ListArgWrappedAsOneElement)
     EXPECT_FALSE(src.contains("QVariantList{v}"));
 }
 
+// Regression: in the Qt-free (lp) wrapper, an `any` (QVariant) return must pass
+// the raw json value through, NOT force it to an object. `any` shares the
+// LogosMap std type with the `{tstr:any}` map, and forcing `any` to an object
+// collapsed every non-object value to `{}` (e.g. a proxy forwarding echoAny
+// returned {} for the string "x"). The map keeps its object coercion.
+TEST(MakeSourceTest, LpAnyReturnPassesThroughButMapForcesObject)
+{
+    QJsonObject any;
+    any["name"] = "echoAny";
+    any["returnType"] = "QVariant";
+    any["isInvokable"] = true;
+    {
+        QJsonObject p; p["type"] = "QVariant"; p["name"] = "v";
+        QJsonArray ps; ps.append(p); any["parameters"] = ps;
+    }
+    QJsonObject mp;
+    mp["name"] = "echoMap";
+    mp["returnType"] = "QVariantMap";
+    mp["isInvokable"] = true;
+    {
+        QJsonObject p; p["type"] = "QVariantMap"; p["name"] = "v";
+        QJsonArray ps; ps.append(p); mp["parameters"] = ps;
+    }
+    QJsonArray methods;
+    methods.append(any);
+    methods.append(mp);
+
+    QString src = makeSourceLp("mod", "Mod", "mod.h", methods);
+    // `any` return: raw passthrough (return _r;), no is_object coercion.
+    EXPECT_TRUE(src.contains("return _r;"));
+    // `{tstr:any}` map return: still forced to an object.
+    EXPECT_TRUE(src.contains("_r.is_object() ? _r : LogosMap::object()"));
+}
+
 TEST(MakeSourceTest, VoidReturnNoConversion)
 {
     QJsonArray methods;
