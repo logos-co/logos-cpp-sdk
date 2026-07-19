@@ -613,9 +613,15 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
         if (ret != "void") s << "    QVariant _result = ";
         else               s << "    ";
 
+        // Wrap each argument in QVariant::fromValue so it becomes exactly ONE
+        // element of the args list. A bare `QVariantList{v}` CONCATENATES a
+        // QVariantList-typed arg (every `[T]` list) into the args list — sending
+        // a 3-element [1,2,3] as three positional args — the historical "typed
+        // arrays empty over the Qt path" bug. fromValue does not double-wrap an
+        // already-QVariant (`any`) arg.
         s << "m_client->invokeRemoteMethod(" << targetExpr << ", \"" << name << "\", QVariantList{";
         for (int i = 0; i < params.size(); ++i) {
-            s << wireArg(params.at(i).toObject());
+            s << "QVariant::fromValue(" << wireArg(params.at(i).toObject()) << ")";
             if (i + 1 < params.size()) s << ", ";
         }
         s << "}, Timeout(), &_err);\n";
@@ -672,9 +678,11 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
         if (params.size() == 0) {
             s << "QVariantList()";
         } else {
+            // Same one-element-per-arg wrapping as the sync path (see above): a
+            // QVariantList-typed arg must not be spread across the args list.
             s << "QVariantList{";
             for (int i = 0; i < params.size(); ++i) {
-                s << wireArg(params.at(i).toObject());
+                s << "QVariant::fromValue(" << wireArg(params.at(i).toObject()) << ")";
                 if (i + 1 < params.size()) s << ", ";
             }
             s << "}";
@@ -867,6 +875,12 @@ static QString lpFromJsonExpr(const QString& qtType, const QString& jv)
     if (t == "bool")                     return "(" + jv + ".is_boolean() ? " + jv + ".get<bool>() : false)";
     if (t == "std::vector<std::string>") return "logos::jsonToStringVec(" + jv + ")";
     if (t == "std::vector<uint8_t>")     return "logos::jsonToBytes(" + jv + ")";
+    // `any` (QVariant) is a raw json value of ANY shape — pass it through
+    // unchanged. It shares the LogosMap std type with the `{tstr:any}` map
+    // (QVariantMap), but only the map is forced to an object below; forcing
+    // `any` to an object collapsed every non-object value (a string, a number,
+    // an array) to `{}` (e.g. a proxy forwarding echoAny returned {} for "x").
+    if (mapReturnType(qtType) == "QVariant") return jv;
     if (t == "LogosMap")                 return "(" + jv + ".is_object() ? " + jv + " : LogosMap::object())";
     if (t == "LogosList")                return "(" + jv + ".is_array() ? " + jv + " : LogosList::array())";
     if (t == "StdLogosResult")           return "logos::jsonToStdResult(" + jv + ")";
