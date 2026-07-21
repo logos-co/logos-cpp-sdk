@@ -4,6 +4,7 @@
 #include <functional>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 #include "logos_module_context.h"
 
@@ -42,8 +43,11 @@ public:
 
 protected:
     // The host's stored auth token for `moduleName`, or "" when the module is
-    // unknown (never loaded / never issued a token). A non-empty result doubles
-    // as the "is this a known module identity?" check.
+    // unknown (never loaded / never issued a token) OR when the bridge is
+    // unwired (constructed outside a framework context, e.g. unit tests). A
+    // token-authority impl treats both the same way — fail closed — so it does
+    // not need to distinguish them. A non-empty result doubles as the "is this a
+    // known module identity?" check.
     std::string getToken(const std::string& moduleName) const {
         return m_getToken ? m_getToken(moduleName) : std::string();
     }
