@@ -272,6 +272,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "#include \"logos_module_impl.h\"\n";
     s << "#include \"logos_protocol.h\"\n";
     s << "#include \"logos_module_context.h\"\n";
+    s << "#include \"logos_token_manager_context.h\"\n";
     s << "#include \"logos_result.h\"\n";
     s << "#include <nlohmann/json.hpp>\n";
     s << "#include <cstdlib>\n";
@@ -298,7 +299,13 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "std::mutex g_ctxMutex;\n";
     s << "bool g_ctxStored = false;\n";
     s << "std::string g_ctxPath, g_ctxId, g_ctxPersist;\n";
-    s << "std::atomic<bool> g_hookFired{false};\n\n";
+    s << "std::atomic<bool> g_hookFired{false};\n";
+    // Token bridge (opt-in; only wired for a LogosTokenManagerContext impl).
+    s << "logos_module_get_token_fn g_tokenGetFn = nullptr;\n";
+    s << "logos_module_inform_token_fn g_tokenInformFn = nullptr;\n";
+    s << "logos_module_free_fn g_tokenFreeFn = nullptr;\n";
+    s << "void* g_tokenUd = nullptr;\n";
+    s << "std::mutex g_tokenMutex;\n\n";
 
     s << "char* lidlStrdup(const std::string& str)\n{\n";
     s << "    char* out = static_cast<char*>(std::malloc(str.size() + 1));\n";
@@ -404,6 +411,37 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "        _logos_codegen_::maybeSetLogosModules(lidlImpl(), new LogosModules());\n";
     s << "    });\n}\n\n";
 
+    // -- token bridge wiring (only meaningful for a LogosTokenManagerContext
+    //    impl; the SFINAE no-op overload makes this inert for every other
+    //    module). Installs two std::function closures onto the impl that call
+    //    the host bridge function pointers (stored by logos_module_set_token_bridge)
+    //    at INVOCATION time — so the exact install order vs the bridge install
+    //    doesn't matter. Fired once from lidlTryFireContext, like the emit wiring.
+    s << "static void lidlEnsureTokenBridgeWiring()\n{\n";
+    s << "    static std::once_flag once;\n";
+    s << "    std::call_once(once, []() {\n";
+    s << "        _logos_codegen_::maybeSetTokenBridge(lidlImpl(),\n";
+    s << "            [](const std::string& name) -> std::string {\n";
+    s << "                logos_module_get_token_fn fn; logos_module_free_fn freeFn; void* ud;\n";
+    s << "                { std::lock_guard<std::mutex> lock(g_tokenMutex);\n";
+    s << "                  fn = g_tokenGetFn; freeFn = g_tokenFreeFn; ud = g_tokenUd; }\n";
+    s << "                if (!fn) return std::string();\n";
+    s << "                char* out = fn(ud, name.c_str());\n";
+    s << "                std::string result = out ? std::string(out) : std::string();\n";
+    s << "                if (out && freeFn) freeFn(ud, out);\n";
+    s << "                return result;\n";
+    s << "            },\n";
+    s << "            [](const std::string& target, const std::string& targetToken,\n";
+    s << "               const std::string& caller, const std::string& newToken) -> bool {\n";
+    s << "                logos_module_inform_token_fn fn; void* ud;\n";
+    s << "                { std::lock_guard<std::mutex> lock(g_tokenMutex);\n";
+    s << "                  fn = g_tokenInformFn; ud = g_tokenUd; }\n";
+    s << "                if (!fn) return false;\n";
+    s << "                return fn(ud, target.c_str(), targetToken.c_str(),\n";
+    s << "                          caller.c_str(), newToken.c_str()) == 0;\n";
+    s << "            });\n";
+    s << "    });\n}\n\n";
+
     // The context ready-latch: stamp the context + fire onContextReady ONCE,
     // as soon as the module is fully wired (context stored AND the emit
     // callback delivered) — at module load, before publication. Hosts that
@@ -412,6 +450,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "static void lidlTryFireContext(bool requireEmit)\n{\n";
     s << "    lidlEnsureEmitWiring();\n";
     s << "    lidlEnsureModulesWired();\n";
+    s << "    lidlEnsureTokenBridgeWiring();\n";
     s << "    if (g_hookFired.load(std::memory_order_acquire)) return;\n";
     s << "    std::string path, id, persist;\n";
     s << "    {\n";
@@ -501,6 +540,23 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "        g_emitUd = user_data;\n";
     s << "    }\n";
     s << "    lidlTryFireContext(true);\n";
+    s << "}\n\n";
+
+    s << "void logos_module_set_token_bridge(logos_module_get_token_fn get_token,\n";
+    s << "                                   logos_module_inform_token_fn inform_token,\n";
+    s << "                                   logos_module_free_fn free_fn,\n";
+    s << "                                   void* user_data)\n{\n";
+    s << "    {\n";
+    s << "        std::lock_guard<std::mutex> lock(g_tokenMutex);\n";
+    s << "        g_tokenGetFn = get_token;\n";
+    s << "        g_tokenInformFn = inform_token;\n";
+    s << "        g_tokenFreeFn = free_fn;\n";
+    s << "        g_tokenUd = user_data;\n";
+    s << "    }\n";
+    // Ensure the closures that read the pointers above are installed on the impl
+    // (idempotent; also fired on first dispatch). requireEmit=false so this never
+    // changes onContextReady timing.
+    s << "    lidlTryFireContext(false);\n";
     s << "}\n\n";
 
     s << "int logos_module_accept_token(const char* module_name, const char* token)\n{\n";
