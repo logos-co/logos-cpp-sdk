@@ -16,6 +16,7 @@
 #include <QtGlobal>
 #include "logos_provider_interface.h"
 #include "generator_lib.h"
+#include "metadata_dependencies.h"
 #include "../experimental/lidl_compat.h"
 #include "../experimental/impl_header_parser.h"
 #include "../experimental/lidl_emit_common.h"   // lidlTypeToQt — the one Qt type mapper
@@ -464,15 +465,16 @@ static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonAr
         s << "    LogosModules()";
         bool first = true;
         for (const QJsonValue& v : deps) {
-            if (!v.isString()) continue;
+            const QString depName = dependencyName(v);
+            if (depName.isEmpty()) continue;
             s << (first ? " : " : ",\n        ");
             first = false;
-            s << v.toString() << "(\"" << originName << "\")";
+            s << depName << "(\"" << originName << "\")";
         }
         s << " {}\n";
         for (const QJsonValue& v : deps) {
-            if (!v.isString()) continue;
-            const QString depName = v.toString();
+            const QString depName = dependencyName(v);
+            if (depName.isEmpty()) continue;
             s << "    " << toPascalCase(depName) << " " << depName << ";\n";
         }
         // Interface dependencies: bound at runtime. The bound wrapper is a
@@ -531,8 +533,8 @@ static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonAr
     s << "#include \"logos_api.h\"\n";
     s << "#include \"logos_api_client.h\"\n\n";
     for (const QJsonValue& v : deps) {
-        if (!v.isString()) continue;
-        QString depName = v.toString();
+        const QString depName = dependencyName(v);
+        if (depName.isEmpty()) continue;
         s << "#include \"" << depName << "_api.h\"\n";
     }
     for (const QString& ifaceName : interfaceNames) {
@@ -543,15 +545,15 @@ static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonAr
     s << "struct LogosModules {\n";
     s << "    explicit LogosModules(LogosAPI* api) : api(api)";
     for (const QJsonValue& v : deps) {
-        if (!v.isString()) continue;
-        QString depName = v.toString();
+        const QString depName = dependencyName(v);
+        if (depName.isEmpty()) continue;
         s << ", \n        " << depName << "(api)";
     }
     s << " {}\n";
     s << "    LogosAPI* api;\n";
     for (const QJsonValue& v : deps) {
-        if (!v.isString()) continue;
-        QString depName = v.toString();
+        const QString depName = dependencyName(v);
+        if (depName.isEmpty()) continue;
         QString className = toPascalCase(depName);
         s << "    " << className << " " << depName << ";\n";
     }
@@ -621,8 +623,8 @@ static bool writeUmbrellaSourceFromDeps(const QString& genDirPath, const QJsonAr
     QTextStream s(&content);
     s << "#include \"logos_sdk.h\"\n\n";
     for (const QJsonValue& v : deps) {
-        if (!v.isString()) continue;
-        QString depName = v.toString();
+        const QString depName = dependencyName(v);
+        if (depName.isEmpty()) continue;
         s << "#include \"" << depName << "_api.cpp\"\n";
     }
     for (const QString& ifaceName : interfaceNames) {
@@ -1174,8 +1176,8 @@ int legacy_main(int argc, char* argv[])
 
                 int overallStatus = 0;
                 for (const QJsonValue& v : deps) {
-                    if (!v.isString()) continue;
-                    const QString depName = v.toString();
+                    const QString depName = dependencyName(v);
+                    if (depName.isEmpty()) continue;
                     const QString pluginFileName = depName + "_plugin" + suffix;
                     const QString pluginPath = moduleDir.filePath(pluginFileName);
                     if (!QFileInfo::exists(pluginPath)) {
