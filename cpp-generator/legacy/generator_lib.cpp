@@ -52,6 +52,35 @@ QString mapReturnType(const QString& qtType)
     return QString("QVariant");
 }
 
+// How an INCOMING provider argument is turned into the type the author
+// declared. Not the same job as toQVariantConversion below, which converts a
+// value the module already owns.
+//
+// The Qt conversions coerce: `args.at(0).toULongLong()` turned echoUint(-1)
+// into 18446744073709551615 and `.toLongLong()` turned echoInt(3.7) into 4, so
+// the author's method body never saw the value the caller actually sent, while
+// every non-Qt provider answered {"code":"dispatch_failed"} for the same input.
+// logos::qtArgFromVariant<T> routes the value through the canonical codec
+// instead — one rule, shared with the QMetaObject dispatch in logos-qt-sdk, and
+// deliberately NOT re-derived here (the codec is what knows that a whole-valued
+// 3.0 is a legal integer and 3.7 is not).
+//
+// A type the codec has no rule for keeps the old conversion verbatim: those are
+// module-author types the generator already treated as `any`, and routing them
+// through the codec would be a compile error rather than a behaviour change.
+QString toProviderArgDecode(const QString& type, const QString& argExpr,
+                            const QString& path)
+{
+    static const QSet<QString> codecKnown = {
+        "bool","int","qlonglong","qulonglong","double","float",
+        "QString","QStringList","QByteArray","QJsonArray","QJsonObject",
+        "QVariantList","QVariantMap","QVariant","LogosResult"
+    };
+    if (!codecKnown.contains(type))
+        return toQVariantConversion(type, argExpr);
+    return "logos::qtArgFromVariant<" + type + ">(" + argExpr + ", \"" + path + "\")";
+}
+
 QString toQVariantConversion(const QString& type, const QString& argExpr)
 {
     if (type == "int") return argExpr + ".toInt()";
@@ -72,16 +101,14 @@ QString toQVariantConversion(const QString& type, const QString& argExpr)
     return argExpr + ".toString()";
 }
 
-// ─── Std (pure-C++) type-mapping helpers ─────────────────────────────────
+// ─── std (pure-C++) type-mapping table ───────────────────────────────────
 //
-// File-local — not exposed in generator_lib.h. The single public entry
-// point is makeHeader / makeSource taking an `ApiStyle` argument; when
-// `apiStyle == Std`, those functions internally route through these
-// helpers to pick the std type-mapping table. There's only one wrapper
-// class per module — `<Module>` — whose signatures depend on apiStyle.
-// The std-typed body still goes through the QVariant wire; the Qt↔std
-// conversion is inlined at the call site, contained to the generated
-// .cpp so callers never include Qt headers.
+// File-local — not exposed in generator_lib.h. This is the type table the
+// Qt-free surface (ApiStyle::Lp) exposes: the wrapper's signatures are std
+// types so a universal / cdylib module's own translation units never name a
+// Qt type. Reached through paramTypeFor / returnTypeFor / byRefFor below (the
+// non-Qt arm of each) and directly from the Lp backend's lpPushExpr /
+// lpFromJsonExpr.
 
 static QString mapParamTypeStd(const QString& qtType)
 {
@@ -115,81 +142,6 @@ static QString mapReturnTypeStd(const QString& qtType)
     if (base == "qlonglong")    return "int64_t";
     if (base == "qulonglong")   return "uint64_t";
     return base;
-}
-
-// Returns a C++ expression that lifts a std-typed parameter into a
-// QVariant-side temporary suitable for invokeRemoteMethod. The
-// temporaries are rvalues consumed inline at the call site.
-static QString stdParamToQVariant(const QString& qtType, const QString& argName)
-{
-    const QString base = mapParamType(qtType);
-    if (base == "QString")
-        return "QString::fromStdString(" + argName + ")";
-    if (base == "QStringList")
-        return "[&]{ QStringList _q; _q.reserve(static_cast<int>(" + argName +
-               ".size())); for (const auto& _s : " + argName +
-               ") _q.append(QString::fromStdString(_s)); return _q; }()";
-    if (base == "QByteArray")
-        return "QByteArray(reinterpret_cast<const char*>(" + argName +
-               ".data()), static_cast<int>(" + argName + ".size()))";
-    if (base == "QJsonArray")
-        return "QJsonDocument::fromJson(QByteArray::fromStdString(" + argName +
-               ".dump())).array()";
-    if (base == "QVariantList" || base == "QVariantMap" || base == "QVariant")
-        return "QJsonDocument::fromJson(QByteArray::fromStdString(" + argName +
-               ".dump())).toVariant()" + (base == "QVariantList" ? ".toList()"
-                                       : base == "QVariantMap"  ? ".toMap()"
-                                       : "");
-    if (base == "int")
-        // The std signature exposes `int64_t`; widen the QVariant
-        // payload to qlonglong so the wire carries the full 64-bit
-        // value instead of silently truncating to 32 bits on the way
-        // through `static_cast<int>`. (Reported by Copilot review on
-        // PR #61 — the std-typed surface and the wire payload were
-        // disagreeing for any value outside the int32 range.)
-        return "static_cast<qlonglong>(" + argName + ")";
-    return argName;
-}
-
-// Returns a C++ expression that converts a QVariant return value into
-// the std-typed return type. `varExpr` is the source QVariant.
-static QString qVariantToStdReturn(const QString& qtType, const QString& varExpr)
-{
-    const QString base = mapReturnType(qtType);
-    if (base == "void")
-        return QString();
-    if (base == "bool")
-        return varExpr + ".toBool()";
-    if (base == "int")
-        return "static_cast<int64_t>(" + varExpr + ".toInt())";
-    if (base == "qlonglong")
-        return varExpr + ".toLongLong()";
-    if (base == "qulonglong")
-        return varExpr + ".toULongLong()";
-    if (base == "double" || base == "float")
-        return varExpr + ".toDouble()";
-    if (base == "QString")
-        return varExpr + ".toString().toStdString()";
-    if (base == "QStringList")
-        return "[&]{ std::vector<std::string> _v; const QStringList _q = " +
-               varExpr + ".toStringList(); _v.reserve(static_cast<size_t>(_q.size())); "
-               "for (const QString& _s : _q) _v.push_back(_s.toStdString()); return _v; }()";
-    if (base == "QByteArray")
-        return "[&]{ const QByteArray _b = " + varExpr +
-               ".toByteArray(); return std::vector<uint8_t>(_b.begin(), _b.end()); }()";
-    if (base == "QJsonArray" || base == "QVariantList")
-        return "LogosList::parse(QJsonDocument(QJsonArray::fromVariantList(" +
-               varExpr + ".toList())).toJson(QJsonDocument::Compact).toStdString())";
-    if (base == "QVariantMap" || base == "QVariant")
-        return "LogosMap::parse(QJsonDocument(QJsonObject::fromVariantMap(" +
-               varExpr + ".toMap())).toJson(QJsonDocument::Compact).toStdString())";
-    if (base == "LogosResult")
-        return "[&]{ StdLogosResult _r; const LogosResult _q = " + varExpr +
-               ".value<LogosResult>(); _r.success = _q.success; "
-               "if (_q.value.isValid()) _r.value = LogosMap::parse("
-               "QJsonDocument(QJsonObject::fromVariantMap(_q.value.toMap())).toJson(QJsonDocument::Compact).toStdString()); "
-               "_r.error = _q.error.toString().toStdString(); return _r; }()";
-    return varExpr + ".toString().toStdString()";
 }
 
 // ─── Records ─────────────────────────────────────────────────────────────
@@ -314,12 +266,9 @@ static QString recordToWireExpr(const RecordSet& rs, const QString& t, ApiStyle 
     if (shape == RecordShape::List)
         return "[&]{ QVariantList __acc; for (const auto& __e : " + expr
              + ") __acc.append(" + conv + "(__e)); return __acc; }()";
-    // Qt keys are QString, std keys std::string.
-    if (style == ApiStyle::Qt)
-        return "[&]{ QVariantMap __acc; for (auto __i = " + expr + ".cbegin(); __i != " + expr
-             + ".cend(); ++__i) __acc.insert(__i.key(), " + conv + "(__i.value())); return __acc; }()";
-    return "[&]{ QVariantMap __acc; for (const auto& __kv : " + expr
-         + ") __acc.insert(QString::fromStdString(__kv.first), " + conv + "(__kv.second)); return __acc; }()";
+    // Map, Qt surface: the source container is a QMap, so keys are QString.
+    return "[&]{ QVariantMap __acc; for (auto __i = " + expr + ".cbegin(); __i != " + expr
+         + ".cend(); ++__i) __acc.insert(__i.key(), " + conv + "(__i.value())); return __acc; }()";
 }
 
 static QString recordFromWireExpr(const RecordSet& rs, const QString& t, ApiStyle style,
@@ -343,13 +292,10 @@ static QString recordFromWireExpr(const RecordSet& rs, const QString& t, ApiStyl
     if (shape == RecordShape::List)
         return "[&]{ " + cpp + " __acc; for (const QVariant& __e : (" + wire
              + ").toList()) __acc.push_back(" + conv + "(__e)); return __acc; }()";
-    if (style == ApiStyle::Qt)
-        return "[&]{ " + cpp + " __acc; const QVariantMap __src = (" + wire
-             + ").toMap(); for (auto __i = __src.cbegin(); __i != __src.cend(); ++__i) "
-               "__acc.insert(__i.key(), " + conv + "(__i.value())); return __acc; }()";
+    // Map, Qt surface: the destination container is a QMap, so keys are QString.
     return "[&]{ " + cpp + " __acc; const QVariantMap __src = (" + wire
          + ").toMap(); for (auto __i = __src.cbegin(); __i != __src.cend(); ++__i) "
-           "__acc[__i.key().toStdString()] = " + conv + "(__i.value()); return __acc; }()";
+           "__acc.insert(__i.key(), " + conv + "(__i.value())); return __acc; }()";
 }
 
 // Param-type predicate: passed by const-ref?
@@ -404,13 +350,12 @@ static bool byRefFor(const QString& qtType, const QString& cppType, ApiStyle sty
     return (style == ApiStyle::Qt) ? isQtRefType(cppType) : isStdRefType(cppType);
 }
 
-// Typed value -> wire value (QVariant for Qt/Std, nlohmann::json for Lp).
+// Typed value -> wire value (QVariant for Qt, nlohmann::json for Lp).
 static QString toWireFor(const QString& qtType, ApiStyle style, const RecordSet& rs, const QString& expr)
 {
     const QString rec = recordToWireExpr(rs, qtType, style, expr);
     if (!rec.isEmpty()) return rec;
     if (style == ApiStyle::Lp)  return lpPushExpr(qtType, expr);
-    if (style == ApiStyle::Std) return stdParamToQVariant(qtType, expr);
     return expr;  // Qt: the wrapper's own surface already IS the wire type
 }
 
@@ -421,7 +366,6 @@ static QString fromWireFor(const QString& qtType, ApiStyle style, const RecordSe
     const QString rec = recordFromWireExpr(rs, qtType, style, wire, qual);
     if (!rec.isEmpty()) return rec;
     if (style == ApiStyle::Lp)  return lpFromJsonExpr(qtType, wire);
-    if (style == ApiStyle::Std) return qVariantToStdReturn(qtType, wire);
     return toQVariantConversion(mapParamType(qtType), wire);
 }
 
@@ -476,7 +420,7 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
                 const QString v = toWireFor(f.type, style, rs, "v." + f.name);
                 const bool isRec = recordShape(rs, f.type, nullptr) != RecordShape::None;
                 s << "    __m.insert(QStringLiteral(\"" << f.name << "\"), "
-                  << (isRec || style == ApiStyle::Std ? v : "QVariant::fromValue(" + v + ")")
+                  << (isRec ? v : "QVariant::fromValue(" + v + ")")
                   << ");\n";
             }
             s << "    return __m;\n";
@@ -516,43 +460,19 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
     QString h;
     QTextStream s(&h);
     s << "#pragma once\n";
-    if (apiStyle == ApiStyle::Std) {
-        // Pure-C++ surface. Qt is still pulled in transitively by
-        // logos_api.h (LogosAPI is a QObject), but the wrapper's
-        // signatures are entirely std types so callers never have to
-        // type a Qt name themselves.
-        s << "#include <cstdint>\n";
-        s << "#include <string>\n";
-        s << "#include <vector>\n";
-        s << "#include <functional>\n";
-        s << "#include \"logos_types.h\"\n";
-        s << "#include \"logos_json.h\"\n";
-        s << "#include \"logos_result.h\"\n";
-        s << "#include \"logos_api.h\"\n";
-        s << "#include \"logos_api_client.h\"\n";
-        s << "#include \"logos_call_error.h\"\n";
-        // Needed for the m_eventReplica member when the module declares
-        // any events. Cheap to include unconditionally — keeps the
-        // header symmetric with the Qt-style branch.
-        if (!events.isEmpty()) s << "#include \"logos_object.h\"\n";
-        // Record maps are std::map on the std surface.
-        if (!rs.isEmpty()) s << "#include <map>\n";
-        s << "\n";
-    } else {
-        s << "#include <QString>\n";
-        s << "#include <QVariant>\n";
-        s << "#include <QStringList>\n";
-        s << "#include <QJsonArray>\n";
-        s << "#include <QVariantList>\n";
-        s << "#include <QVariantMap>\n";
-        s << "#include <functional>\n";
-        s << "#include <utility>\n";
-        s << "#include \"logos_types.h\"\n";
-        s << "#include \"logos_api.h\"\n";
-        s << "#include \"logos_api_client.h\"\n";
-        s << "#include \"logos_call_error.h\"\n";
-        s << "#include \"logos_object.h\"\n\n";
-    }
+    s << "#include <QString>\n";
+    s << "#include <QVariant>\n";
+    s << "#include <QStringList>\n";
+    s << "#include <QJsonArray>\n";
+    s << "#include <QVariantList>\n";
+    s << "#include <QVariantMap>\n";
+    s << "#include <functional>\n";
+    s << "#include <utility>\n";
+    s << "#include \"logos_types.h\"\n";
+    s << "#include \"logos_api.h\"\n";
+    s << "#include \"logos_api_client.h\"\n";
+    s << "#include \"logos_call_error.h\"\n";
+    s << "#include \"logos_object.h\"\n\n";
     s << "class " << className << " {\n";
     s << "public:\n";
     emitRecordStructs(s, rs, apiStyle);
@@ -562,18 +482,16 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
     } else {
         s << "    explicit " << className << "(LogosAPI* api);\n\n";
     }
-    if (apiStyle == ApiStyle::Qt) {
-        // Event subscription / trigger surface — Qt-typed.
-        s << "    using RawEventCallback = std::function<void(const QString&, const QVariantList&)>;\n";
-        s << "    using EventCallback = std::function<void(const QVariantList&)>;\n\n";
-        s << "    bool on(const QString& eventName, RawEventCallback callback);\n";
-        s << "    bool on(const QString& eventName, EventCallback callback);\n";
-    }
+    // Event subscription surface — Qt-typed. Receive-side only: a consumer
+    // wrapper subscribes, it does not source events.
+    s << "    using RawEventCallback = std::function<void(const QString&, const QVariantList&)>;\n";
+    s << "    using EventCallback = std::function<void(const QVariantList&)>;\n\n";
+    s << "    bool on(const QString& eventName, RawEventCallback callback);\n";
+    s << "    bool on(const QString& eventName, EventCallback callback);\n";
     // Typed event subscribers — generated from the `.lidl` sidecar shipped
     // with the dep's pre-built headers (via --events-from). One typed
     // adapter per declared event, callback-arg types follow apiStyle.
-    // The generic `on(name, cb)` channel above stays available; for
-    // std-style consumers it's not exposed but the typed accessors are.
+    // The generic `on(name, cb)` channel above stays available alongside them.
     for (const QJsonValue& ev : events) {
         const QJsonObject eo = ev.toObject();
         const QString evName = eo.value("name").toString();
@@ -648,33 +566,22 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
         s << asyncCallbackType << " callback, Timeout timeout = Timeout());\n";
     }
     s << "\nprivate:\n";
-    // ensureReplica() is needed whenever the wrapper subscribes to
-    // events — in Qt mode that's always (the generic `on(...)` channel
-    // is exposed); in std mode it's gated on at least one declared
-    // event in the LIDL sidecar.
-    if (apiStyle == ApiStyle::Qt || !events.isEmpty()) {
-        s << "    LogosObject* ensureReplica();\n";
-    }
-    if (apiStyle == ApiStyle::Qt) {
-        s << "    template<typename... Args>\n";
-        s << "    static QVariantList packVariantList(Args&&... args) {\n";
-        s << "        QVariantList list;\n";
-        s << "        list.reserve(sizeof...(Args));\n";
-        s << "        using Expander = int[];\n";
-        s << "        (void)Expander{0, (list.append(QVariant::fromValue(std::forward<Args>(args))), 0)...};\n";
-        s << "        return list;\n";
-        s << "    }\n";
-    }
+    // ensureReplica() is needed whenever the wrapper subscribes to events,
+    // which on the Qt surface is always: the generic `on(...)` channel is
+    // exposed even when the contract declares no typed events.
+    s << "    LogosObject* ensureReplica();\n";
+    s << "    template<typename... Args>\n";
+    s << "    static QVariantList packVariantList(Args&&... args) {\n";
+    s << "        QVariantList list;\n";
+    s << "        list.reserve(sizeof...(Args));\n";
+    s << "        using Expander = int[];\n";
+    s << "        (void)Expander{0, (list.append(QVariant::fromValue(std::forward<Args>(args))), 0)...};\n";
+    s << "        return list;\n";
+    s << "    }\n";
     s << "    LogosAPI* m_api;\n";
     s << "    LogosAPIClient* m_client;\n";
     s << "    QString m_moduleName;\n";
-    if (apiStyle == ApiStyle::Qt) {
-        s << "    LogosObject* m_eventReplica = nullptr;\n";
-    } else if (!events.isEmpty()) {
-        // std-style consumer: only the receive-side replica is needed
-        // (no `trigger(...)` API on the std wrapper, so no eventSource).
-        s << "    LogosObject* m_eventReplica = nullptr;\n";
-    }
+    s << "    LogosObject* m_eventReplica = nullptr;\n";
     s << "};\n";
     return h;
 }
@@ -688,24 +595,8 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
     QTextStream s(&c);
     s << "#include \"" << headerBaseName << "\"\n\n";
     s << "#include <QDebug>\n";
-    if (apiStyle == ApiStyle::Std) {
-        // Conversion bridges between std types and QVariant — confined
-        // to this .cpp so the caller's translation unit doesn't need
-        // any Qt headers itself.
-        s << "#include <QJsonDocument>\n";
-        s << "#include <QJsonArray>\n";
-        s << "#include <QJsonObject>\n";
-        s << "#include <QByteArray>\n";
-        s << "#include <QStringList>\n";
-        s << "#include <QVariantList>\n";
-        s << "#include <QVariantMap>\n";
-        // logos_object.h is the type of LogosObject* used by typed event
-        // accessors when the module declares events. Always include in
-        // std mode when events are present.
-        if (!events.isEmpty()) s << "#include \"logos_object.h\"\n";
-    }
-    if (apiStyle == ApiStyle::Qt && !rs.isEmpty()) {
-        // Record conversions build QVariantMaps regardless of api style.
+    if (!rs.isEmpty()) {
+        // Record conversions build QVariantMaps.
         s << "#include <QVariantMap>\n";
     }
     s << "\n";
@@ -723,56 +614,38 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
         s << className << "::" << className << "(LogosAPI* api) : m_api(api), m_client(api->getClient(\"" << moduleName << "\")), m_moduleName(QStringLiteral(\"" << moduleName << "\")) {}\n\n";
     }
 
-    // ensureReplica() — generated for std mode too when events are
-    // declared. The body is identical to the Qt version; pulled up
-    // here so both branches share it.
-    if (apiStyle == ApiStyle::Std && !events.isEmpty()) {
-        s << "LogosObject* " << className << "::ensureReplica() {\n";
-        s << "    if (!m_eventReplica) {\n";
-        s << "        LogosObject* replica = m_client->requestObject(m_moduleName);\n";
-        s << "        if (!replica) {\n";
-        s << "            qWarning() << \"" << className << ": failed to acquire remote object for events on\" << m_moduleName;\n";
-        s << "            return nullptr;\n";
-        s << "        }\n";
-        s << "        m_eventReplica = replica;\n";
-        s << "    }\n";
-        s << "    return m_eventReplica;\n";
-        s << "}\n\n";
-    }
-    if (apiStyle == ApiStyle::Qt) {
-        s << "LogosObject* " << className << "::ensureReplica() {\n";
-        s << "    if (!m_eventReplica) {\n";
-        s << "        LogosObject* replica = m_client->requestObject(m_moduleName);\n";
-        s << "        if (!replica) {\n";
-        s << "            qWarning() << \"" << className << ": failed to acquire remote object for events on\" << m_moduleName;\n";
-        s << "            return nullptr;\n";
-        s << "        }\n";
-        s << "        m_eventReplica = replica;\n";
-        s << "    }\n";
-        s << "    return m_eventReplica;\n";
-        s << "}\n\n";
-        s << "bool " << className << "::on(const QString& eventName, RawEventCallback callback) {\n";
-        s << "    if (!callback) {\n";
-        s << "        qWarning() << \"" << className << ": ignoring empty event callback for\" << eventName;\n";
-        s << "        return false;\n";
-        s << "    }\n";
-        s << "    LogosObject* origin = ensureReplica();\n";
-        s << "    if (!origin) {\n";
-        s << "        return false;\n";
-        s << "    }\n";
-        s << "    m_client->onEvent(origin, eventName, callback);\n";
-        s << "    return true;\n";
-        s << "}\n\n";
-        s << "bool " << className << "::on(const QString& eventName, EventCallback callback) {\n";
-        s << "    if (!callback) {\n";
-        s << "        qWarning() << \"" << className << ": ignoring empty event callback for\" << eventName;\n";
-        s << "        return false;\n";
-        s << "    }\n";
-        s << "    return on(eventName, [callback](const QString&, const QVariantList& data) {\n";
-        s << "        callback(data);\n";
-        s << "    });\n";
-        s << "}\n\n";
-    }
+    s << "LogosObject* " << className << "::ensureReplica() {\n";
+    s << "    if (!m_eventReplica) {\n";
+    s << "        LogosObject* replica = m_client->requestObject(m_moduleName);\n";
+    s << "        if (!replica) {\n";
+    s << "            qWarning() << \"" << className << ": failed to acquire remote object for events on\" << m_moduleName;\n";
+    s << "            return nullptr;\n";
+    s << "        }\n";
+    s << "        m_eventReplica = replica;\n";
+    s << "    }\n";
+    s << "    return m_eventReplica;\n";
+    s << "}\n\n";
+    s << "bool " << className << "::on(const QString& eventName, RawEventCallback callback) {\n";
+    s << "    if (!callback) {\n";
+    s << "        qWarning() << \"" << className << ": ignoring empty event callback for\" << eventName;\n";
+    s << "        return false;\n";
+    s << "    }\n";
+    s << "    LogosObject* origin = ensureReplica();\n";
+    s << "    if (!origin) {\n";
+    s << "        return false;\n";
+    s << "    }\n";
+    s << "    m_client->onEvent(origin, eventName, callback);\n";
+    s << "    return true;\n";
+    s << "}\n\n";
+    s << "bool " << className << "::on(const QString& eventName, EventCallback callback) {\n";
+    s << "    if (!callback) {\n";
+    s << "        qWarning() << \"" << className << ": ignoring empty event callback for\" << eventName;\n";
+    s << "        return false;\n";
+    s << "    }\n";
+    s << "    return on(eventName, [callback](const QString&, const QVariantList& data) {\n";
+    s << "        callback(data);\n";
+    s << "    });\n";
+    s << "}\n\n";
 
     // Typed event adapters — one per declared event. The callback type
     // uses the apiStyle's type surface; the body unmarshals from the
@@ -845,9 +718,8 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
         const QString retQual = returnTypeFor(qtRet, apiStyle, rs, className + "::");
         QJsonArray params = o.value("parameters").toArray();
 
-        // Helper closures kept inline so the two branches don't get
-        // pulled apart visually — the per-arg / per-return shape is
-        // the only thing that varies between Qt and Std modes.
+        // Helper closures kept inline so the signature and the call that
+        // consumes it stay next to each other.
         auto emitParam = [&](const QJsonObject& p, bool& byRefOut) {
             QString qtPt = p.value("type").toString();
             QString pt = paramTypeFor(qtPt, apiStyle, rs);
@@ -904,8 +776,6 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
             // nothing
         } else if (retIsRecord) {
             s << "    return " << fromWireFor(qtRet, apiStyle, rs, "_result") << ";\n";
-        } else if (apiStyle == ApiStyle::Std) {
-            s << "    return " << qVariantToStdReturn(qtRet, "_result") << ";\n";
         } else if (ret == "bool") {
             s << "    return _result.toBool();\n";
         } else if (ret == "qlonglong") {
@@ -970,22 +840,6 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
             // A record decodes field by field; an invalid QVariant yields a
             // default-constructed struct, matching the scalar paths.
             s << "        callback(" << fromWireFor(qtRet, apiStyle, rs, "v", className + "::") << ");\n";
-        } else if (apiStyle == ApiStyle::Std) {
-            // Default-construct on dispatch failure, matching the
-            // existing Qt code path which falls back to a zero / empty
-            // value when the QVariant is invalid.
-            QString defaultVal;
-            if (ret == "bool")                       defaultVal = "false";
-            else if (ret == "int64_t")               defaultVal = "0";
-            else if (ret == "double")                defaultVal = "0.0";
-            else if (ret == "std::string")           defaultVal = "std::string()";
-            else if (ret.startsWith("std::vector"))  defaultVal = ret + "()";
-            else if (ret == "LogosMap")              defaultVal = "LogosMap::object()";
-            else if (ret == "LogosList")             defaultVal = "LogosList::array()";
-            else if (ret == "StdLogosResult")        defaultVal = "StdLogosResult{}";
-            else                                     defaultVal = ret + "{}";
-            s << "        if (!v.isValid()) { callback(" << defaultVal << "); return; }\n";
-            s << "        callback(" << qVariantToStdReturn(qtRet, "v") << ");\n";
         } else {
             QString defaultVal;
             if (ret == "bool") defaultVal = "false";
@@ -1121,12 +975,15 @@ QVector<ParsedMethod> parseProviderHeader(const QString& headerPath, QTextStream
 
 // ─── ApiStyle::Lp (Qt-free) wrapper emission ─────────────────────────────
 //
-// Same std-typed surface as ApiStyle::Std, but the generated body calls the
-// logos-protocol C ABI through logos::LpClient instead of LogosAPIClient, so
-// the wrapper's translation unit pulls in no Qt. Used for the cdylib outbound
-// path (a Qt-free module calling its dependencies / subscribing to their
-// events). The class still holds a single target; Static bakes it, Bound takes
-// it at construction (interface dependencies).
+// A std-typed surface (the mapParamTypeStd / mapReturnTypeStd table above)
+// whose generated body calls the logos-protocol C ABI through logos::LpClient
+// instead of LogosAPIClient, so the wrapper's translation unit pulls in no Qt.
+// This is the only remaining std-typed flavour; the retired ApiStyle::Std
+// exposed the same signatures over a QVariant + LogosAPIClient body.
+//
+// Used for the cdylib outbound path (a Qt-free module calling its dependencies
+// / subscribing to their events). The class still holds a single target;
+// Static bakes it, Bound takes it at construction (interface dependencies).
 
 // std value -> nlohmann::json push expression. nlohmann handles
 // string/int64/double/bool/vector<string>/json (LogosMap/LogosList) directly;
