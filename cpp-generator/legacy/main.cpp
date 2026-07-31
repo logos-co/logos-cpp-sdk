@@ -441,135 +441,11 @@ static bool writeUmbrellaHeader(const QString& genDirPath, QTextStream& err)
 
 static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonArray& deps, const QStringList& interfaceNames, QTextStream& err, ApiStyle apiStyle = ApiStyle::Qt, const QString& originName = QString())
 {
-    // Lp (Qt-free) umbrella: no LogosAPI. Each dep wrapper self-creates its
-    // lp_client on behalf of `originName` (this module), so the struct is
-    // default-constructible and the glue just does `new LogosModules()`.
-    if (apiStyle == ApiStyle::Lp) {
-        QDir genDir(genDirPath);
-        QString content;
-        QTextStream s(&content);
-        s << "#pragma once\n";
-        s << "#include <string>\n";
-        if (!interfaceNames.isEmpty()) {
-            s << "#include <map>\n";
-            s << "#include <memory>\n";
-        }
-        for (const QJsonValue& v : deps) {
-            if (!v.isString()) continue;
-            s << "#include \"" << v.toString() << "_api.h\"\n";
-        }
-        for (const QString& ifaceName : interfaceNames)
-            s << "#include \"" << ifaceName << "_api.h\"\n";
-        s << "\n";
-        s << "struct LogosModules {\n";
-        s << "    LogosModules()";
-        bool first = true;
-        for (const QJsonValue& v : deps) {
-            const QString depName = dependencyName(v);
-            if (depName.isEmpty()) continue;
-            s << (first ? " : " : ",\n        ");
-            first = false;
-            s << depName << "(\"" << originName << "\")";
-        }
-        s << " {}\n";
-        for (const QJsonValue& v : deps) {
-            const QString depName = dependencyName(v);
-            if (depName.isEmpty()) continue;
-            s << "    " << toPascalCase(depName) << " " << depName << ";\n";
-        }
-        // Interface dependencies: bound at runtime. The bound wrapper is a
-        // THIN handle over per-provider State the umbrella OWNS for the
-        // module's lifetime — so a transient `modules().bind_x(p)` temporary
-        // can register an async callback / event subscription that outlives
-        // it (the LpClient + RAII subscriptions persist in the map). Keyed by
-        // provider so repeated binds to the same provider share one client.
-        for (const QString& ifaceName : interfaceNames) {
-            const QString className = toPascalCase(ifaceName);
-            s << "    " << className << " bind_" << ifaceName << "(const std::string& moduleName) {\n";
-            s << "        auto& _st = m_" << ifaceName << "_bound[moduleName];\n";
-            s << "        if (!_st) _st = std::make_unique<" << className << "::State>(moduleName, \"" << originName << "\");\n";
-            s << "        return " << className << "(_st.get());\n";
-            s << "    }\n";
-        }
-        for (const QString& ifaceName : interfaceNames) {
-            const QString className = toPascalCase(ifaceName);
-            s << "    std::map<std::string, std::unique_ptr<" << className << "::State>> m_"
-              << ifaceName << "_bound;\n";
-        }
-        s << "};\n";
-        QFile outFile(genDir.filePath("logos_sdk.h"));
-        if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-            err << "Failed to write umbrella header: " << outFile.fileName() << "\n";
-            return false;
-        }
-        outFile.write(content.toUtf8());
-        outFile.close();
-        return true;
-    }
-
-    // Generate logos_sdk.h from metadata.json's dependencies list. The
-    // shape doesn't depend on apiStyle — each dep emits a single
-    // `<name>_api.h` whose class signature shape was already decided
-    // at codegen time. The umbrella just `#include`s and aggregates
-    // each wrapper into the flat `LogosModules` struct.
-    //
-    // Only the modules explicitly listed in `metadata.json#
-    // dependencies` are exposed. Apps that need to manage the core
-    // (basecamp, logoscore) use liblogos' C API directly rather than
-    // the typed `LogosModules` aggregate.
-    //
-    // Interface dependencies (`metadata.json#interface_dependencies`) are
-    // NOT fixed members — they bind to a runtime-chosen module — so each
-    // gets a `bind_<name>(moduleName)` factory instead, returning a bound
-    // wrapper by value.
+    // Emission lives in generator_lib (makeUmbrellaHeaderFromDeps) next to the
+    // per-module wrapper emitters, so the aggregate can be asserted on without
+    // a filesystem; this writes what it returns.
     QDir genDir(genDirPath);
-    QString content;
-    QTextStream s(&content);
-    s << "#pragma once\n";
-    // <string> is only needed for the std::string bind_<iface> overloads;
-    // omit it when there are no interfaces so the umbrella stays identical
-    // to its historical form for dependency-only modules.
-    if (!interfaceNames.isEmpty()) s << "#include <string>\n";
-    s << "#include \"logos_api.h\"\n";
-    s << "#include \"logos_api_client.h\"\n\n";
-    for (const QJsonValue& v : deps) {
-        const QString depName = dependencyName(v);
-        if (depName.isEmpty()) continue;
-        s << "#include \"" << depName << "_api.h\"\n";
-    }
-    for (const QString& ifaceName : interfaceNames) {
-        s << "#include \"" << ifaceName << "_api.h\"\n";
-    }
-    s << "\n";
-
-    s << "struct LogosModules {\n";
-    s << "    explicit LogosModules(LogosAPI* api) : api(api)";
-    for (const QJsonValue& v : deps) {
-        const QString depName = dependencyName(v);
-        if (depName.isEmpty()) continue;
-        s << ", \n        " << depName << "(api)";
-    }
-    s << " {}\n";
-    s << "    LogosAPI* api;\n";
-    for (const QJsonValue& v : deps) {
-        const QString depName = dependencyName(v);
-        if (depName.isEmpty()) continue;
-        QString className = toPascalCase(depName);
-        s << "    " << className << " " << depName << ";\n";
-    }
-    // Bind factories — one per interface dependency. Two overloads so
-    // both Qt-typed (QString) and std-typed (std::string) call sites can
-    // pass the runtime module name without converting at the call site.
-    for (const QString& ifaceName : interfaceNames) {
-        const QString className = toPascalCase(ifaceName);
-        s << "    " << className << " bind_" << ifaceName << "(const QString& moduleName) {\n";
-        s << "        return " << className << "(api, moduleName);\n";
-        s << "    }\n";
-        s << "    " << className << " bind_" << ifaceName << "(const std::string& moduleName) {\n";
-        s << "        return " << className << "(api, QString::fromStdString(moduleName));\n";
-        s << "    }\n";
-    }
-    s << "};\n";
+    const QString content = makeUmbrellaHeaderFromDeps(deps, interfaceNames, apiStyle, originName);
 
     QFile outFile(genDir.filePath("logos_sdk.h"));
     if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
@@ -614,23 +490,10 @@ static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
 
 static bool writeUmbrellaSourceFromDeps(const QString& genDirPath, const QJsonArray& deps, const QStringList& interfaceNames, QTextStream& err)
 {
-    // Generate logos_sdk.cpp from metadata.json's dependencies list.
-    // Each dep emits one wrapper `.cpp` (Qt or std — decided at codegen
-    // time, file name is the same either way), `#include`'d here.
-    // Interface wrappers (`<name>_api.cpp`) are #include'd the same way.
+    // Emission lives in generator_lib (makeUmbrellaSourceFromDeps), alongside
+    // the header's; this writes what it returns.
     QDir genDir(genDirPath);
-    QString content;
-    QTextStream s(&content);
-    s << "#include \"logos_sdk.h\"\n\n";
-    for (const QJsonValue& v : deps) {
-        const QString depName = dependencyName(v);
-        if (depName.isEmpty()) continue;
-        s << "#include \"" << depName << "_api.cpp\"\n";
-    }
-    for (const QString& ifaceName : interfaceNames) {
-        s << "#include \"" << ifaceName << "_api.cpp\"\n";
-    }
-    s << "\n";
+    const QString content = makeUmbrellaSourceFromDeps(deps, interfaceNames);
 
     QFile outFile(genDir.filePath("logos_sdk.cpp"));
     if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
@@ -1175,9 +1038,7 @@ int legacy_main(int argc, char* argv[])
 #endif
 
                 int overallStatus = 0;
-                for (const QJsonValue& v : deps) {
-                    const QString depName = dependencyName(v);
-                    if (depName.isEmpty()) continue;
+                for (const QString& depName : dependencyNames(deps)) {
                     const QString pluginFileName = depName + "_plugin" + suffix;
                     const QString pluginPath = moduleDir.filePath(pluginFileName);
                     if (!QFileInfo::exists(pluginPath)) {
@@ -1203,10 +1064,8 @@ int legacy_main(int argc, char* argv[])
                 }
                 return overallStatus;
             } else {
-                for (const QJsonValue& v : deps) {
-                    if (v.isString()) {
-                        out << v.toString() << "\n";
-                    }
+                for (const QString& depName : dependencyNames(deps)) {
+                    out << depName << "\n";
                 }
                 out.flush();
                 return 0;

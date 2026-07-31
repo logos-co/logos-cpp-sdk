@@ -394,12 +394,9 @@ ImplParseResult parseImplHeader(const QString& headerPath,
         result.module.version = obj.value("version").toString().toStdString();
         result.module.description = obj.value("description").toString().toStdString();
         result.module.category = obj.value("category").toString().toStdString();
-        QJsonArray deps = obj.value("dependencies").toArray();
-        for (const QJsonValue& v : deps) {
-            const QString depName = dependencyName(v);
-            if (!depName.isEmpty())
-                result.module.depends.push_back(depName.toStdString());
-        }
+        const QJsonArray deps = obj.value("dependencies").toArray();
+        for (const QString& depName : dependencyNames(deps))
+            result.module.depends.push_back(depName.toStdString());
 
         // Read events declared in metadata.json
         QJsonArray events = obj.value("events").toArray();
