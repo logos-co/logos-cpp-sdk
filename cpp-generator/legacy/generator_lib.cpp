@@ -603,8 +603,14 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
 // already uses to report a failed call, so a rejection reads exactly like every
 // other failure on this surface — no new signature, no new type, and no change
 // to any return value.
+// Guarded because the umbrella (`logos_sdk.cpp`) textually #includes EVERY
+// generated `<dep>_api.cpp`, so a module with more than one dependency puts
+// several of these in ONE translation unit. Internal linkage handles the
+// separate-TU case; only the preprocessor handles this one.
 static void emitDispatchRejectionDetector(QTextStream& s)
 {
+    s << "#ifndef LOGOS_GENERATED_DISPATCH_REJECTION\n";
+    s << "#define LOGOS_GENERATED_DISPATCH_REJECTION\n\n";
     s << "namespace {\n\n";
     s << "// True when `v` is the canonical provider REJECTION object rather than a\n";
     s << "// value; fills `out` with its {code, message, origin} on a match.\n";
@@ -635,6 +641,7 @@ static void emitDispatchRejectionDetector(QTextStream& s)
     s << "    return true;\n";
     s << "}\n\n";
     s << "} // namespace\n\n";
+    s << "#endif  // LOGOS_GENERATED_DISPATCH_REJECTION\n\n";
 }
 
 QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)

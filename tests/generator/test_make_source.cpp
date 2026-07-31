@@ -380,3 +380,22 @@ TEST(MakeSourceTest, LpSurfaceIsUntouched)
     QString src = makeSource("mod", "Mod", "mod.h", methods, ApiStyle::Lp);
     EXPECT_FALSE(src.contains("logosDispatchRejection"));
 }
+
+TEST(MakeSourceTest, QtRejectionDetectorIsPreprocessorGuarded)
+{
+    // The umbrella (logos_sdk.cpp) textually #includes EVERY generated
+    // `<dep>_api.cpp`, so a module with more than one dependency puts several
+    // copies in ONE translation unit — "redefinition of logosDispatchRejection".
+    // Internal linkage does not help there; only the guard does.
+    QJsonArray methods;
+    methods.append(makeMethod("fn", "QVariantList", 1));
+    QString src = makeSource("mod", "Mod", "mod.h", methods);
+    EXPECT_TRUE(src.contains("#ifndef LOGOS_GENERATED_DISPATCH_REJECTION"));
+    EXPECT_TRUE(src.contains("#define LOGOS_GENERATED_DISPATCH_REJECTION"));
+    EXPECT_TRUE(src.contains("#endif  // LOGOS_GENERATED_DISPATCH_REJECTION"));
+    // Concatenating two generated wrappers, as the umbrella does, must compile:
+    // the second copy is preprocessed away.
+    QString other = makeSource("dep", "Dep", "dep.h", methods);
+    EXPECT_EQ(other.count("bool logosDispatchRejection"), 1);
+    EXPECT_EQ((src + other).count("#ifndef LOGOS_GENERATED_DISPATCH_REJECTION"), 2);
+}
