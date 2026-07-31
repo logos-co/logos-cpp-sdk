@@ -142,6 +142,23 @@ QString jsonArgToStd(const TypeExpr& te, const QString& expr, const QString& pat
     const QString cpp = lidlTypeToStdCdylib(te, recs);
     if (cpp == "LogosMap" || cpp == "LogosList")
         return expr;  // untyped JSON passes through, as it always has
+    // A TYPED map does not NAME its C++ type — it hands the compiler a proxy and
+    // lets the author's own declaration pick it.
+    //
+    // `{tstr: T}` has two C++ spellings, std::map and std::unordered_map, and
+    // logos_codec.h specializes Codec for both. Naming one of them here would
+    // silently make the other a compile error in generated code the author never
+    // wrote: `logos::fromJson<std::map<...>>` returns a std::map, and a std::map
+    // does not convert to an unordered_map parameter. logos::JsonArg instantiates
+    // the conversion with the EXACT parameter type instead, so both spellings
+    // decode — through the same Codec, with the same path in the same error.
+    //
+    // Only maps: every other LIDL type has exactly one C++ spelling here, and
+    // JsonArg documents one type it cannot serve (std::optional<X>, whose own
+    // converting constructor out-ranks the proxy's conversion operator) — the
+    // Optional branch above returns before reaching this line.
+    if (te.kind == TypeExpr::Map)
+        return "logos::JsonArg(" + expr + ", \"" + path + "\")";
     return "logos::fromJson<" + cpp + ">(" + expr + ", \"" + path + "\")";
 }
 
@@ -170,6 +187,11 @@ QString stdReturnToJson(const MethodDecl& md, const QString& var,
     }
     if (cppRet == "LogosMap" || cppRet == "LogosList")
         return var;
+    // Same reason the map ARGUMENT does not name its type: `{tstr: T}` is both
+    // std::map and std::unordered_map, so let the return variable's own type be
+    // deduced rather than asserting one of them.
+    if (te.kind == TypeExpr::Map)
+        return "logos::toJson(" + var + ")";
     // `nlohmann::json(v)` would serialize a vector<uint8_t> as a plain number
     // array and a record not at all; the codec keeps bytes tagged at depth.
     return "logos::toJson<" + cppRet + ">(" + var + ")";

@@ -350,6 +350,16 @@ TypeExpr opt(const TypeExpr& inner)
     return {TypeExpr::Optional, "", {inner}};
 }
 
+TypeExpr arr(const TypeExpr& elem)
+{
+    return {TypeExpr::Array, "", {elem}};
+}
+
+TypeExpr map(const TypeExpr& key, const TypeExpr& value)
+{
+    return {TypeExpr::Map, "", {key, value}};
+}
+
 FieldDecl field(const char* name, const TypeExpr& type)
 {
     FieldDecl f;
@@ -553,4 +563,44 @@ TEST(LidlGenCdylib, OptionalEventParamIsConstRefAndNullWhenEmpty)
     EXPECT_TRUE(src.contains("args.push_back(logos::toJson<std::optional<std::string>>(instance));"))
         << src.toStdString();
     EXPECT_TRUE(src.contains("#include <optional>")) << src.toStdString();
+}
+
+// `{tstr: T}` is the one LIDL type with two C++ spellings (std::map and
+// std::unordered_map), and logos_codec.h specializes Codec for both. Naming one
+// of them in the generated dispatch made the other a compile error in code the
+// author never wrote, so the map slots hand the compiler a proxy / deduce
+// instead and let the author's declaration pick.
+TEST(LidlGenCdylib, TypedMapBindsTheAuthorsOwnContainer)
+{
+    ModuleDecl m;
+    m.name = "o_module";
+    m.methods.push_back(method("echoIntMap", map(prim("tstr"), prim("int")),
+                               {param("v", map(prim("tstr"), prim("int")))}));
+
+    const QString src = lidlMakeModuleImplExports(m, "OImpl", "o_impl.h");
+    EXPECT_TRUE(src.contains("logos::JsonArg(args.at(0), \"arg0\")")) << src.toStdString();
+    EXPECT_TRUE(src.contains("logos::toJson(result)")) << src.toStdString();
+    EXPECT_FALSE(src.contains("logos::fromJson<std::map<std::string, int64_t>>"))
+        << src.toStdString();
+    EXPECT_FALSE(src.contains("logos::toJson<std::map<std::string, int64_t>>"))
+        << src.toStdString();
+}
+
+// ...and only maps. Every other type has one C++ spelling here, and JsonArg
+// documents one target it cannot serve — std::optional<X>, whose converting
+// constructor out-ranks the proxy's conversion operator, so an empty optional
+// would decode as a wrong-typed X and throw.
+TEST(LidlGenCdylib, NonMapSlotsStillNameTheirType)
+{
+    ModuleDecl m;
+    m.name = "o_module";
+    m.methods.push_back(method("f", prim("bool"),
+                               {param("a", arr(prim("int"))),
+                                param("b", opt(map(prim("tstr"), prim("tstr"))))}));
+
+    const QString src = lidlMakeModuleImplExports(m, "OImpl", "o_impl.h");
+    EXPECT_TRUE(src.contains("logos::fromJson<std::vector<int64_t>>")) << src.toStdString();
+    EXPECT_TRUE(src.contains("logos::fromJson<std::optional<std::map<std::string, std::string>>>"))
+        << src.toStdString();
+    EXPECT_FALSE(src.contains("logos::JsonArg")) << src.toStdString();
 }
