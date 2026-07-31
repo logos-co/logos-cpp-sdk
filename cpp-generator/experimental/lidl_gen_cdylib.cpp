@@ -829,7 +829,32 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
         for (size_t i = 0; i < md.params.size(); ++i)
             if (!paramIsOptional(md.params[i])) minArgs = i + 1;
         s << "        if (m == \"" << md.name << "\") {\n";
-        s << "            if (args.size() < " << minArgs << ") return nullptr;\n";
+        // A wrong argument COUNT is reported, not swallowed.
+        //
+        // This used to be `return nullptr`, and the Qt glue turns a NULL reply
+        // into an empty QVariant — indistinguishable from a method that
+        // legitimately returned nothing. "You passed 2 of 4 arguments" looked
+        // like a successful empty answer.
+        //
+        // The shape is the one logos-rust-sdk's args::invalid_args() already
+        // emits (src/args.rs), so a C++ and a Rust provider answer a malformed
+        // call identically — which is what that module's
+        // invalid_args_shape_matches_cpp test claims, and what was not true
+        // until now. Same three keys, same message text, same `origin`.
+        //
+        // Emitted only when the method has at least one REQUIRED parameter:
+        // `args.size() < 0` is unsigned-compared and always false, so a zero-arg
+        // method carried a dead branch (the Rust generator skips it for the same
+        // reason).
+        if (minArgs > 0) {
+            s << "            if (args.size() < " << minArgs << ") {\n";
+            s << "                nlohmann::json err{{\"code\", \"invalid_args\"},\n";
+            s << "                                   {\"message\", \"expected " << minArgs
+              << " arguments, got \" + std::to_string(args.size())},\n";
+            s << "                                   {\"origin\", \"" << module.name << "\"}};\n";
+            s << "                return lidlStrdup(err.dump());\n";
+            s << "            }\n";
+        }
         QString call = "lidlImpl()." + qs(md.name) + "(";
         for (size_t i = 0; i < md.params.size(); ++i) {
             const QString expr = (i < minArgs)

@@ -483,7 +483,10 @@ TEST(LidlGenCdylib, OptionalArgumentMayBeAbsentOrNull)
                                 param("maybe", opt(prim("tstr")))}));
 
     const QString src = lidlMakeModuleImplExports(m, "OImpl", "o_impl.h");
-    EXPECT_TRUE(src.contains("if (args.size() < 1) return nullptr;")) << src.toStdString();
+    // The gate counts REQUIRED parameters — the same rule the Rust generator
+    // applies, so the two report the same `expected` for the same contract.
+    EXPECT_TRUE(src.contains("if (args.size() < 1) {")) << src.toStdString();
+    EXPECT_TRUE(src.contains("\"expected 1 arguments, got \"")) << src.toStdString();
     EXPECT_TRUE(src.contains("(args.size() > 1 ? args.at(1) : nlohmann::json())"))
         << src.toStdString();
     EXPECT_TRUE(src.contains("logos::fromJson<std::optional<std::string>>"))
@@ -493,8 +496,12 @@ TEST(LidlGenCdylib, OptionalArgumentMayBeAbsentOrNull)
         << src.toStdString();
 }
 
-// ...and a method with no optional parameter emits the gate it always did.
-TEST(LidlGenCdylib, RequiredOnlyArityGateIsUnchanged)
+// A wrong argument COUNT is reported, in the shape logos-rust-sdk's
+// args::invalid_args() emits — same three keys, same message text, same origin.
+// It used to `return nullptr`, which the Qt glue turns into an empty QVariant:
+// "you passed 1 of 2 arguments" was indistinguishable from a successful empty
+// answer.
+TEST(LidlGenCdylib, WrongArgumentCountReportsInvalidArgs)
 {
     ModuleDecl m;
     m.name = "o_module";
@@ -502,8 +509,30 @@ TEST(LidlGenCdylib, RequiredOnlyArityGateIsUnchanged)
                                {param("a", prim("tstr")), param("b", prim("tstr"))}));
 
     const QString src = lidlMakeModuleImplExports(m, "OImpl", "o_impl.h");
-    EXPECT_TRUE(src.contains("if (args.size() < 2) return nullptr;")) << src.toStdString();
+    EXPECT_TRUE(src.contains("if (args.size() < 2) {")) << src.toStdString();
+    EXPECT_TRUE(src.contains("{\"code\", \"invalid_args\"}")) << src.toStdString();
+    EXPECT_TRUE(src.contains(
+        "{\"message\", \"expected 2 arguments, got \" + std::to_string(args.size())}"))
+        << src.toStdString();
+    EXPECT_TRUE(src.contains("{\"origin\", \"o_module\"}")) << src.toStdString();
+    EXPECT_TRUE(src.contains("return lidlStrdup(err.dump());")) << src.toStdString();
+    // The silent reply is gone from the arity path.
+    EXPECT_FALSE(src.contains("if (args.size() < 2) return nullptr;")) << src.toStdString();
     EXPECT_FALSE(src.contains("args.size() > ")) << src.toStdString();
+}
+
+// `args.size()` is unsigned, so `< 0` never fires: a zero-argument method
+// carried a dead branch. The Rust generator has always skipped it; now both do.
+TEST(LidlGenCdylib, ZeroArgumentMethodEmitsNoArityGate)
+{
+    ModuleDecl m;
+    m.name = "o_module";
+    m.methods.push_back(method("ping", prim("tstr"), {}));
+
+    const QString src = lidlMakeModuleImplExports(m, "OImpl", "o_impl.h");
+    EXPECT_FALSE(src.contains("args.size() < 0")) << src.toStdString();
+    EXPECT_FALSE(src.contains("invalid_args")) << src.toStdString();
+    EXPECT_TRUE(src.contains("lidlImpl().ping()")) << src.toStdString();
 }
 
 // R4. Optional widens the accepted domain by exactly ONE inhabitant (empty); a
