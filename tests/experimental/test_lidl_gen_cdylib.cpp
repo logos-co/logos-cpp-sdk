@@ -82,10 +82,12 @@ TEST(LidlGenCdylib, BinaryEventPayloadUsesCanonicalBytesEncoding)
 
     const QString source = eventsSourceFor(m);
 
-    // The real argument is serialized, through the canonical encoder...
-    EXPECT_TRUE(source.contains("args.push_back(lidlBytesToJson(payload));"));
-    EXPECT_TRUE(source.contains("std::string lidlB64UrlEncode"));
-    EXPECT_TRUE(source.contains("nlohmann::json lidlBytesToJson"));
+    // The real argument is serialized, through THE canonical encoder — the one
+    // in logos-protocol's logos_codec.h, reached via "<module>_types.h". The
+    // sidecar used to emit its own base64 encoder beside this call.
+    EXPECT_TRUE(source.contains("args.push_back(logos::bytesToJson(payload));"));
+    EXPECT_FALSE(source.contains("lidlB64UrlEncode"));
+    EXPECT_FALSE(source.contains("lidlBytesToJson"));
 
     // ...and the empty tagged value is gone.
     EXPECT_FALSE(source.contains("nlohmann::json{{\"_bytes\", \"\"}}"));
@@ -98,22 +100,33 @@ TEST(LidlGenCdylib, BinaryEventPayloadUsesCanonicalBytesEncoding)
     EXPECT_TRUE(source.contains("const std::vector<uint8_t>& payload"));
 }
 
-// The encoder is only needed by modules that actually emit binary payloads.
-// Emitted unconditionally it is an unused static function in every other
-// module's sidecar (-Wunused-function).
-TEST(LidlGenCdylib, BytesEncoderOmittedWhenNoEventCarriesBytes)
+// No module carries a local base64 codec any more — not the ones with binary
+// events and not the ones without. The gate that used to decide which got one
+// is gone with it.
+TEST(LidlGenCdylib, NoModuleEmitsItsOwnBase64Codec)
 {
-    const ModuleDecl m = moduleWithEvent("fault", {
+    const ModuleDecl bytes = moduleWithEvent("messageReceived", {
+        param("payload", prim("bstr")),
+    });
+    const ModuleDecl plain = moduleWithEvent("fault", {
         param("code",    prim("int")),
         param("message", prim("tstr")),
         param("fatal",   prim("bool")),
     });
 
-    const QString source = eventsSourceFor(m);
-
-    EXPECT_FALSE(source.contains("lidlB64UrlEncode"));
-    EXPECT_FALSE(source.contains("lidlBytesToJson"));
-    EXPECT_TRUE(source.contains("args.push_back(code);"));
+    for (const QString& source : {eventsSourceFor(bytes), eventsSourceFor(plain),
+                                  implSourceFor(bytes), implSourceFor(plain)}) {
+        EXPECT_FALSE(source.contains("lidlB64UrlEncode")) << source.toStdString();
+        EXPECT_FALSE(source.contains("lidlB64Idx")) << source.toStdString();
+        EXPECT_FALSE(source.contains("lidlBytesToJson")) << source.toStdString();
+        // The decoder had no call site at all after #117 — emitted into every
+        // module and never once called.
+        EXPECT_FALSE(source.contains("lidlBytesFromJson")) << source.toStdString();
+        EXPECT_FALSE(source.contains(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"))
+            << source.toStdString();
+    }
+    EXPECT_TRUE(eventsSourceFor(plain).contains("args.push_back(code);"));
 }
 
 // The sidecar is compiled into the module's Qt-free cdylib, so a JSON payload

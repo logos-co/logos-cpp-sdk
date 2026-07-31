@@ -181,7 +181,7 @@ QString stdReturnToJson(const MethodDecl& md, const QString& var,
         return var;  // LogosMap / LogosList are nlohmann::json already
     }
     if (te.kind == TypeExpr::Primitive) {
-        if (te.name == "bstr") return "lidlBytesToJson(" + var + ")";
+        if (te.name == "bstr") return "logos::bytesToJson(" + var + ")";
         if (te.name == "any")  return var;
         return "nlohmann::json(" + var + ")";
     }
@@ -394,15 +394,6 @@ void emitRecordCodecs(QTextStream& s, const ModuleDecl& module,
     s << "}}  // namespace logos::detail\n\n";
 }
 
-bool hasBytesEventParam(const ModuleDecl& module)
-{
-    for (const EventDecl& ed : module.events)
-        for (const ParamDecl& pd : ed.params)
-            if (pd.type.kind == TypeExpr::Primitive && pd.type.name == "bstr")
-                return true;
-    return false;
-}
-
 // The Qt spelling of what actually crosses the Qt boundary.
 //
 // NOT lidlTypeToQt: that answers the CONSUMER's question ("what type does the
@@ -442,35 +433,23 @@ bool hasJsonEventParam(const ModuleDecl& module)
     return false;
 }
 
-// The SCALAR tagged-bytes helpers. A `[bstr]` (and bytes at any deeper
-// nesting) rides logos::Codec instead: its full specialization for
-// std::vector<uint8_t> beats the generic vector rule, so one mechanism covers
-// [bstr], [[bstr]] and {tstr: [bstr]} alike. #111 emitted a dedicated depth-1
-// list codec here; the generic one subsumes it, and keeping both left an
-// unused static in every module that mentioned [bstr].
-void emitBytesEncodeHelpers(QTextStream& s)
-{
-    s << "// Canonical tagged bytes form {\"_bytes\": base64url} (see logos_protocol.h)\n";
-    s << "std::string lidlB64UrlEncode(const std::vector<uint8_t>& bytes)\n{\n";
-    s << "    static const char* alpha = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_\";\n";
-    s << "    std::string out;\n";
-    s << "    size_t i = 0;\n";
-    s << "    while (i + 3 <= bytes.size()) {\n";
-    s << "        uint32_t n = (uint32_t(bytes[i]) << 16) | (uint32_t(bytes[i+1]) << 8) | uint32_t(bytes[i+2]);\n";
-    s << "        out += alpha[(n >> 18) & 0x3f]; out += alpha[(n >> 12) & 0x3f];\n";
-    s << "        out += alpha[(n >> 6) & 0x3f]; out += alpha[n & 0x3f];\n";
-    s << "        i += 3;\n    }\n";
-    s << "    if (i < bytes.size()) {\n";
-    s << "        uint32_t n = uint32_t(bytes[i]) << 16;\n";
-    s << "        if (i + 1 < bytes.size()) n |= uint32_t(bytes[i+1]) << 8;\n";
-    s << "        out += alpha[(n >> 18) & 0x3f]; out += alpha[(n >> 12) & 0x3f];\n";
-    s << "        if (i + 1 < bytes.size()) out += alpha[(n >> 6) & 0x3f];\n";
-    s << "    }\n    return out;\n}\n\n";
-
-    s << "nlohmann::json lidlBytesToJson(const std::vector<uint8_t>& bytes)\n{\n";
-    s << "    return nlohmann::json{{\"_bytes\", lidlB64UrlEncode(bytes)}};\n}\n\n";
-
-}
+// The generated base64 codec is GONE — all of it.
+//
+// #117 replaced the emitted generic codec with logos-protocol's logos_codec.h,
+// but left behind the base64 pair it had grown around: an encoder
+// (lidlB64UrlEncode / lidlBytesToJson) and a decoder (lidlB64Idx /
+// lidlBytesFromJson), ~89 emitted lines in every module's export TU. The decoder
+// had no call site at all — every byte parameter had already moved to
+// logos::bytesFromJsonLenient — and the encoder was a byte-for-byte reimplementation
+// of logos::bytesToJson, which is included via <logos_codec.h> in the very same
+// translation unit.
+//
+// A second copy of an encoder is not free: this is the arrangement that let the
+// emitted and canonical halves drift over padded base64 once already, and it is
+// exactly the duplication #117's own comment set out to end. Scalar `bstr` slots
+// now call logos::bytesToJson directly, which is what every composite slot
+// (`[bstr]`, `{tstr: bstr}`, records) has been doing through logos::Codec since
+// #117.
 
 void emitInterfaceJson(QTextStream& s, const ModuleDecl& module)
 {
@@ -671,64 +650,6 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    char* out = static_cast<char*>(std::malloc(str.size() + 1));\n";
     s << "    if (out) std::memcpy(out, str.data(), str.size() + 1);\n";
     s << "    return out;\n}\n\n";
-
-    emitBytesEncodeHelpers(s);
-
-    s << "int lidlB64Idx(char ch)\n{\n";
-    s << "    if (ch >= 'A' && ch <= 'Z') return ch - 'A';\n";
-    s << "    if (ch >= 'a' && ch <= 'z') return ch - 'a' + 26;\n";
-    s << "    if (ch >= '0' && ch <= '9') return ch - '0' + 52;\n";
-    s << "    if (ch == '-') return 62;\n    if (ch == '_') return 63;\n    return -1;\n}\n\n";
-
-    s << "std::vector<uint8_t> lidlBytesFromJson(const nlohmann::json& j)\n{\n";
-    s << "    std::vector<uint8_t> out;\n";
-    s << "    // Lenient bytes decode (matches the std path, where a QString or\n";
-    s << "    // QByteArray arg both became bytes): a caller may send the tagged\n";
-    s << "    // {\"_bytes\": base64url} form, a plain string (raw UTF-8 bytes), or\n";
-    s << "    // an array of byte values. Only the tagged form needs base64.\n";
-    s << "    if (j.is_string()) {\n";
-    s << "        const std::string s = j.get<std::string>();\n";
-    s << "        out.assign(s.begin(), s.end());\n";
-    s << "        return out;\n";
-    s << "    }\n";
-    s << "    if (j.is_number()) {\n";
-    s << "        // A number arg becomes its decimal text as bytes — matches\n";
-    s << "        // Qt's QVariant(int)->QByteArray, so a caller (or the\n";
-    s << "        // logoscore CLI's type auto-detection) passing a bare number\n";
-    s << "        // to a bytes param behaves the same as the Qt path.\n";
-    s << "        const std::string s = j.dump();\n";
-    s << "        out.assign(s.begin(), s.end());\n";
-    s << "        return out;\n";
-    s << "    }\n";
-    s << "    if (j.is_array()) {\n";
-    s << "        for (const auto& e : j)\n";
-    s << "            if (e.is_number_integer() || e.is_number_unsigned())\n";
-    s << "                out.push_back(static_cast<uint8_t>(e.get<int64_t>() & 0xff));\n";
-    s << "        return out;\n";
-    s << "    }\n";
-    s << "    if (!j.is_object() || j.size() != 1 || !j.contains(\"_bytes\") || !j[\"_bytes\"].is_string())\n";
-    s << "        return out;\n";
-    s << "    const std::string s64 = j[\"_bytes\"].get<std::string>();\n";
-    s << "    size_t i = 0;\n";
-    s << "    while (i + 4 <= s64.size()) {\n";
-    s << "        int a = lidlB64Idx(s64[i]), b = lidlB64Idx(s64[i+1]), c2 = lidlB64Idx(s64[i+2]), d = lidlB64Idx(s64[i+3]);\n";
-    s << "        if (a < 0 || b < 0 || c2 < 0 || d < 0) return {};\n";
-    s << "        uint32_t n = (uint32_t(a) << 18) | (uint32_t(b) << 12) | (uint32_t(c2) << 6) | uint32_t(d);\n";
-    s << "        out.push_back((n >> 16) & 0xff); out.push_back((n >> 8) & 0xff); out.push_back(n & 0xff);\n";
-    s << "        i += 4;\n    }\n";
-    s << "    size_t rem = s64.size() - i;\n";
-    s << "    if (rem == 2 || rem == 3) {\n";
-    s << "        int a = lidlB64Idx(s64[i]), b = lidlB64Idx(s64[i+1]);\n";
-    s << "        if (a < 0 || b < 0) return {};\n";
-    s << "        uint32_t n = (uint32_t(a) << 18) | (uint32_t(b) << 12);\n";
-    s << "        out.push_back((n >> 16) & 0xff);\n";
-    s << "        if (rem == 3) {\n";
-    s << "            int c2 = lidlB64Idx(s64[i+2]);\n";
-    s << "            if (c2 < 0) return {};\n";
-    s << "            n |= uint32_t(c2) << 6;\n";
-    s << "            out.push_back((n >> 8) & 0xff);\n";
-    s << "        }\n    }\n    return out;\n}\n\n";
-
 
     s << "nlohmann::json lidlResultToJson(const StdLogosResult& r)\n{\n";
     s << "    nlohmann::json obj;\n";
@@ -960,13 +881,11 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
         s << "#include <logos_json.h>\n";
     s << "\n";
 
-    // Only the modules that actually emit binary event payloads need the bytes
-    // encoder; emitting it everywhere would leave it unused (and warned about).
-    if (hasBytesEventParam(module)) {
-        s << "namespace {\n\n";
-        emitBytesEncodeHelpers(s);
-        s << "} // namespace\n\n";
-    }
+    // No local bytes encoder any more, and so no hasBytesEventParam() gate for
+    // it either: a `bstr` event parameter calls logos::bytesToJson, which the
+    // <logos_codec.h> pulled in by "<module>_types.h" above already provides.
+    // The gate existed only to keep the emitted copy from sitting unused in
+    // modules whose events carry no binary data.
 
     for (const EventDecl& ed : module.events) {
         s << "void " << implClass << "::" << ed.name << "(";
@@ -1011,7 +930,7 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
                 continue;
             }
             if (pd.type.kind == TypeExpr::Primitive && pd.type.name == "bstr")
-                s << "    args.push_back(lidlBytesToJson(" << pd.name << "));\n";
+                s << "    args.push_back(logos::bytesToJson(" << pd.name << "));\n";
             else
                 s << "    args.push_back(" << pd.name << ");\n";
         }
