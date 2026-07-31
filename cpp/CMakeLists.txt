@@ -62,6 +62,7 @@ install(FILES
 
 install(FILES
     logos_module_context.h
+    logos_token_manager_context.h
     logos_json.h
     logos_result.h
     logos_lp_client.h
