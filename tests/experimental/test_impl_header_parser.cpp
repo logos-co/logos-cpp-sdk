@@ -689,3 +689,57 @@ TEST_F(ImplHeaderParserTest, NestedOptionalCollapsesAndIsReported)
         << errOutput.toStdString();
     EXPECT_TRUE(errOutput.contains("no LIDL type")) << errOutput.toStdString();
 }
+
+// A one-class header written to a temp dir and parsed, for the cases that are
+// about a single declaration rather than a whole fixture module.
+namespace {
+
+QString probeHeader(QTemporaryDir& dir, const QString& body)
+{
+    const QString hp = dir.filePath("probe_impl.h");
+    QFile f(hp);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+        return QString();
+    f.write(("#pragma once\n"
+             "#include <logos_json.h>\n"
+             "#include <cstdint>\n"
+             "#include <map>\n"
+             "#include <optional>\n"
+             "#include <set>\n"
+             "#include <string>\n"
+             "#include <unordered_map>\n"
+             "#include <utility>\n"
+             "#include <vector>\n"
+             + body).toUtf8());
+    return hp;
+}
+
+} // namespace
+
+// `nlohmann::json` reaches `any` only through the fallback, and `any` is the
+// RIGHT answer for it — test_fullapi_cpp's echoAny / fireAnyEvent / anyEvent
+// are the conformance matrix's `any` cells. Naming it is what lets the fallback
+// become an error without taking them out.
+TEST_F(ImplHeaderParserTest, NlohmannJsonIsAnyByName)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString hp = probeHeader(dir,
+        "class ProbeImpl {\n"
+        "public:\n"
+        "    nlohmann::json echoAny(const nlohmann::json& v);\n"
+        "    bool fireAnyEvent(const nlohmann::json& v);\n"
+        "logos_events:\n"
+        "    void anyEvent(const nlohmann::json& v);\n"
+        "};\n");
+    auto r = parseImplHeader(hp, "ProbeImpl",
+                             fixturesDir() + "/sample_metadata.json", err);
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+
+    ASSERT_EQ(r.module.methods.size(), 2u);
+    EXPECT_EQ(r.module.methods[0].returnType.name, "any");
+    EXPECT_EQ(r.module.methods[0].params[0].type.name, "any");
+    EXPECT_EQ(r.module.methods[1].params[0].type.name, "any");
+    ASSERT_EQ(r.module.events.size(), 1u);
+    EXPECT_EQ(r.module.events[0].params[0].type.name, "any");
+}

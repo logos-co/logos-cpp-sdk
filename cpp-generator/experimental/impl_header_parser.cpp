@@ -131,6 +131,23 @@ static TypeExpr cppTypeToLidl(const QString& raw)
     if (t == "LogosList")
         return { TypeExpr::Array, "", { {TypeExpr::Primitive, "any", {}} } };
 
+    // The alias spelled out. LogosMap / LogosList ARE nlohmann::json, and real
+    // modules write the underlying name — test_fullapi_cpp's `echoAny` /
+    // `fireAnyEvent` / `anyEvent`, and both full_api interface headers, all
+    // declare `nlohmann::json`. It reaches `any` today ONLY through the fallback
+    // at the bottom of this function, so naming it here is a PREREQUISITE for
+    // turning that fallback into an error: without this branch the whole
+    // cross-language conformance chain stops building.
+    //
+    // Mapped to the bare `any` primitive rather than LogosMap's `{tstr: any}` /
+    // LogosList's `[any]`: `nlohmann::json` is an untyped value of ANY kind, not
+    // specifically an object or an array. That is the type the fallback already
+    // produces for it, so nothing about any published contract moves — this
+    // commit is deliberately output-neutral, and the next parser commit relies
+    // on that to tell a legitimate `any` from a silent admission.
+    if (t == "nlohmann::json" || t == "json")
+        return { TypeExpr::Primitive, "any", {} };
+
     // StdLogosResult — pure C++ result type for universal impls. The generator
     // emits a StdLogosResult→Qt LogosResult conversion in the glue layer.
     if (t == "StdLogosResult")
