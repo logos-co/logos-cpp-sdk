@@ -10,6 +10,7 @@ add_executable(generator_tests
     test_make_umbrella.cpp
     test_parse_provider_header.cpp
     test_records.cpp
+    test_async_result.cpp
 )
 
 target_include_directories(generator_tests PRIVATE
