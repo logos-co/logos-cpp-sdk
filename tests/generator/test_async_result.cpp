@@ -163,3 +163,39 @@ TEST(AsyncResult, LpSurfaceDoesNotEmitAsyncResultWhileTheCAbiCannotReportOne)
     // ...and the Lp async entry point keeps its exact shape.
     EXPECT_TRUE(lpHeader().contains("void addAsync(int64_t p0, int64_t p1, std::function<void(int64_t)> callback);"));
 }
+
+// ─── 5. A REJECTION reaches the surface that can report it ──────────────────
+//
+// A provider that refuses a call answers the canonical
+// {"code":"dispatch_failed", …} object as its RESULT, not as a transport error.
+// The sync path folds it into the caller's CallError. `<name>Async` can only
+// warn — its callback takes the value alone. `<name>AsyncResult` is the first
+// async surface with an error slot, so it must fold it too; reporting ok() for
+// a rejected call there would reintroduce, on the new surface, exactly the
+// defect the sync fold removed.
+
+TEST(AsyncResult, RejectionIsFoldedIntoTheAsyncResultError)
+{
+    const QString src = qtSource();
+    EXPECT_TRUE(src.contains("if (_r.error.ok()) logosDispatchRejection(v, _r.error);"));
+    // Folded BEFORE the value is decoded and before the callback runs, so the
+    // callback never sees an ok() AsyncResult for a rejected call.
+    const int fold = src.indexOf("if (_r.error.ok()) logosDispatchRejection(v, _r.error);");
+    const int decode = src.indexOf("_r.value = v.isValid() ? qvariant_cast<int>(v) : 0;");
+    const int deliver = src.indexOf("callback(_r);");
+    EXPECT_NE(fold, -1);
+    EXPECT_NE(decode, -1);
+    EXPECT_NE(deliver, -1);
+    EXPECT_LT(fold, decode);
+    EXPECT_LT(decode, deliver);
+}
+
+TEST(AsyncResult, ThePlainAsyncEntryPointStillOnlyWarns)
+{
+    // Unchanged public surface -> nowhere to put an error -> the log is all
+    // there is. The warning names `<name>Async`, never `<name>AsyncResult`.
+    const QString src = qtSource();
+    EXPECT_TRUE(src.contains("{ logos::CallError _rej; if (logosDispatchRejection(v, _rej))"));
+    EXPECT_TRUE(src.contains("Mod::addAsync: remote call failed:"));
+    EXPECT_FALSE(src.contains("Mod::addAsyncResult: remote call failed:"));
+}
