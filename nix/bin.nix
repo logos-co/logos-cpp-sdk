@@ -13,7 +13,8 @@ pkgs.stdenv.mkDerivation {
   
   # Skip default configure phase since we do it in buildPhase
   dontUseCmakeConfigure = true;
-  
+  dontWrapQtApps = true;
+
   buildPhase = ''
     runHook preBuild
     
