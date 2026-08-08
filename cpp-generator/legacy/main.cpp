@@ -16,9 +16,10 @@
 #include <QtGlobal>
 #include "logos_provider_interface.h"
 #include "generator_lib.h"
+#include "metadata_dependencies.h"
 #include "../experimental/lidl_compat.h"
 #include "../experimental/impl_header_parser.h"
-#include "../experimental/lidl_emit_common.h"   // lidlTypeToQt — the one Qt type mapper
+#include "lidl_to_json.h"   // ModuleDecl -> the JSON surface generator_lib consumes
 
 // Escape a string for safe embedding inside a generated C++ string literal.
 static QString cppStringEscape(const QString& s)
@@ -29,73 +30,6 @@ static QString cppStringEscape(const QString& s)
     out.replace('\n', "\\n");
     return out;
 }
-
-// Convert a TypeExpr → Qt-typed string name (same surface the
-// metaobject-introspection path produces for methods, so generator_lib
-// can consume both via one code path).
-//
-// ONE Qt type mapper. This used to be a near-duplicate of `lidlTypeToQt`
-// (experimental/lidl_emit_common.cpp) and the two disagreed: this copy had no
-// `void` case, so a `-> void` method reaching it as Primitive("void") from the
-// impl-header parser fell through to QVariant and generated
-// `QVariant doVoid(...)`. (The .lidl parser spells the same thing
-// Named("void"), which survived only by accident — mapReturnType's
-// `base == "void"` early-out.) The lp/std tables are DERIVED from this name, so
-// the same bug produced `LogosMap doVoid(...)` on the Qt-free surface: not a
-// Qt-only defect, a front-end one. It is now a delegation, so there is one
-// table to disagree with.
-static QString lidlTypeExprToQtTypeName(const TypeExpr& te)
-{
-    return lidlTypeToQt(te);
-}
-
-// Report every optional slot this path is about to flatten.
-//
-// THE BOUNDARY. Everything below (moduleMethodsToJson / moduleRecordsToJson /
-// moduleEventsToJson -> generator_lib) consumes a single Qt TYPE-NAME STRING per
-// slot. A TypeExpr's optionality — like its nesting, its map key type and its
-// descriptions — does not survive being turned into a name, and Qt has no name
-// to survive as: there is no metatype for an optional, so the mapper answers
-// QVariant (see lidlTypeToQt).
-//
-// That leaves a Qt/Lp consumer of an optional slot with the right SHAPE and no
-// TYPE: an invalid QVariant is Qt's empty inhabitant, so two-stateness survives,
-// but the consumer gets no compile-time check on the value and cannot tell
-// `?tstr` from `?uint` or recover a `?Record`'s struct. Carrying optionality
-// past this point means widening the JSON surface these three functions produce
-// and teaching generator_lib a per-slot optional flag on both the Qt and Lp
-// emitters — real work, and not what this change is.
-//
-// So it stays flattened, and says so. Silence here is what made the gap easy to
-// miss in the first place; a build that generates a Qt consumer for an optional
-// contract should not look like a build that had nothing to lose.
-static void noteOptionalFlattened(const ModuleDecl& mod, const QString& where,
-                                  QTextStream& err)
-{
-    QStringList optSlots;
-    for (const TypeDecl& td : mod.types)
-        for (const FieldDecl& fd : td.fields)
-            if (fieldIsOptional(fd))
-                optSlots << (qs(td.name) + "." + qs(fd.name));
-    for (const MethodDecl& md : mod.methods) {
-        for (const ParamDecl& pd : md.params)
-            if (paramIsOptional(pd))
-                optSlots << (qs(md.name) + "(" + qs(pd.name) + ")");
-        if (typeIsOptional(md.returnType))
-            optSlots << (qs(md.name) + "() return");
-    }
-    for (const EventDecl& ed : mod.events)
-        for (const ParamDecl& pd : ed.params)
-            if (paramIsOptional(pd))
-                optSlots << (qs(ed.name) + "(" + qs(pd.name) + ")");
-    if (optSlots.isEmpty()) return;
-    err << "Note: " << where << ": optional slot(s) [" << optSlots.join(", ")
-        << "] are generated as untyped QVariant. The Qt/Lp consumer surface has "
-           "no optional type, so `?T` keeps its two states (an invalid QVariant "
-           "is the empty one) but loses T.\n";
-}
-
-static QJsonArray moduleRecordsToJson(const ModuleDecl& mod);
 
 // Load events from a `.lidl` sidecar shipped alongside a module's
 // pre-built headers. Returns a JSON array of
@@ -121,22 +55,9 @@ static QJsonArray loadEventsFromLidl(const QString& lidlPath, QTextStream& err,
         return result;
     }
 
-    noteOptionalFlattened(pr.module, lidlPath, err);
+    noteOptionalPositionalSlots(pr.module, lidlPath, err);
     if (outRecords) *outRecords = moduleRecordsToJson(pr.module);
-    for (const EventDecl& ed : pr.module.events) {
-        QJsonObject obj;
-        obj["name"] = qs(ed.name);
-        QJsonArray params;
-        for (const ParamDecl& pd : ed.params) {
-            QJsonObject p;
-            p["name"] = qs(pd.name);
-            p["type"] = lidlTypeExprToQtTypeName(pd.type);
-            params.append(p);
-        }
-        obj["params"] = params;
-        result.append(obj);
-    }
-    return result;
+    return moduleEventsToJson(pr.module);
 }
 
 // ── Dependency interfaces ───────────────────────────────────────────────────
@@ -189,72 +110,6 @@ static QVector<InterfaceSpec> parseSpecFlags(const QStringList& args, const QStr
         specs.append(spec);
     }
     return specs;
-}
-
-// Build a getMethods()-shaped QJsonArray (the surface makeHeader/makeSource
-// consume) from a parsed ModuleDecl. Every interface method is invokable.
-static QJsonArray moduleMethodsToJson(const ModuleDecl& mod)
-{
-    QJsonArray arr;
-    for (const MethodDecl& m : mod.methods) {
-        QJsonObject o;
-        o["name"] = qs(m.name);
-        o["returnType"] = lidlTypeExprToQtTypeName(m.returnType);
-        o["isInvokable"] = true;
-        QJsonArray params;
-        for (const ParamDecl& p : m.params) {
-            QJsonObject po;
-            po["type"] = lidlTypeExprToQtTypeName(p.type);
-            po["name"] = qs(p.name);
-            params.append(po);
-        }
-        o["parameters"] = params;
-        arr.append(o);
-    }
-    return arr;
-}
-
-// Build the records QJsonArray ({ name, fields:[{name,type}] }) from a parsed
-// ModuleDecl — the contract's `type Foo { ... }` declarations, which
-// generator_lib turns into structs nested in the wrapper class.
-static QJsonArray moduleRecordsToJson(const ModuleDecl& mod)
-{
-    QJsonArray arr;
-    for (const TypeDecl& td : mod.types) {
-        QJsonObject o;
-        o["name"] = qs(td.name);
-        QJsonArray fields;
-        for (const FieldDecl& fd : td.fields) {
-            QJsonObject f;
-            f["name"] = qs(fd.name);
-            f["type"] = lidlTypeExprToQtTypeName(fd.type);
-            fields.append(f);
-        }
-        o["fields"] = fields;
-        arr.append(o);
-    }
-    return arr;
-}
-
-// Build the events QJsonArray ({ name, params:[{name,type}] }) — same shape
-// loadEventsFromLidl produces — from a parsed ModuleDecl.
-static QJsonArray moduleEventsToJson(const ModuleDecl& mod)
-{
-    QJsonArray arr;
-    for (const EventDecl& ed : mod.events) {
-        QJsonObject o;
-        o["name"] = qs(ed.name);
-        QJsonArray params;
-        for (const ParamDecl& pd : ed.params) {
-            QJsonObject p;
-            p["name"] = qs(pd.name);
-            p["type"] = lidlTypeExprToQtTypeName(pd.type);
-            params.append(p);
-        }
-        o["params"] = params;
-        arr.append(o);
-    }
-    return arr;
 }
 
 // Parse an interface definition file into a ModuleDecl. `.lidl` parses
@@ -346,7 +201,7 @@ static bool generateInterfaceWrappers(const QVector<InterfaceSpec>& ifaces,
             }
         }
 
-        noteOptionalFlattened(mod, spec.path, err);
+        noteOptionalPositionalSlots(mod, spec.path, err);
 
         const QString className = toPascalCase(spec.name);
         const QJsonArray methods = moduleMethodsToJson(mod);
@@ -489,134 +344,11 @@ static bool writeUmbrellaHeader(const QString& genDirPath, QTextStream& err)
 
 static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonArray& deps, const QStringList& interfaceNames, QTextStream& err, ApiStyle apiStyle = ApiStyle::Qt, const QString& originName = QString())
 {
-    // Lp (Qt-free) umbrella: no LogosAPI. Each dep wrapper self-creates its
-    // lp_client on behalf of `originName` (this module), so the struct is
-    // default-constructible and the glue just does `new LogosModules()`.
-    if (apiStyle == ApiStyle::Lp) {
-        QDir genDir(genDirPath);
-        QString content;
-        QTextStream s(&content);
-        s << "#pragma once\n";
-        s << "#include <string>\n";
-        if (!interfaceNames.isEmpty()) {
-            s << "#include <map>\n";
-            s << "#include <memory>\n";
-        }
-        for (const QJsonValue& v : deps) {
-            if (!v.isString()) continue;
-            s << "#include \"" << v.toString() << "_api.h\"\n";
-        }
-        for (const QString& ifaceName : interfaceNames)
-            s << "#include \"" << ifaceName << "_api.h\"\n";
-        s << "\n";
-        s << "struct LogosModules {\n";
-        s << "    LogosModules()";
-        bool first = true;
-        for (const QJsonValue& v : deps) {
-            if (!v.isString()) continue;
-            s << (first ? " : " : ",\n        ");
-            first = false;
-            s << v.toString() << "(\"" << originName << "\")";
-        }
-        s << " {}\n";
-        for (const QJsonValue& v : deps) {
-            if (!v.isString()) continue;
-            const QString depName = v.toString();
-            s << "    " << toPascalCase(depName) << " " << depName << ";\n";
-        }
-        // Interface dependencies: bound at runtime. The bound wrapper is a
-        // THIN handle over per-provider State the umbrella OWNS for the
-        // module's lifetime — so a transient `modules().bind_x(p)` temporary
-        // can register an async callback / event subscription that outlives
-        // it (the LpClient + RAII subscriptions persist in the map). Keyed by
-        // provider so repeated binds to the same provider share one client.
-        for (const QString& ifaceName : interfaceNames) {
-            const QString className = toPascalCase(ifaceName);
-            s << "    " << className << " bind_" << ifaceName << "(const std::string& moduleName) {\n";
-            s << "        auto& _st = m_" << ifaceName << "_bound[moduleName];\n";
-            s << "        if (!_st) _st = std::make_unique<" << className << "::State>(moduleName, \"" << originName << "\");\n";
-            s << "        return " << className << "(_st.get());\n";
-            s << "    }\n";
-        }
-        for (const QString& ifaceName : interfaceNames) {
-            const QString className = toPascalCase(ifaceName);
-            s << "    std::map<std::string, std::unique_ptr<" << className << "::State>> m_"
-              << ifaceName << "_bound;\n";
-        }
-        s << "};\n";
-        QFile outFile(genDir.filePath("logos_sdk.h"));
-        if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-            err << "Failed to write umbrella header: " << outFile.fileName() << "\n";
-            return false;
-        }
-        outFile.write(content.toUtf8());
-        outFile.close();
-        return true;
-    }
-
-    // Generate logos_sdk.h from metadata.json's dependencies list. The
-    // shape doesn't depend on apiStyle — each dep emits a single
-    // `<name>_api.h` whose class signature shape was already decided
-    // at codegen time. The umbrella just `#include`s and aggregates
-    // each wrapper into the flat `LogosModules` struct.
-    //
-    // Only the modules explicitly listed in `metadata.json#
-    // dependencies` are exposed. Apps that need to manage the core
-    // (basecamp, logoscore) use liblogos' C API directly rather than
-    // the typed `LogosModules` aggregate.
-    //
-    // Interface dependencies (`metadata.json#interface_dependencies`) are
-    // NOT fixed members — they bind to a runtime-chosen module — so each
-    // gets a `bind_<name>(moduleName)` factory instead, returning a bound
-    // wrapper by value.
+    // Emission lives in generator_lib (makeUmbrellaHeaderFromDeps) next to the
+    // per-module wrapper emitters, so the aggregate can be asserted on without
+    // a filesystem; this writes what it returns.
     QDir genDir(genDirPath);
-    QString content;
-    QTextStream s(&content);
-    s << "#pragma once\n";
-    // <string> is only needed for the std::string bind_<iface> overloads;
-    // omit it when there are no interfaces so the umbrella stays identical
-    // to its historical form for dependency-only modules.
-    if (!interfaceNames.isEmpty()) s << "#include <string>\n";
-    s << "#include \"logos_api.h\"\n";
-    s << "#include \"logos_api_client.h\"\n\n";
-    for (const QJsonValue& v : deps) {
-        if (!v.isString()) continue;
-        QString depName = v.toString();
-        s << "#include \"" << depName << "_api.h\"\n";
-    }
-    for (const QString& ifaceName : interfaceNames) {
-        s << "#include \"" << ifaceName << "_api.h\"\n";
-    }
-    s << "\n";
-
-    s << "struct LogosModules {\n";
-    s << "    explicit LogosModules(LogosAPI* api) : api(api)";
-    for (const QJsonValue& v : deps) {
-        if (!v.isString()) continue;
-        QString depName = v.toString();
-        s << ", \n        " << depName << "(api)";
-    }
-    s << " {}\n";
-    s << "    LogosAPI* api;\n";
-    for (const QJsonValue& v : deps) {
-        if (!v.isString()) continue;
-        QString depName = v.toString();
-        QString className = toPascalCase(depName);
-        s << "    " << className << " " << depName << ";\n";
-    }
-    // Bind factories — one per interface dependency. Two overloads so
-    // both Qt-typed (QString) and std-typed (std::string) call sites can
-    // pass the runtime module name without converting at the call site.
-    for (const QString& ifaceName : interfaceNames) {
-        const QString className = toPascalCase(ifaceName);
-        s << "    " << className << " bind_" << ifaceName << "(const QString& moduleName) {\n";
-        s << "        return " << className << "(api, moduleName);\n";
-        s << "    }\n";
-        s << "    " << className << " bind_" << ifaceName << "(const std::string& moduleName) {\n";
-        s << "        return " << className << "(api, QString::fromStdString(moduleName));\n";
-        s << "    }\n";
-    }
-    s << "};\n";
+    const QString content = makeUmbrellaHeaderFromDeps(deps, interfaceNames, apiStyle, originName);
 
     QFile outFile(genDir.filePath("logos_sdk.h"));
     if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
@@ -661,23 +393,10 @@ static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
 
 static bool writeUmbrellaSourceFromDeps(const QString& genDirPath, const QJsonArray& deps, const QStringList& interfaceNames, QTextStream& err)
 {
-    // Generate logos_sdk.cpp from metadata.json's dependencies list.
-    // Each dep emits one wrapper `.cpp` (Qt or std — decided at codegen
-    // time, file name is the same either way), `#include`'d here.
-    // Interface wrappers (`<name>_api.cpp`) are #include'd the same way.
+    // Emission lives in generator_lib (makeUmbrellaSourceFromDeps), alongside
+    // the header's; this writes what it returns.
     QDir genDir(genDirPath);
-    QString content;
-    QTextStream s(&content);
-    s << "#include \"logos_sdk.h\"\n\n";
-    for (const QJsonValue& v : deps) {
-        if (!v.isString()) continue;
-        QString depName = v.toString();
-        s << "#include \"" << depName << "_api.cpp\"\n";
-    }
-    for (const QString& ifaceName : interfaceNames) {
-        s << "#include \"" << ifaceName << "_api.cpp\"\n";
-    }
-    s << "\n";
+    const QString content = makeUmbrellaSourceFromDeps(deps, interfaceNames);
 
     QFile outFile(genDir.filePath("logos_sdk.cpp"));
     if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
@@ -1234,9 +953,7 @@ int legacy_main(int argc, char* argv[])
 #endif
 
                 int overallStatus = 0;
-                for (const QJsonValue& v : deps) {
-                    if (!v.isString()) continue;
-                    const QString depName = v.toString();
+                for (const QString& depName : dependencyNames(deps)) {
                     const QString pluginFileName = depName + "_plugin" + suffix;
                     const QString pluginPath = moduleDir.filePath(pluginFileName);
                     if (!QFileInfo::exists(pluginPath)) {
@@ -1262,10 +979,8 @@ int legacy_main(int argc, char* argv[])
                 }
                 return overallStatus;
             } else {
-                for (const QJsonValue& v : deps) {
-                    if (v.isString()) {
-                        out << v.toString() << "\n";
-                    }
+                for (const QString& depName : dependencyNames(deps)) {
+                    out << depName << "\n";
                 }
                 out.flush();
                 return 0;

@@ -7,9 +7,11 @@ cpp-generator/
 ├── main.cpp                        # Entry point — dispatches to legacy or experimental
 ├── CMakeLists.txt                  # Build config
 ├── compile.sh                      # Standalone build script
+├── metadata_dependencies.h         # What a metadata.json `dependencies[]` array declares
 ├── legacy/                         # Original generator (unchanged from master)
 │   ├── main.cpp                    # legacy_main() — plugin/metadata/provider-header modes
-│   ├── generator_lib.h/cpp         # Shared utilities, type mapping, header parser
+│   ├── generator_lib.h/cpp         # Shared utilities, type mapping, header parser, umbrella emission
+│   ├── lidl_to_json.h/cpp         # ModuleDecl → the JSON surface generator_lib consumes
 │   └── legacy_main.h              # Forward declaration
 ├── experimental/                   # C++/Qt-specific generator backends
 │   ├── lidl_compat.h              # Bridges the backends onto logos-lidl's std AST
@@ -104,7 +106,9 @@ Per surface:
 |---|---|---|
 | cdylib / std (`lidlTypeToStd`, `lidl_gen_cdylib`) | `std::optional<T>` | encoded by logos-protocol's `Codec<std::optional<T>>`; key omission is the record emitter's job (a codec never sees the slot) |
 | `?any` / `?{tstr: any}` / `?[any]` | `LogosMap` / `LogosList` | collapses: `nlohmann::json` already carries `null`, so wrapping it would make the slot three-state |
-| Qt (`lidlTypeToQt`) | `QVariant` | two-state (an invalid QVariant is Qt's empty inhabitant) but **untyped** — see Known Limitations |
+| Qt (`lidlTypeToQt`, `lidl_gen_client`) | `QVariant` | two-state (an invalid QVariant is Qt's empty inhabitant) but **untyped** — Qt has no optional template |
+| legacy consumer, record **field** (`lidl_to_json` + `generator_lib`) | `QVariant` (Qt) / `std::optional<T>` (Lp) | same answer as the client-stub and cdylib backends respectively; the alias collapse above applies on Lp |
+| legacy consumer, **positional** slot (param, return, event param) | `QVariant` (Qt) / `LogosMap` (Lp) | still flattened — see Known Limitations |
 | header-first (`impl_header_parser`) | `std::optional<T>` ↔ `?T` | `std::optional<std::optional<T>>` has no LIDL type; it collapses to `?T` and is reported on stderr |
 
 ### Client stubs (`lidl_gen_client.h/cpp`)
@@ -148,11 +152,24 @@ struct LogosModules {
 
 Only the modules explicitly listed as dependencies are exposed. The runtime's `core_manager` is intentionally NOT in `LogosModules` — apps that need to manage the core do so via liblogos' C API, not via a typed RPC wrapper.
 
+A `dependencies[]` element is either a bare name or an object carrying that name alongside the constraints an installer resolves it by — the two declare the same dependency and generate the same code:
+
+```json
+"dependencies": [
+    "dep_a",
+    { "name": "dep_b", "version": "=1.2.3" },
+    { "name": "dep_c", "version": "^2.0", "signer": "did:jwk:abc" }
+]
+```
+
+Read the array through `dependencyNames()` (`metadata_dependencies.h`) rather than element by element. The umbrella is emitted by several passes over the same array — includes, constructor initialisers, members — and a pass that decides on its own what an element names can decide differently from its neighbours, yielding a member whose type was never included. That aggregate no longer compiles, and nothing catches it until a module builds against it. One reader, one answer.
+
 `ApiStyle` enum + new helpers in `generator_lib`:
 
 - `enum class ApiStyle { Qt, Lp }` — passed to every wrapper-emitting function.
 - File-local `mapParamTypeStd` / `mapReturnTypeStd` — the std-side type-mapping table the `lp` surface exposes. Hidden from `generator_lib.h` (not part of the public surface).
 - `makeHeader(moduleName, className, methods, apiStyle, events)` / `makeSource(moduleName, className, headerBaseName, methods, apiStyle, events)` — single entry points that branch on `apiStyle` internally to emit the right include block, signature shape, and conversion bridges. `events` is loaded from a `<name>.lidl` sidecar via `--events-from`; when non-empty, the wrapper also gets one typed `on<EventName>(callback)` adapter per declared event (callback arg types follow `apiStyle`).
+- `makeUmbrellaHeaderFromDeps(deps, interfaceNames, apiStyle, originName)` / `makeUmbrellaSourceFromDeps(deps, interfaceNames)` — the `logos_sdk.{h,cpp}` aggregate above. They return the text; `legacy/main.cpp`'s `writeUmbrella*FromDeps` write it. That split is what lets the aggregate be asserted on directly, without a filesystem.
 
 Flag plumbing:
 
@@ -162,7 +179,7 @@ Flag plumbing:
 
 ### Provider Generation (logos-qt-generator)
 
-> The Qt provider glue (`lidl_gen_provider.{h,cpp}`) is emitted by **logos-qt-sdk's `logos-qt-generator`**, not this binary — it consumes the same `logos-lidl` frontend (+ the shared `lidl_emit_common` / `impl_header_parser` / `lidl_compat.h` helpers, distributed under `share/lidl-frontend`). Documented here for reference.
+> The Qt provider glue (`lidl_gen_provider.{h,cpp}`) is emitted by **logos-qt-sdk's `logos-qt-generator`**, not this binary — it consumes the same `logos-lidl` frontend (+ the shared `lidl_emit_common` / `impl_header_parser` / `lidl_compat.h` / `metadata_dependencies.h` helpers, distributed under `share/lidl-frontend`). Documented here for reference. Adding a header to what `impl_header_parser.cpp` includes means adding it to that install list too (`nix/bin.nix`) — the qt-generator compiles that source out of the installed directory, so a header left behind breaks its build, not ours.
 
 - `lidlMakeProviderHeader(ModuleDecl, implClass, implHeader)` — generates Qt glue header
   - Emits `nlohmannToQVariant()` helper when any method has `jsonReturn = true`
@@ -170,7 +187,6 @@ Flag plumbing:
   - Always emits `#include "logos_sdk.h"` and a `std::unique_ptr<LogosModules> m_logosModules` member; ownership lives on the provider, the context base sees only a non-owning `void*` reinterpreted in `LogosModuleContext::modules()` (which depends on the impl's TU having included `logos_sdk.h`).
 - `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods dispatch. `getMethods()` emits the full interface: each method tagged `type: "method"`, then each `module.events` entry tagged `type: "event"` (name, signature, parameters, escaped `description`; no returnType/isInvokable). There is no separate `getEvents()` — folding events into `getMethods()` keeps the provider vtable ABI-stable.
 - `lidlMakeEventsSource(ModuleDecl, implClass, implHeader)` — generates `<name>_events.cpp`: Qt-MOC-style method bodies for prototypes declared in the impl's `logos_events:` block. Each body marshals typed args into a `QVariantList` and calls `this->emitEventImpl_("<name>", &args)` on the LogosModuleContext base.
-- `lidlGenerateProviderGlue(lidlPath, ...)` — full pipeline from .lidl file. Also emits `<name>_events.cpp` and a `<name>.lidl` sidecar (via `lidlSerialize`) when the module has any events; both ride the dep's `headers-*` outputs to power consumer-side typed `on<X>()` accessors.
 
 ### Impl Header Parser (`impl_header_parser.h/cpp`)
 
@@ -248,7 +264,7 @@ The generator binary is available as `logos-cpp-generator` in module build envir
 
 ## Testing
 
-Tests are in `tests/experimental/`:
+The backends are tested in `tests/experimental/`, the legacy emitters in `tests/generator/`:
 
 ```bash
 ws test logos-cpp-sdk      # runs all tests including experimental
@@ -265,9 +281,16 @@ The frontend tests (lexer/parser/validator/serializer) moved to the **logos-lidl
 
 (The lexer/parser/AST/serializer/validator round-trip + description tests live in logos-lidl's own `tests/test_lidl.cpp`.)
 
+In `tests/generator/`, alongside the wrapper-emitter tests:
+
+| Test file | What it tests |
+|-----------|---------------|
+| `test_make_umbrella.cpp` | The `LogosModules` aggregate: both dependency forms on both API styles, that every member's type is included, dropped nameless entries, empty deps |
+
 Fixture files in `tests/experimental/fixtures/`:
 - `sample_impl.h` — module with all supported type variations
 - `sample_metadata.json` — metadata with dependencies
+- `object_deps_metadata.json` — dependencies declared in both forms, with resolution constraints
 - `complex_impl.h` — module with multiple access specifier sections
 - `empty_class_impl.h` — class with no public methods
 - `empty_metadata.json` — minimal metadata
@@ -285,18 +308,43 @@ Fixture files in `tests/experimental/fixtures/`:
 - LIDL does not support generic/parameterized types or inheritance
 - `--from-header` emits the **cdylib** backend here (the `qt` glue backend moved to logos-qt-generator); the **Rust** backend lives in logos-rust-sdk's `lidl-gen`, generating over logos-lidl's C ABI
 - Client stub generation (`lidlMakeHeader`/`lidlMakeSource`) is only available from LIDL files, not from `--from-header`
-- **Optionality is untyped on the Qt/Lp consumer surface.** The consumer wrappers real
-  modules get come from `legacy/main.cpp` → `generateInterfaceWrappers` → `generator_lib`,
-  and the AST is flattened to a single Qt **type-name string** per slot at
-  `moduleMethodsToJson` / `moduleRecordsToJson` / `moduleEventsToJson` — a boundary that
-  optionality (like nesting, map key types and descriptions) cannot cross. `?T` therefore
-  arrives as `QVariant`: the right *shape* (an invalid QVariant is Qt's empty inhabitant,
-  and the wire's `null` becomes exactly that) with no *type*, so a consumer gets no
-  compile-time check and cannot tell `?tstr` from `?uint` or recover a `?Record`'s struct.
-  Carrying it further means widening that JSON surface with a per-slot optional flag and
-  teaching both the Qt and Lp emitters to honour it. Until then the generator prints a
-  `Note:` naming every flattened slot, so an affected build is never silent.
+- **Optionality is still untyped in *positional* slots on the legacy consumer path.** The
+  consumer wrappers real modules get come from `legacy/main.cpp` →
+  `generateInterfaceWrappers` → `lidl_to_json` → `generator_lib`, and that JSON boundary
+  carries a single Qt **type-name string** per slot. Record *fields* now carry an
+  `optional` flag alongside the value type, so both LIDL spellings emit identical, typed
+  code (`QVariant` on Qt, `std::optional<T>` on Lp). A **method parameter, a return type
+  and an event parameter still do not**: they arrive as `QVariant` (Qt) / `LogosMap` (Lp)
+  — the right *shape* (an invalid QVariant / a JSON `null` is the empty inhabitant) with
+  no *type*, so a caller gets no compile-time check and cannot tell `?tstr` from `?uint`
+  or recover a `?Record`'s struct. There is no spelling divergence there — a positional
+  slot has no name to hang a flag on, so it only ever had the type-kind form — and closing
+  it changes generated method **signatures**, i.e. a source break for every existing call
+  site. Until then the generator prints a `Note:` naming every still-flattened slot, so an
+  affected build is never silent. `OptionalSpellings.PositionalSlotsAreStillFlattened`
+  pins the current behaviour so closing the gap is a deliberate change.
+- **Nesting, map key types and descriptions still do not cross that boundary either** —
+  the flag added for optionality is per-field, not a general widening.
 - `lidlRecordCollidesWithBytesTag` reads *through* an optional (via `fieldValueType`), so a
   single-`_bytes`-field record is refused under both spellings. It used to read `f.type`,
   which refused `? _bytes: tstr` and let `_bytes: ?tstr` through — the same declaration,
   two answers. `?bstr` is unaffected either way: the tag lives in the value, not the slot.
+- **A provider REJECTION reaches `…Async`'s callback only as a log line** (but
+  `…AsyncResult`'s callback gets it properly). A provider that refuses a call answers the
+  canonical `{"code":"dispatch_failed", "message":…, "origin":…}` object as its RESULT, not
+  as a transport error, and the Qt return table would convert it like any other value —
+  erasing it (`_result.toList()` on that map is `[]`). The Qt consumer emitter therefore
+  detects it (`logosDispatchRejection`, emitted once per wrapper) and folds it into the
+  error channel of every surface that HAS one:
+  - **sync** — the `logos::CallError*` out-parameter, so `mod.echoUintList(v, &err)` can
+    tell a rejection from an empty return;
+  - **`…AsyncResult`** — `logos::AsyncResult<T>::error`, so `r.ok()` is false and
+    `r.error.code == "dispatch_failed"` exactly as on the sync path.
+
+  The historical **`…Async`** overload is the one exception: its callback is
+  `std::function<void(T)>`, and adding an error parameter would change a generated public
+  surface (which logos-qt-sdk's `qt-generator --backend consumer` veneer mirrors 1:1). It
+  is left untouched, so there an async rejection is reported with `qWarning` and the
+  callback still receives the default-converted value. `…AsyncResult` exists precisely
+  because giving async an error channel was an API addition rather than a code-generation
+  fix — a caller that needs to SEE the rejection uses it.
