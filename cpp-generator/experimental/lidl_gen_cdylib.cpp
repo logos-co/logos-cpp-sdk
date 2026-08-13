@@ -845,6 +845,14 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    // writes the same TokenManager::instance() the lp_client reads.\n";
     s << "    return lp_token_save(module_name, token);\n}\n\n";
 
+    // Guarded on the protocol MINOR that introduced the trust-root surface
+    // (0.3). The emitted module must still COMPILE against an older
+    // logos-protocol, which has neither lp_grant_host_services nor the
+    // logos_module_impl.h declaration — a module built against 0.2 simply has
+    // no grant entry point, which is the same fail-closed state as never being
+    // granted. Without this an older protocol is a hard compile error in
+    // generated code the author never sees.
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && LOGOS_PROTOCOL_VERSION_MINOR >= 3\n";
     s << "int logos_module_grant_host_services(const char* services_json)\n{\n";
     s << "    // Route the host's grant into THIS image's gate state.\n";
     s << "    //\n";
@@ -871,7 +879,8 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    // explicit, greppable and off by default, so no module acquires\n";
     s << "    // it by accident. Isolation between modules rests on process\n";
     s << "    // separation, the auth token and the target's allowedCallers.\n";
-    s << "    return lp_grant_host_services(services_json);\n}\n\n";
+    s << "    return lp_grant_host_services(services_json);\n}\n";
+    s << "#endif\n\n";
 
     s << "const char* logos_module_get_protocol_version(void)\n{\n";
     s << "    return LOGOS_PROTOCOL_VERSION_STRING;\n}\n\n";
