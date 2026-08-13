@@ -845,6 +845,34 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    // writes the same TokenManager::instance() the lp_client reads.\n";
     s << "    return lp_token_save(module_name, token);\n}\n\n";
 
+    s << "int logos_module_grant_host_services(const char* services_json)\n{\n";
+    s << "    // Route the host's grant into THIS image's gate state.\n";
+    s << "    //\n";
+    s << "    // The grant has to travel over the C ABI rather than being\n";
+    s << "    // recorded once by the host, and that is the whole reason this\n";
+    s << "    // export exists: the host binary and this cdylib each link their\n";
+    s << "    // own copy of logos-protocol, so each has its own process-global\n";
+    s << "    // grant state, exactly as each has its own TokenManager. A grant\n";
+    s << "    // the host records for itself is invisible to the gate a\n";
+    s << "    // lp_token_keys() call checks HERE, so a gate 'simplified' into\n";
+    s << "    // the host would silently never fire.\n";
+    s << "    //\n";
+    s << "    // Emitted unconditionally, for every module, rather than behind a\n";
+    s << "    // codegen flag: which modules are privileged is the HOST's\n";
+    s << "    // decision (it chooses what to push, and pushes nothing to an\n";
+    s << "    // ordinary module), and lp_grant_host_services itself validates\n";
+    s << "    // the names and fails closed. A per-module flag would only add a\n";
+    s << "    // second place for the two to disagree.\n";
+    s << "    //\n";
+    s << "    // NOTE this is a declaration-and-audit boundary, NOT a defence\n";
+    s << "    // against a hostile module: this cdylib links logos-protocol, so\n";
+    s << "    // its own code can call lp_grant_host_services() directly and\n";
+    s << "    // self-grant. What the gate buys is that the privilege is\n";
+    s << "    // explicit, greppable and off by default, so no module acquires\n";
+    s << "    // it by accident. Isolation between modules rests on process\n";
+    s << "    // separation, the auth token and the target's allowedCallers.\n";
+    s << "    return lp_grant_host_services(services_json);\n}\n\n";
+
     s << "const char* logos_module_get_protocol_version(void)\n{\n";
     s << "    return LOGOS_PROTOCOL_VERSION_STRING;\n}\n\n";
 
