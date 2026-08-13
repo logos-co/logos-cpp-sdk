@@ -66,5 +66,6 @@ install(FILES
     logos_result.h
     logos_lp_client.h
     logos_async_result.h
+    logos_host_services.h
     DESTINATION include
 )
