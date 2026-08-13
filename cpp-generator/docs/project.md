@@ -9,7 +9,7 @@ cpp-generator/
 ├── compile.sh                      # Standalone build script
 ├── metadata_dependencies.h         # What a metadata.json `dependencies[]` array declares
 ├── legacy/                         # Original generator (unchanged from master)
-│   ├── main.cpp                    # legacy_main() — plugin/metadata/provider-header modes
+│   ├── main.cpp                    # legacy_main() — plugin/metadata modes
 │   ├── generator_lib.h/cpp         # Shared utilities, type mapping, header parser, umbrella emission
 │   ├── lidl_to_json.h/cpp         # ModuleDecl → the JSON surface generator_lib consumes
 │   └── legacy_main.h              # Forward declaration
@@ -236,7 +236,6 @@ logos-cpp-generator --lidl my_module.lidl \
 ```bash
 logos-cpp-generator /path/to/plugin.so --output-dir ./generated
 logos-cpp-generator --metadata metadata.json --general-only --output-dir ./generated
-logos-cpp-generator --provider-header src/provider.h --output-dir ./generated
 ```
 
 ### Consumer wrapper with typed event accessors

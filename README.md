@@ -296,9 +296,8 @@ LogosMap doWork(const std::string& input);
 ```
 
 Plain `//` and `/* … */` comments are ignored (so section separators don't leak
-into the API). The same applies to `interface: "provider"` modules whose methods
-are marked with `LOGOS_METHOD`. See `cpp-generator/docs/spec.md` →
-*Method documentation* for details.
+into the API). See `cpp-generator/docs/spec.md` → *Method documentation* for
+details.
 
 **Documenting events:** events are the other half of a module's API — declared
 in a `logos_events:` section and surfaced the same way. A doc comment above an

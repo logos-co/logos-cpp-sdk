@@ -51,7 +51,8 @@
 //
 //     class MyModuleImpl : public LogosModuleContext {
 //     public:
-//         // ... LOGOS_METHOD / Q_INVOKABLE methods as before ...
+//         // ... your plain public methods; the generator derives the
+//         // module's contract from this header ...
 //     protected:
 //         void onContextReady() override {
 //             // instancePersistencePath() / instanceId() / modulePath()

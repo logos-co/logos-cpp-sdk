@@ -7,13 +7,6 @@
 #include <QVector>
 #include <QPair>
 
-struct ParsedMethod {
-    QString returnType;
-    QString name;
-    QVector<QPair<QString, QString>> params; // (type, name)
-    QString description; // doc comment adjacent to the LOGOS_METHOD declaration
-};
-
 // Which type surface to expose on the generated per-module wrapper.
 // Each module's build picks ONE — there's no composite output. Default
 // is Qt for backward compatibility; `interface: "universal"` modules
@@ -100,7 +93,6 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
 // makeHeader/makeSource dispatch here when apiStyle == ApiStyle::Lp.
 QString makeHeaderLp(const QString& moduleName, const QString& className, const QJsonArray& methods, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static, const QJsonArray& records = {});
 QString makeSourceLp(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static, const QJsonArray& records = {});
-QVector<ParsedMethod> parseProviderHeader(const QString& headerPath, QTextStream& err);
 
 // The umbrella (`logos_sdk.h` / `logos_sdk.cpp`) over a module's declared
 // `metadata.json#dependencies` + interface dependencies: one `#include` and one

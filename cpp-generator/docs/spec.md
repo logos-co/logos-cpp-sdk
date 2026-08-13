@@ -171,10 +171,6 @@ public:
 → the `transfer` entry in `getMethods()` gains
 `"description": "Transfers `amount` from the active account to `toAddress`.\nReturns the resulting transaction hash."` (the two lines preserved, joined with `\n`)
 
-The same applies to the legacy `--provider-header` mode (`LOGOS_METHOD`-marked
-declarations): a doc comment above the declaration becomes the method's
-`description` in the generated dispatch.
-
 A method with no doc comment simply has no `description` field. Methods
 introspected purely via Qt's `QMetaObject` (legacy `Q_INVOKABLE` modules with no
 generated dispatch) carry no comments at runtime and therefore have no
@@ -220,9 +216,8 @@ logos_events:
 An event entry carries `type: "event"`, `name`, `signature`, `parameters[]`
 (each with `type` and `name`), and — when documented — `description`. Unlike a
 method entry it has no `returnType` or `isInvokable`: events are void,
-fire-and-forget. Events are a universal (`--from-header`) concept; the legacy
-`--provider-header` path declares none, so its `getMethods()` contains only
-methods. (An entry with no `"type"` is treated as a method, so a module built
+fire-and-forget. Events are a universal (`--from-header`) concept.
+(An entry with no `"type"` is treated as a method, so a module built
 against a pre-events SDK simply reports zero events.)
 
 An event's `description` may also be supplied out-of-band via an optional
@@ -312,7 +307,7 @@ Implements two methods on the ProviderObject:
 
 ##### Why events live in `getMethods()`
 
-Folding events into `getMethods()` — rather than adding a sibling `getEvents()` virtual — is a deliberate **ABI** choice. `LogosProviderObject` is the in-process vtable contract between a host/runtime and a loaded module; inserting a new virtual would shift every later vtable slot and break any mix of old/new host and module binaries. Reusing the existing `getMethods()` slot keeps the vtable byte-for-byte stable: a new host reading an old module just sees no `type: "event"` entries (so zero events), and an old host reading a new module ignores the `"type"` field (events show up in its method list — cosmetic, never a crash). Legacy `--provider-header` and Qt modules declare no events, so their `getMethods()` is methods-only.
+Folding events into `getMethods()` — rather than adding a sibling `getEvents()` virtual — is a deliberate **ABI** choice. `LogosProviderObject` is the in-process vtable contract between a host/runtime and a loaded module; inserting a new virtual would shift every later vtable slot and break any mix of old/new host and module binaries. Reusing the existing `getMethods()` slot keeps the vtable byte-for-byte stable: a new host reading an old module just sees no `type: "event"` entries (so zero events), and an old host reading a new module ignores the `"type"` field (events show up in its method list — cosmetic, never a crash). Legacy Qt modules declare no events, so their `getMethods()` is methods-only.
 
 #### Client Stubs (`<name>_api.h` + `<name>_api.cpp`)
 
@@ -361,7 +356,7 @@ Only the modules explicitly listed as dependencies appear. The runtime's `core_m
 
 ### Backwards Compatibility
 
-- All existing generator modes (`--provider-header`, `--metadata`, plugin path) continue to work unchanged via `legacy_main()`
+- The remaining generator modes (`--metadata`, plugin path) continue to work unchanged via `legacy_main()`. `--provider-header` (the `LOGOS_METHOD` dispatch behind `interface: "provider"`) was REMOVED — every provider now goes through the module-impl C ABI; the flag is refused with a message pointing at `interface: "universal"`
 - The new `--from-header` and `--lidl` modes are additive
 - Generated plugins implement both `PluginInterface` (for `lm` introspection) and `LogosProviderPlugin` (for new-API provider creation)
 - The runtime (`logos-liblogos`) already supports both old and new plugin types via `qobject_cast` detection

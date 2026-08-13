@@ -16,7 +16,6 @@ add_executable(generator_tests
     test_make_header.cpp
     test_make_source.cpp
     test_make_umbrella.cpp
-    test_parse_provider_header.cpp
     test_records.cpp
     test_async_result.cpp
     test_optional_spellings.cpp
