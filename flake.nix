@@ -80,9 +80,15 @@
           common = import ./nix/default.nix { inherit pkgs; };
           src = ./.;
           tests = import ./nix/tests.nix { inherit pkgs common src logos-protocol; logos-lidl = logos-lidl.packages.${pkgs.system}.logos-lidl; };
+          generator = import ./nix/bin.nix { inherit pkgs common src logos-protocol; logos-lidl = logos-lidl.packages.${pkgs.system}.logos-lidl; };
         in
         {
           inherit tests;
+          # Runs the BINARY. The gtest suite links the generator's internals and
+          # never executes it, so a retired CLI flag can only be asserted here.
+          generator-cli = import ./nix/tests-generator-cli.nix {
+            inherit pkgs common generator;
+          };
         }
       );
 

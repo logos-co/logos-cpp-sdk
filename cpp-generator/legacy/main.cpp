@@ -743,70 +743,35 @@ int legacy_main(int argc, char* argv[])
                 return 0;
             }
 
-            // If --module-dir provided, generate for each dependency; else print deps
-            const int modDirIdx = args.indexOf("--module-dir");
-            if (modDirIdx != -1) {
-                if (modDirIdx + 1 >= args.size()) {
-                    err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /path/to/metadata.json --module-dir /path/to/modules_dir [--output-dir /path/to/output] [--module-only] [--general-only]\n";
-                    return 1;
-                }
-                QString moduleDirArg = args.at(modDirIdx + 1);
-                if (moduleDirArg.startsWith('@')) {
-                    moduleDirArg.remove(0, 1);
-                }
-                QDir moduleDir(moduleDirArg);
-                if (!moduleDir.exists()) {
-                    err << "Module directory does not exist: " << moduleDirArg << "\n";
-                    return 2;
-                }
-
-                QString genDirPath = outputDir.isEmpty() ? QDir::current().filePath("logos-cpp-sdk/cpp/generated") : outputDir;
-                QDir().mkpath(genDirPath);
-
-                QString suffix;
-#if defined(Q_OS_MACOS)
-                suffix = ".dylib";
-#elif defined(Q_OS_LINUX)
-                suffix = ".so";
-#elif defined(Q_OS_WIN)
-                suffix = ".dll";
-#else
-                suffix = "";
-#endif
-
-                int overallStatus = 0;
-                for (const QString& depName : dependencyNames(deps)) {
-                    const QString pluginFileName = depName + "_plugin" + suffix;
-                    const QString pluginPath = moduleDir.filePath(pluginFileName);
-                    if (!QFileInfo::exists(pluginPath)) {
-                        err << "Skipping: plugin not found for dependency '" << depName << "' at " << pluginPath << "\n";
-                        continue;
-                    }
-                    out << "Running generator for dependency plugin: " << pluginPath << "\n";
-                    // No --events-from sidecar in the multi-dep iteration
-                    // path (each dep would need its own sidecar — out of
-                    // scope here; --events-from is consumed by the
-                    // per-plugin path below, invoked from buildHeaders.nix).
-                    const int st = generateFromPlugin(pluginPath, outputDir, moduleOnly, apiStyle, QJsonArray(), out, err);
-                    if (st != 0) {
-                        overallStatus = st; // remember last non-zero
-                    }
-                }
-                if (overallStatus == 0 && !moduleOnly) {
-                    if (!writeUmbrellaHeader(genDirPath, err)) {
-                        overallStatus = 7;
-                    } else if (!writeUmbrellaSource(genDirPath, err)) {
-                        overallStatus = 8;
-                    }
-                }
-                return overallStatus;
-            } else {
-                for (const QString& depName : dependencyNames(deps)) {
-                    out << depName << "\n";
-                }
-                out.flush();
-                return 0;
+            // `--module-dir` (walk a directory of BUILT plugins and introspect
+            // one per dependency) was removed. Every consumer wrapper is now
+            // generated from a contract — `--dep <name>=<file.lidl>` inside the
+            // `--general-only` branch above, or the single-plugin path below
+            // that buildHeaders.nix drives with an explicit plugin argument.
+            // Nothing built a modules_dir for this mode any more, and the
+            // per-dependency introspection it did is the same "load the .so and
+            // read its QMetaObject" step that cannot run under cross-compilation
+            // at all.
+            //
+            // REFUSE it explicitly rather than ignoring it: silently falling
+            // through to the dependency LISTING below would exit 0 having
+            // generated nothing, which is precisely the shape that lets a stale
+            // caller look green while shipping a module with no typed API.
+            if (args.contains("--module-dir")) {
+                err << "Error: --module-dir was removed. It generated a consumer wrapper per\n"
+                    << "       dependency by loading each dependency's BUILT plugin from a\n"
+                    << "       modules directory.\n"
+                    << "       Use --general-only with one --dep <name>=<path/to/<name>.lidl>\n"
+                    << "       per dependency: the wrapper comes from the contract, so no\n"
+                    << "       dependency has to be built (and it works under cross-compilation).\n";
+                return 2;
             }
+
+            for (const QString& depName : dependencyNames(deps)) {
+                out << depName << "\n";
+            }
+            out.flush();
+            return 0;
         }
     }
 

@@ -91,13 +91,6 @@ The test binaries are available in `result/bin/` and can be re-run with filters:
 
 ### Manual Build
 
-#### Building the C++ SDK
-
-```bash
-cd cpp
-./compile.sh
-```
-
 #### Building the Code Generator
 
 ```bash
@@ -135,14 +128,9 @@ logos-cpp-generator /path/to/plugin.dylib --output-dir /custom/output --module-o
 # List dependencies from metadata.json
 logos-cpp-generator --metadata /path/to/metadata.json
 
-# Generate wrappers for all dependencies
-logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules
-
-# Generate with custom output directory
-logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules --output-dir /custom/output
-
-# Generate only module files (no core manager or umbrella headers)
-logos-cpp-generator --metadata /path/to/metadata.json --module-dir /path/to/modules --module-only
+# Generate a wrapper per dependency, each from that dependency's LIDL contract
+logos-cpp-generator --metadata /path/to/metadata.json --general-only \
+  --dep waku_module=/path/to/waku_module.lidl
 
 # Generate only core manager and umbrella files (assumes module files already exist)
 logos-cpp-generator --metadata /path/to/metadata.json --general-only
@@ -172,7 +160,15 @@ logos-cpp-generator --metadata /path/to/metadata.json --general-only --output-di
   - Include `waku_module_api.h` in the header
   - Include `waku_module_api.cpp` in the source
   - Create a `WakuModule waku_module;` member in the `LogosModules` struct
-- Does not require `--module-dir` since it doesn't process plugins
+- Takes one `--dep <name>=<path/to/<name>.lidl>` per dependency and generates that
+  dependency's wrapper from its contract, so no dependency plugin has to be built
+  (and it works under cross-compilation)
+
+**`--module-dir /path/to/modules`** — REMOVED
+- Generated a wrapper per dependency by loading each dependency's BUILT plugin
+  from a modules directory and reading its Qt metaobject
+- The generator now refuses the flag rather than ignoring it; use `--general-only`
+  with `--dep` as above
 
 #### Generated Files
 
