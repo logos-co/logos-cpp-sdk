@@ -5,8 +5,8 @@
 find_package(logos-lidl REQUIRED)
 
 add_executable(generator_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/legacy/generator_lib.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/legacy/lidl_to_json.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/generator_lib.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/lidl_to_json.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/experimental/lidl_emit_common.cpp
     test_to_pascal_case.cpp
     test_normalize_type.cpp
@@ -23,7 +23,6 @@ add_executable(generator_tests
 
 target_include_directories(generator_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/legacy
     ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/experimental
     ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp
 )

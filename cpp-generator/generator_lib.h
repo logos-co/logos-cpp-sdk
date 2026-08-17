@@ -3,6 +3,7 @@
 
 #include <QString>
 #include <QJsonArray>
+#include <QStringList>
 #include <QTextStream>
 #include <QVector>
 #include <QPair>
@@ -25,6 +26,21 @@
 // selected it any more (universal modules go straight to Lp), so it was
 // retired; `--api-style=std` is now a hard error rather than a silent alias.
 enum class ApiStyle { Qt, Lp };
+
+// Parse the `--api-style` flag out of a raw argument list. Both spellings are
+// accepted (`--api-style lp` and `--api-style=lp`); absent means Qt. Returns
+// false — having written a diagnostic to `err` — for a value the generator
+// refuses, in which case `outStyle` is untouched and the caller must exit 1.
+//
+// Lives here, next to the enum, because BOTH CLI entry points need it: the
+// umbrella mode in main.cpp and legacy_main's plugin path. Two copies of this
+// table is exactly how the surfaces drift apart.
+//
+// `std` was a third surface (std types over a QVariant/LogosAPIClient body).
+// It is retired, and rejected LOUDLY rather than aliased to qt: a stale caller
+// that still passes it wants std signatures, and silently handing it the Qt
+// surface would only fail later, further from the cause.
+bool parseApiStyleFlag(const QStringList& args, ApiStyle& outStyle, QTextStream& err);
 
 // Whether the generated wrapper targets ONE fixed module (the historical
 // behaviour) or binds to a module name chosen at runtime.

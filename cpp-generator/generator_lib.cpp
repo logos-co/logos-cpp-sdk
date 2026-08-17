@@ -8,6 +8,40 @@
 #include <QSet>
 #include <QStringList>
 
+bool parseApiStyleFlag(const QStringList& args, ApiStyle& outStyle, QTextStream& err)
+{
+    QString apiVal;
+    for (int i = 0; i < args.size(); ++i) {
+        const QString& a = args.at(i);
+        if (a == "--api-style") {
+            if (i + 1 < args.size()) apiVal = args.at(i + 1);
+            break;
+        }
+        if (a.startsWith("--api-style=")) {
+            apiVal = a.section('=', 1);
+            break;
+        }
+    }
+    if (apiVal == "std") {
+        err << "--api-style=std was retired: the Std surface (std types over a "
+            << "QVariant/LogosAPIClient body) no longer exists.\n"
+            << "Use 'lp' for the Qt-free std-typed surface, or 'qt' for the "
+            << "Qt-typed one.\n";
+        return false;
+    }
+    if (apiVal == "lp") {
+        outStyle = ApiStyle::Lp;
+        return true;
+    }
+    if (!apiVal.isEmpty() && apiVal != "qt") {
+        err << "Unknown --api-style value: " << apiVal
+            << " (expected 'qt' or 'lp')\n";
+        return false;
+    }
+    outStyle = ApiStyle::Qt;
+    return true;
+}
+
 QString toPascalCase(const QString& name)
 {
     QString out;

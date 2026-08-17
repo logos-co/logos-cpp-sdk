@@ -11,15 +11,13 @@
 #include <QDir>
 #include <QByteArrayList>
 #include <QFile>
-#include <QSet>
 #include <QRegularExpression>
 #include <QtGlobal>
 #include "logos_provider_interface.h"
-#include "generator_lib.h"
-#include "metadata_dependencies.h"
+#include "../generator_lib.h"
+#include "../metadata_dependencies.h"
 #include "../experimental/lidl_compat.h"
-#include "../experimental/impl_header_parser.h"
-#include "lidl_to_json.h"   // ModuleDecl -> the JSON surface generator_lib consumes
+#include "../lidl_to_json.h"   // ModuleDecl -> the JSON surface generator_lib consumes
 
 // Escape a string for safe embedding inside a generated C++ string literal.
 static QString cppStringEscape(const QString& s)
@@ -60,182 +58,9 @@ static QJsonArray loadEventsFromLidl(const QString& lidlPath, QTextStream& err,
     return moduleEventsToJson(pr.module);
 }
 
-// ── Dependency interfaces ───────────────────────────────────────────────────
-//
-// An "interface dependency" is a method/event contract a consumer declares
-// (in `metadata.json#interface_dependencies`) decoupled from any concrete
-// module. The definition file is either a `.lidl` or a pure-C++ `.h` (the
-// module's own language). The generator emits a BOUND wrapper class — the
-// target module name is a runtime ctor argument, not baked in — so one
-// interface can be bound to any module that satisfies it.
-
-// A single interface to generate a bound wrapper for. `path` is already
-// resolved (nix resolves local `${src}/file` and remote `${input}/file`
-// store paths and passes them via --interface; the generator never touches
-// flake inputs). `implClass` is required for `.h` files, empty for `.lidl`.
-struct InterfaceSpec {
-    QString name;       // interface identifier → class/file name + bind_<name>
-    QString path;       // resolved path to the .lidl / .h definition
-    QString implClass;  // class inside a .h whose API defines the interface
-};
-
-// Parse all `<flag> <name>=<path>[=<impl_class>]` (or `<flag>=<name>=...`)
-// occurrences. Names and store paths contain no '=', so splitting on the
-// first two '=' is unambiguous. Used for both `--interface` (runtime-bound
-// wrappers) and `--dep` (name-baked wrappers generated from a dep's LIDL).
-static QVector<InterfaceSpec> parseSpecFlags(const QStringList& args, const QString& flag)
-{
-    const QString flagEq = flag + "=";
-    QVector<InterfaceSpec> specs;
-    for (int i = 0; i < args.size(); ++i) {
-        QString value;
-        if (args.at(i) == flag && i + 1 < args.size()) {
-            value = args.at(i + 1);
-        } else if (args.at(i).startsWith(flagEq)) {
-            value = args.at(i).section('=', 1);
-        } else {
-            continue;
-        }
-        const int firstEq = value.indexOf('=');
-        if (firstEq <= 0) continue;  // need at least name=path
-        InterfaceSpec spec;
-        spec.name = value.left(firstEq);
-        const int secondEq = value.indexOf('=', firstEq + 1);
-        if (secondEq < 0) {
-            spec.path = value.mid(firstEq + 1);
-        } else {
-            spec.path = value.mid(firstEq + 1, secondEq - firstEq - 1);
-            spec.implClass = value.mid(secondEq + 1);
-        }
-        specs.append(spec);
-    }
-    return specs;
-}
-
-// Parse an interface definition file into a ModuleDecl. `.lidl` parses
-// directly; `.h`/`.hpp` go through the impl-header parser, which needs a
-// metadata.json — we feed it a synthetic one carrying only the interface
-// name so the consumer's identity and events are NOT pulled in (the
-// interface's events come solely from the file's own `logos_events:` block).
-static bool parseInterfaceFile(const InterfaceSpec& spec, const QString& genDirPath,
-                               ModuleDecl& outMod, QTextStream& err)
-{
-    QFileInfo fi(spec.path);
-    if (!fi.exists()) {
-        err << "Interface file not found for '" << spec.name << "': " << spec.path << "\n";
-        return false;
-    }
-    const QString ext = fi.suffix().toLower();
-    if (ext == "lidl") {
-        QFile f(spec.path);
-        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            err << "Failed to open interface file: " << spec.path << "\n";
-            return false;
-        }
-        const QString src = QString::fromUtf8(f.readAll());
-        f.close();
-        LidlParseResult pr = lidlParse(src);
-        if (pr.hasError()) {
-            err << spec.path << ":" << pr.errorLine << ":" << pr.errorColumn
-                << ": " << pr.error << "\n";
-            return false;
-        }
-        outMod = pr.module;
-        return true;
-    }
-    if (ext == "h" || ext == "hpp") {
-        if (spec.implClass.isEmpty()) {
-            err << "Interface '" << spec.name << "' is a C++ header but no impl_class was given "
-                << "(metadata.json interface_dependencies entry needs \"impl_class\")\n";
-            return false;
-        }
-        // Synthetic minimal metadata: name only, no events — keeps the
-        // consumer's identity/events out of the interface.
-        const QString synthMeta = QDir(genDirPath).filePath("." + spec.name + "_iface_meta.json");
-        {
-            QFile mf(synthMeta);
-            if (!mf.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                err << "Failed to write temporary interface metadata: " << synthMeta << "\n";
-                return false;
-            }
-            mf.write(QString("{\"name\":\"%1\"}").arg(spec.name).toUtf8());
-            mf.close();
-        }
-        ImplParseResult pr = parseImplHeader(spec.path, spec.implClass, synthMeta, err);
-        QFile::remove(synthMeta);
-        if (pr.hasError()) {
-            err << "Error parsing interface header " << spec.path << ": " << pr.error << "\n";
-            return false;
-        }
-        outMod = pr.module;
-        return true;
-    }
-    err << "Unsupported interface file type for '" << spec.name << "': " << spec.path
-        << " (expected .lidl or .h)\n";
-    return false;
-}
-
-// Generate a wrapper (`<name>_api.{h,cpp}`) per spec from its definition file.
-// The wrapper class is named from the spec `name` (PascalCase), NOT the
-// definition file's internal module name, so it matches the `#include` the
-// umbrella header emits. `bindMode` picks the wrapper flavour:
-//   Bound  — interface dependency: ctor takes a runtime module name; exposed
-//            via a `bind_<name>(...)` factory on the umbrella.
-//   Static — concrete dependency: the module name is baked in; exposed as a
-//            `<name>` member on the umbrella (byte-identical to the wrapper the
-//            dep's prebuilt headers used to ship).
-static bool generateInterfaceWrappers(const QVector<InterfaceSpec>& ifaces,
-                                      const QString& genDirPath, ApiStyle apiStyle,
-                                      QTextStream& out, QTextStream& err,
-                                      BindMode bindMode = BindMode::Bound)
-{
-    for (const InterfaceSpec& spec : ifaces) {
-        ModuleDecl mod;
-        if (!parseInterfaceFile(spec, genDirPath, mod, err)) return false;
-
-        {
-            QString recErr;
-            if (!lidlCheckRecords(mod, &recErr)) {
-                err << spec.path << ": " << recErr << "\n";
-                return false;
-            }
-        }
-
-        noteOptionalPositionalSlots(mod, spec.path, err);
-
-        const QString className = toPascalCase(spec.name);
-        const QJsonArray methods = moduleMethodsToJson(mod);
-        const QJsonArray events  = moduleEventsToJson(mod);
-        const QJsonArray records = moduleRecordsToJson(mod);
-        const QString headerRel = spec.name + "_api.h";
-        const QString sourceRel = spec.name + "_api.cpp";
-
-        const QString header = makeHeader(spec.name, className, methods, apiStyle, events, bindMode, records);
-        const QString source = makeSource(spec.name, className, headerRel, methods, apiStyle, events, bindMode, records);
-
-        {
-            QFile f(QDir(genDirPath).filePath(headerRel));
-            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                err << "Failed to write wrapper header: " << headerRel << "\n";
-                return false;
-            }
-            f.write(header.toUtf8());
-        }
-        {
-            QFile f(QDir(genDirPath).filePath(sourceRel));
-            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                err << "Failed to write wrapper source: " << sourceRel << "\n";
-                return false;
-            }
-            f.write(source.toUtf8());
-        }
-        out << "Generated " << (bindMode == BindMode::Bound ? "bound interface" : "dependency")
-            << " wrapper: " << headerRel << " (class " << className << ", "
-            << methods.size() << " methods, " << events.size() << " events)\n";
-    }
-    out.flush();
-    return true;
-}
+// The interface/dependency wrapper machinery (InterfaceSpec, parseSpecFlags,
+// parseInterfaceFile, generateInterfaceWrappers) moved to ../main.cpp with the
+// umbrella mode it exclusively serves — see the "Umbrella mode" block there.
 
 static QJsonArray enumerateMethods(QObject* moduleInstance)
 {
@@ -342,24 +167,6 @@ static bool writeUmbrellaHeader(const QString& genDirPath, QTextStream& err)
     return true;
 }
 
-static bool writeUmbrellaHeaderFromDeps(const QString& genDirPath, const QJsonArray& deps, const QStringList& interfaceNames, QTextStream& err, ApiStyle apiStyle = ApiStyle::Qt, const QString& originName = QString())
-{
-    // Emission lives in generator_lib (makeUmbrellaHeaderFromDeps) next to the
-    // per-module wrapper emitters, so the aggregate can be asserted on without
-    // a filesystem; this writes what it returns.
-    QDir genDir(genDirPath);
-    const QString content = makeUmbrellaHeaderFromDeps(deps, interfaceNames, apiStyle, originName);
-
-    QFile outFile(genDir.filePath("logos_sdk.h"));
-    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        err << "Failed to write umbrella header: " << outFile.fileName() << "\n";
-        return false;
-    }
-    outFile.write(content.toUtf8());
-    outFile.close();
-    return true;
-}
-
 static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
 {
     // Generate logos_sdk.cpp: one #include per per-module wrapper
@@ -391,22 +198,11 @@ static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
     return true;
 }
 
-static bool writeUmbrellaSourceFromDeps(const QString& genDirPath, const QJsonArray& deps, const QStringList& interfaceNames, QTextStream& err)
-{
-    // Emission lives in generator_lib (makeUmbrellaSourceFromDeps), alongside
-    // the header's; this writes what it returns.
-    QDir genDir(genDirPath);
-    const QString content = makeUmbrellaSourceFromDeps(deps, interfaceNames);
-
-    QFile outFile(genDir.filePath("logos_sdk.cpp"));
-    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        err << "Failed to write umbrella source: " << outFile.fileName() << "\n";
-        return false;
-    }
-    outFile.write(content.toUtf8());
-    outFile.close();
-    return true;
-}
+// The deps-driven umbrella writers (writeUmbrellaHeaderFromDeps /
+// writeUmbrellaSourceFromDeps) moved to ../main.cpp's umbrella mode, which is
+// now the only caller of makeUmbrellaHeaderFromDeps / makeUmbrellaSourceFromDeps.
+// The two directory-SCRAPING writers above stay: they belong to
+// generateFromPlugin (QPluginLoader introspection) and die with it.
 
 static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, bool moduleOnly, ApiStyle apiStyle, const QJsonArray& events, QTextStream& out, QTextStream& err, const QJsonArray& records = {})
 {
@@ -543,49 +339,19 @@ int legacy_main(int argc, char* argv[])
     // Parse --module-only option
     bool moduleOnly = args.contains("--module-only");
 
-    // Parse --general-only option
-    bool generalOnly = args.contains("--general-only");
+    // `--general-only` (the umbrella) is NOT handled here any more: ../main.cpp
+    // intercepts it, together with its new `--umbrella` spelling, and runs the
+    // one non-legacy implementation. It can only reach legacy_main when it was
+    // passed WITHOUT --metadata, which was never a mode — the plugin path
+    // below reports it as a missing plugin file, exactly as before.
 
-    // Parse --api-style option (qt | lp). Picks which type surface
-    // the generated `<Module>` wrapper exposes. Default is qt for
-    // backward compatibility — every existing module that doesn't
-    // declare `interface: "universal"` in its metadata.json keeps
-    // its Qt-typed LogosModules surface. Universal / cdylib modules get
-    // -DLOGOS_API_STYLE=lp threaded through by mkLogosModule.nix /
-    // LogosModule.cmake, which becomes `--api-style=lp` here.
-    // Both forms accepted: `--api-style lp` and `--api-style=lp`.
-    //
-    // `std` was a third surface (std types over a QVariant/LogosAPIClient
-    // body). It is retired, and rejected LOUDLY rather than aliased to qt:
-    // a stale caller that still passes it wants std signatures, and silently
-    // handing it the Qt surface would only fail later, further from the cause.
+    // `--api-style qt|lp` — the type surface the generated `<Module>` wrapper
+    // exposes. The parser lives in generator_lib next to the ApiStyle enum
+    // because ../main.cpp's umbrella mode needs the identical answer; a second
+    // copy here is how the two surfaces would drift.
     ApiStyle apiStyle = ApiStyle::Qt;
-    {
-        QString apiVal;
-        for (int i = 0; i < args.size(); ++i) {
-            const QString& a = args.at(i);
-            if (a == "--api-style") {
-                if (i + 1 < args.size()) apiVal = args.at(i + 1);
-                break;
-            }
-            if (a.startsWith("--api-style=")) {
-                apiVal = a.section('=', 1);
-                break;
-            }
-        }
-        if (apiVal == "std") {
-            err << "--api-style=std was retired: the Std surface (std types over a "
-                << "QVariant/LogosAPIClient body) no longer exists.\n"
-                << "Use 'lp' for the Qt-free std-typed surface, or 'qt' for the "
-                << "Qt-typed one.\n";
-            return 1;
-        }
-        else if (apiVal == "lp") apiStyle = ApiStyle::Lp;
-        else if (!apiVal.isEmpty() && apiVal != "qt") {
-            err << "Unknown --api-style value: " << apiVal
-                << " (expected 'qt' or 'lp')\n";
-            return 1;
-        }
+    if (!parseApiStyleFlag(args, apiStyle, err)) {
+        return 1;
     }
 
     // Support: extract dependencies from a metadata.json file
@@ -624,124 +390,6 @@ int legacy_main(int argc, char* argv[])
             }
             const QJsonObject obj = doc.object();
             const QJsonArray deps = obj.value("dependencies").toArray();
-
-            // If --general-only provided, generate only the umbrella files.
-            // `LogosModules` exposes ONLY the modules listed in
-            // `metadata.json#dependencies` — apps that need to manage the
-            // core use liblogos' C API directly.
-            if (generalOnly) {
-                QString genDirPath = outputDir.isEmpty() ? QDir::current().filePath("logos-cpp-sdk/cpp/generated") : outputDir;
-                QDir().mkpath(genDirPath);
-
-                // Collect interface dependencies. Primary source: --interface
-                // flags (nix resolves both local `${src}/file` and remote
-                // `${input}/file` store paths and passes them here, so the
-                // generator never touches flake inputs). Fallback: self-resolve
-                // LOCAL interface_dependencies entries (those without an
-                // `input`) from metadata.json, relative to the metadata dir —
-                // covers non-nix / source-tree builds. Flags win on collision.
-                // Dedup --interface flags by name and drop malformed specs:
-                // a repeated interface name would emit duplicate
-                // #include "<name>_api.h" / bind_<name>(...) into logos_sdk.h
-                // and fail to compile, and an empty name/path can only fail
-                // later in a less actionable way.
-                QVector<InterfaceSpec> ifaceSpecs;
-                QSet<QString> haveIface;
-                for (const InterfaceSpec& sp : parseSpecFlags(args, "--interface")) {
-                    if (sp.name.isEmpty() || sp.path.isEmpty()) {
-                        err << "Ignoring malformed --interface spec (empty name or path)\n";
-                        continue;
-                    }
-                    if (haveIface.contains(sp.name)) {
-                        err << "Ignoring duplicate --interface '" << sp.name << "'\n";
-                        continue;
-                    }
-                    haveIface.insert(sp.name);
-                    ifaceSpecs.append(sp);
-                }
-
-                const QString metaDir = QFileInfo(metaResolvedPath).absolutePath();
-                const QJsonArray ifaceDeps = obj.value("interface_dependencies").toArray();
-                for (const QJsonValue& v : ifaceDeps) {
-                    if (!v.isObject()) continue;
-                    const QJsonObject eo = v.toObject();
-                    const QString name = eo.value("name").toString();
-                    if (name.isEmpty() || haveIface.contains(name)) continue;
-                    // Entries with an `input` reference another repo (flake
-                    // input); only nix can resolve those, via a --interface
-                    // flag. If we reach here without a matching flag, skip.
-                    if (eo.contains("input")) {
-                        err << "Note: interface '" << name << "' has an 'input' (cross-repo) "
-                            << "but no --interface flag was passed; skipping (nix supplies the path).\n";
-                        continue;
-                    }
-                    const QString file = eo.value("file").toString();
-                    if (file.isEmpty()) continue;
-                    InterfaceSpec spec;
-                    spec.name = name;
-                    spec.path = QDir(metaDir).filePath(file);
-                    spec.implClass = eo.value("impl_class").toString();
-                    ifaceSpecs.append(spec);
-                    haveIface.insert(name);
-                }
-
-                // Generate one bound wrapper (<name>_api.{h,cpp}) per interface.
-                if (!ifaceSpecs.isEmpty()) {
-                    if (!generateInterfaceWrappers(ifaceSpecs, genDirPath, apiStyle, out, err)) {
-                        return 9;
-                    }
-                }
-
-                // Concrete dependencies generated from their published LIDL
-                // (`--dep <name>=<lidl>`). Same backend as interfaces but
-                // BindMode::Static — the module name is baked in and the dep is
-                // exposed as a `<dep>` MEMBER (the umbrella already emits it from
-                // `dependencies`, so no umbrella change). nix passes `--dep` only
-                // for deps that publish a `lidl` output; deps without one fall
-                // back to the header-copy path and are NOT passed here. Dedup vs
-                // each other and vs interface names.
-                QVector<InterfaceSpec> depSpecs;
-                QSet<QString> haveDep;
-                for (const InterfaceSpec& sp : parseSpecFlags(args, "--dep")) {
-                    if (sp.name.isEmpty() || sp.path.isEmpty()) {
-                        err << "Ignoring malformed --dep spec (empty name or path)\n";
-                        continue;
-                    }
-                    if (haveIface.contains(sp.name)) {
-                        err << "Ignoring --dep '" << sp.name << "' (name already used by an interface)\n";
-                        continue;
-                    }
-                    if (haveDep.contains(sp.name)) {
-                        err << "Ignoring duplicate --dep '" << sp.name << "'\n";
-                        continue;
-                    }
-                    haveDep.insert(sp.name);
-                    depSpecs.append(sp);
-                }
-                if (!depSpecs.isEmpty()) {
-                    if (!generateInterfaceWrappers(depSpecs, genDirPath, apiStyle, out, err, BindMode::Static)) {
-                        return 9;
-                    }
-                }
-
-                QStringList interfaceNames;
-                for (const InterfaceSpec& sp : ifaceSpecs) interfaceNames.append(sp.name);
-
-                // Generate umbrella headers based on dependencies + interfaces.
-                // For the Lp (Qt-free) flavor the umbrella bakes this module's
-                // name as the lp_client origin.
-                const QString originName = obj.value("name").toString();
-                if (!writeUmbrellaHeaderFromDeps(genDirPath, deps, interfaceNames, err, apiStyle, originName)) {
-                    return 7;
-                }
-                if (!writeUmbrellaSourceFromDeps(genDirPath, deps, interfaceNames, err)) {
-                    return 8;
-                }
-
-                out << "Generated logos_sdk.h and logos_sdk.cpp\n";
-                out.flush();
-                return 0;
-            }
 
             // `--module-dir` (walk a directory of BUILT plugins and introspect
             // one per dependency) was removed. Every consumer wrapper is now
@@ -792,8 +440,8 @@ int legacy_main(int argc, char* argv[])
 
     if (args.size() < 2) {
         err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName() << " /absolute/path/to/plugin [--output-dir /path/to/output] [--module-only] [--events-from /path/to/<name>.lidl]\n";
-        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only] [--general-only]\n";
-        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json --general-only [--output-dir /path/to/output]\n";
+        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json [--output-dir /path/to/output] [--module-only]\n";
+        err << "   or:  " << QFileInfo(app.applicationFilePath()).fileName() << " --metadata /absolute/path/to/metadata.json --umbrella (or --general-only) [--output-dir /path/to/output] [--api-style qt|lp] [--interface n=p] [--dep n=p.lidl]\n";
         return 1;
     }
 

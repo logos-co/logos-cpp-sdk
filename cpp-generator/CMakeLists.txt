@@ -20,9 +20,9 @@ find_package(logos-lidl REQUIRED)
 
 add_executable(logos-cpp-generator
     main.cpp
+    generator_lib.cpp
+    lidl_to_json.cpp
     legacy/main.cpp
-    legacy/generator_lib.cpp
-    legacy/lidl_to_json.cpp
     experimental/lidl_emit_common.cpp
     experimental/lidl_gen_client.cpp
     experimental/lidl_gen_cdylib.cpp
@@ -58,7 +58,6 @@ endif()
 
 target_include_directories(logos-cpp-generator PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/legacy
     ${CMAKE_CURRENT_SOURCE_DIR}/experimental
     ${CMAKE_CURRENT_SOURCE_DIR}/../cpp
     ${LP_INCLUDE}
