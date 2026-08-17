@@ -7,6 +7,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../cpp ${CMAKE_CURRENT_BINARY_DI
 add_executable(sdk_tests
     test_logos_module_context.cpp
     test_logos_host_services.cpp
+    test_logos_host_core.cpp
 )
 
 # logos_host_services.h is a veneer over the lp_* C ABI, so this suite needs
