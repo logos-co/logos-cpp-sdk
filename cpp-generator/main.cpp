@@ -633,14 +633,16 @@ int main(int argc, char* argv[])
             }
 
             if (backend == "qt") {
-                err << "Error: Qt glue generation moved to logos-qt-generator "
-                       "(logos-qt-sdk). Use it for --backend qt; this tool "
-                       "keeps the Qt-free outputs (--header-to-lidl emits the "
-                       ".lidl sidecar).\n";
+                err << "Error: --backend qt was removed. A module is a plain "
+                       "shared library: emit the module-impl C ABI with "
+                       "--backend cdylib, then turn that into a Qt plugin with "
+                       "logos-qt-host-generator --backend cdylib (logos-plugin-qt). "
+                       "This tool keeps the Qt-free outputs (--header-to-lidl "
+                       "emits the .lidl sidecar).\n";
                 return 6;
             }
 
-            err << "Error: --from-header supports --backend cdylib (Qt glue: logos-qt-generator)\n";
+            err << "Error: --from-header supports --backend cdylib (Qt plugin packaging: logos-qt-host-generator)\n";
             return 1;
         }
 
@@ -650,16 +652,15 @@ int main(int argc, char* argv[])
             err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName()
                 << " --lidl /path/to/module.lidl [--output-dir /path] [--module-only]\n"
                 << "       " << QFileInfo(app.applicationFilePath()).fileName()
-                << " --lidl /path/to/module.lidl --backend qt --impl-class Class --impl-header header.h [--output-dir /path]\n"
-                << "       " << QFileInfo(app.applicationFilePath()).fileName()
                 << " --lidl /path/to/module.lidl --backend cdylib [--output-dir /path]   (glue-only: C exports come from the module's own language backend)\n"
                 << "       " << QFileInfo(app.applicationFilePath()).fileName()
-                << " --from-header src/impl.h --backend qt --impl-class Class --metadata metadata.json [--output-dir /path]\n";
+                << " --from-header src/impl.h --backend cdylib --metadata metadata.json [--output-dir /path]\n";
             return 1;
         }
         QString lidlPath = args.at(lidlIdx + 1);
 
-        // Provider glue mode: --backend qt --impl-class X --impl-header Y
+        // Backend dispatch. `qt` is refused above: a module is a plain shared
+        // library, and Qt-plugin packaging is logos-qt-host-generator's job.
         const int backendIdx = args.indexOf("--backend");
         if (backendIdx != -1) {
             if (backendIdx + 1 >= args.size()) {

@@ -177,16 +177,24 @@ Flag plumbing:
 2. `LogosModule.cmake` reads `${LOGOS_API_STYLE}` (default `qt`) and forwards `--api-style=${LOGOS_API_STYLE}` to the `logos-cpp-generator --general-only` invocation that writes the umbrella. Each module's Nix build emits **two** header derivations (`<name>.headers-qt` and `<name>.headers-lp`) via `buildHeaders.nix` — one `logos-cpp-generator --api-style=…` run per style, at the dep's build time. A consumer's `buildPlugin.nix` picks `dep.headers-${apiStyle}` and copies its `include/` straight into the build sandbox; no codegen runs at consume time. Nix's laziness means only the variant a downstream actually depends on is realised.
 3. `parseApiStyleFlag()` in `generator_lib` parses `--api-style` once (rejecting the retired `std`); `main.cpp`'s `runUmbrellaMode` threads the resulting `ApiStyle` into `makeUmbrella*FromDeps`, and `legacy/main.cpp` threads it through `generateFromPlugin` / `writeUmbrellaHeader` (the QPluginLoader path). No per-style filenames are ever emitted; each module gets a single `<name>_api.h` + `<name>_api.cpp` pair regardless of style.
 
-### Provider Generation (logos-qt-generator)
+### Provider Generation — REMOVED
 
-> The Qt provider glue (`lidl_gen_provider.{h,cpp}`) is emitted by **logos-qt-sdk's `logos-qt-generator`**, not this binary — it consumes the same `logos-lidl` frontend (+ the shared `lidl_emit_common` / `impl_header_parser` / `lidl_compat.h` / `metadata_dependencies.h` helpers, distributed under `share/lidl-frontend`). Documented here for reference. Adding a header to what `impl_header_parser.cpp` includes means adding it to that install list too (`nix/bin.nix`) — the qt-generator compiles that source out of the installed directory, so a header left behind breaks its build, not ours.
-
-- `lidlMakeProviderHeader(ModuleDecl, implClass, implHeader)` — generates Qt glue header
-  - Emits `nlohmannToQVariant()` helper when any method has `jsonReturn = true`
-  - Always emits an `onInit(LogosAPI*) override` that, via SFINAE'd helpers in `logos_module_context.h`, (a) copies the three runtime-injected properties (`modulePath`, `instanceId`, `instancePersistencePath`) into the impl, (b) constructs a per-module `LogosModules` aggregate and threads its pointer through the same base, and (c) installs the typed-event callback (`maybeSetEmitEvent`) consumed by `<name>_events.cpp` method bodies. Impls that don't inherit `LogosModuleContext` compile unchanged — the helper overloads collapse to no-ops. The full `LogosAPI` is never exposed past the provider boundary.
-  - Always emits `#include "logos_sdk.h"` and a `std::unique_ptr<LogosModules> m_logosModules` member; ownership lives on the provider, the context base sees only a non-owning `void*` reinterpreted in `LogosModuleContext::modules()` (which depends on the impl's TU having included `logos_sdk.h`).
-- `lidlMakeProviderDispatch(ModuleDecl)` — generates callMethod/getMethods dispatch. `getMethods()` emits the full interface: each method tagged `type: "method"`, then each `module.events` entry tagged `type: "event"` (name, signature, parameters, escaped `description`; no returnType/isInvokable). There is no separate `getEvents()` — folding events into `getMethods()` keeps the provider vtable ABI-stable.
-- `lidlMakeEventsSource(ModuleDecl, implClass, implHeader)` — generates `<name>_events.cpp`: Qt-MOC-style method bodies for prototypes declared in the impl's `logos_events:` block. Each body marshals typed args into a `QVariantList` and calls `this->emitEventImpl_("<name>", &args)` on the LogosModuleContext base.
+> The Qt provider glue emitter (`lidl_gen_provider.{h,cpp}` in logos-qt-sdk) is **deleted**. It
+> wrapped a plain impl directly in a Qt provider object, skipping the language-neutral seam.
+>
+> A module is a plain shared library. Turning one into a Qt plugin is a downstream HOSTING step,
+> and the two halves meet only at `logos_module_impl.h`:
+>
+> ```
+> plain std impl
+>   --> logos-cpp-generator --backend cdylib      -> logos_module_* C ABI exports
+>   --> logos-qt-host-generator --backend cdylib  -> <name>CdylibProvider : LogosProviderBase
+>       (logos-plugin-qt)
+> ```
+>
+> That seam is what lets the Rust and JS providers target the same ABI. `logos-qt-generator` still
+> owns `--backend consumer` (Qt-typed dependency wrappers) and `--backend ui` (view plugins);
+> `--backend qt` is refused with a message naming the replacement.
 
 ### Impl Header Parser (`impl_header_parser.h/cpp`)
 
@@ -204,22 +212,19 @@ Flag plumbing:
 
 ```bash
 logos-cpp-generator --from-header src/my_module_impl.h \
-    --backend qt \
-    --impl-class MyModuleImpl \
-    --impl-header my_module_impl.h \
+    --backend cdylib \
     --metadata metadata.json \
     --output-dir ./generated_code
 ```
 
-Generates: `my_module_qt_glue.h`, `my_module_dispatch.cpp`
+Generates the module-impl C ABI exports. Qt-plugin packaging is a separate step
+(`logos-qt-host-generator --backend cdylib`).
 
-### From LIDL file — provider glue
+### From LIDL file — cdylib glue
 
 ```bash
 logos-cpp-generator --lidl my_module.lidl \
-    --backend qt \
-    --impl-class MyModuleImpl \
-    --impl-header my_module_impl.h \
+    --backend cdylib \
     --output-dir ./generated_code
 ```
 

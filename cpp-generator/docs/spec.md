@@ -40,11 +40,11 @@ Path 1: LIDL file                    Path 2: C++ impl header
     ▼                                     ▼
  ModuleDecl  ◄────── same AST ──────► ModuleDecl
     │                                     │
-    ├──► lidlMakeProviderHeader()  ◄──────┤
-    │         → <name>_qt_glue.h          │
-    │                                     │
-    ├──► lidlMakeProviderDispatch() ◄─────┤
-    │         → <name>_dispatch.cpp       │
+    ├──► lidlMakeCdylibGlue*()             │
+    │         → logos_module_* C ABI       │
+    │           (Qt packaging is a         │
+    │            downstream step:          │
+    │            logos-qt-host-generator)  │
     │                                     │
     ├──► lidlMakeHeader()                 │
     │         → <name>_api.h              │
@@ -281,6 +281,12 @@ logos_events:                                     // expands to `public:`; recog
 Module metadata (name, version, description, dependencies) still comes from `metadata.json`, not from the header.
 
 ### Generated Output
+
+> **Historical.** `<name>_qt_glue.h` / `<name>_dispatch.cpp` were emitted by
+> `lidl_gen_provider`, which is deleted. A module now emits the `logos_module_*` C ABI
+> (`--backend cdylib`) and `logos-qt-host-generator` turns that into a Qt plugin. The sections
+> below describe the retired shape and are kept because the `onInit` wiring they document still
+> applies to the cdylib glue.
 
 #### Provider Glue (`<name>_qt_glue.h`)
 
