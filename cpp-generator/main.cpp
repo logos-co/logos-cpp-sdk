@@ -1,4 +1,4 @@
-#include "legacy/legacy_main.h"
+#include "plugin_introspect.h"
 #include "generator_lib.h"
 #include "lidl_to_json.h"
 #include "experimental/lidl_gen_client.h"
@@ -26,11 +26,11 @@
 // its interface dependencies, and the per-dependency / per-interface wrappers
 // those aggregate.
 //
-// This is NOT a legacy mode, despite having lived in `legacy/main.cpp` until
+// This is NOT a legacy mode, despite having lived in `plugin_introspect.cpp` until
 // now: `LogosModuleContext::modules()` returns `LogosModules&`, so every
 // `interface: "universal"` module that calls a declared dependency goes
 // through it, and LogosModule.cmake runs it for every module build. Only the
-// QPluginLoader-introspection path in `legacy/main.cpp` is legacy.
+// QPluginLoader-introspection path in `plugin_introspect.cpp` is legacy.
 //
 // `--general-only` is kept as an exact alias — it is what LogosModule.cmake,
 // buildPlugin.nix and buildHeaders.nix all pass today — so there is ONE
@@ -217,7 +217,7 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
         outputDir = stripAt(args.at(outDirIdx + 1));
     }
 
-    // `--api-style qt|lp` — the one parser, shared with legacy_main's plugin
+    // `--api-style qt|lp` — the one parser, shared with runPluginIntrospectMode's plugin
     // path (generator_lib.h, next to the ApiStyle enum).
     ApiStyle apiStyle = ApiStyle::Qt;
     if (!parseApiStyleFlag(args, apiStyle, err)) return 1;
@@ -428,7 +428,7 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
 int main(int argc, char* argv[])
 {
     // Check for --lidl / --from-header / --header-to-lidl mode before
-    // initializing QCoreApplication, since legacy_main creates its own.
+    // initializing QCoreApplication, since runPluginIntrospectMode creates its own.
     bool hasLidl = false;
     bool hasFromHeader = false;
     bool hasHeaderToLidl = false;
@@ -446,8 +446,8 @@ int main(int argc, char* argv[])
     }
 
     // Umbrella mode. `--general-only` routes here too — ONE implementation,
-    // no second copy in legacy/main.cpp to drift — but only in the shape
-    // legacy_main ever honoured it: inside the `--metadata` branch. Without
+    // no second copy in plugin_introspect.cpp to drift — but only in the shape
+    // runPluginIntrospectMode ever honoured it: inside the `--metadata` branch. Without
     // `--metadata` the flag was never a mode at all (it fell through to the
     // plugin path and reported the flag itself as a missing plugin file), so
     // that case still falls through, unchanged.
@@ -471,7 +471,7 @@ int main(int argc, char* argv[])
         const QStringList args = app.arguments();
 
         // Strip a leading '@' from path arguments — some build drivers pass
-        // `@/abs/path`. Matches the legacy_main path handling.
+        // `@/abs/path`. Matches the runPluginIntrospectMode path handling.
         auto stripAt = [](QString p) { if (p.startsWith('@')) p.remove(0, 1); return p; };
 
         const int idx = args.indexOf("--header-to-lidl");
@@ -769,5 +769,5 @@ int main(int argc, char* argv[])
         return lidlGenerateClientStubs(lidlPath, outputDir, moduleOnly, out, err);
     }
 
-    return legacy_main(argc, argv);
+    return runPluginIntrospectMode(argc, argv);
 }

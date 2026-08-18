@@ -14,20 +14,10 @@
 #include <QRegularExpression>
 #include <QtGlobal>
 #include "logos_provider_interface.h"
-#include "../generator_lib.h"
-#include "../metadata_dependencies.h"
-#include "../experimental/lidl_compat.h"
-#include "../lidl_to_json.h"   // ModuleDecl -> the JSON surface generator_lib consumes
-
-// Escape a string for safe embedding inside a generated C++ string literal.
-static QString cppStringEscape(const QString& s)
-{
-    QString out = s;
-    out.replace('\\', "\\\\");
-    out.replace('"', "\\\"");
-    out.replace('\n', "\\n");
-    return out;
-}
+#include "generator_lib.h"
+#include "metadata_dependencies.h"
+#include "experimental/lidl_compat.h"
+#include "lidl_to_json.h"   // ModuleDecl -> the JSON surface generator_lib consumes
 
 // Load events from a `.lidl` sidecar shipped alongside a module's
 // pre-built headers. Returns a JSON array of
@@ -114,97 +104,7 @@ static QJsonArray enumerateMethods(QObject* moduleInstance)
 
 // makeSource -> generator_lib.h/cpp
 
-static bool writeUmbrellaHeader(const QString& genDirPath, QTextStream& err)
-{
-    // Generate logos_sdk.h: include every per-module wrapper header in
-    // the gen dir and aggregate them into a flat `LogosModules` struct.
-    // The wrappers may be Qt-typed or std-typed (lp) depending on the
-    // --api-style picked for this build; the umbrella shape doesn't
-    // change because either flavor produces the same accessor name
-    // (`<dep>`) on the same class name (`<Dep>`).
-    //
-    // `core_manager_api.h` (if present in the gen dir from an older
-    // run) is intentionally filtered out — universal modules access
-    // only the deps they explicitly declared in `metadata.json#
-    // dependencies`. Apps that need to manage the core use the C API
-    // in liblogos directly, not the typed `LogosModules` aggregate.
-    QDir genDir(genDirPath);
-    QStringList headers = genDir.entryList(QStringList() << "*_api.h", QDir::Files | QDir::Readable);
-    headers.removeAll(QStringLiteral("core_manager_api.h"));
-
-    QString content;
-    QTextStream s(&content);
-    s << "#pragma once\n";
-    s << "#include \"logos_api.h\"\n";
-    s << "#include \"logos_api_client.h\"\n\n";
-    for (const QString& h : headers) s << "#include \"" << h << "\"\n";
-    s << "\n";
-
-    s << "struct LogosModules {\n";
-    s << "    explicit LogosModules(LogosAPI* api) : api(api)";
-    for (const QString& h : headers) {
-        QString base = h;
-        base.chop(QString("_api.h").size());
-        s << ", \n        " << base << "(api)";
-    }
-    s << " {}\n";
-    s << "    LogosAPI* api;\n";
-    for (const QString& h : headers) {
-        QString base = h;
-        base.chop(QString("_api.h").size());
-        QString className = toPascalCase(base);
-        s << "    " << className << " " << base << ";\n";
-    }
-    s << "};\n";
-
-    QFile outFile(genDir.filePath("logos_sdk.h"));
-    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        err << "Failed to write umbrella header: " << outFile.fileName() << "\n";
-        return false;
-    }
-    outFile.write(content.toUtf8());
-    outFile.close();
-    return true;
-}
-
-static bool writeUmbrellaSource(const QString& genDirPath, QTextStream& err)
-{
-    // Generate logos_sdk.cpp: one #include per per-module wrapper
-    // `.cpp` in the gen dir. There's now exactly one wrapper file per
-    // module (Qt or std, picked at generation time), so no de-dup or
-    // twin-file filtering is needed.
-    //
-    // `core_manager_api.cpp` (if present from an older run) is
-    // filtered out — the umbrella header no longer declares
-    // `CoreManager core_manager;` so including its definitions would
-    // produce dead code.
-    QDir genDir(genDirPath);
-    QStringList sources = genDir.entryList(QStringList() << "*_api.cpp", QDir::Files | QDir::Readable);
-    sources.removeAll(QStringLiteral("core_manager_api.cpp"));
-
-    QString content;
-    QTextStream s(&content);
-    s << "#include \"logos_sdk.h\"\n\n";
-    for (const QString& c : sources) s << "#include \"" << c << "\"\n";
-    s << "\n";
-
-    QFile outFile(genDir.filePath("logos_sdk.cpp"));
-    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        err << "Failed to write umbrella source: " << outFile.fileName() << "\n";
-        return false;
-    }
-    outFile.write(content.toUtf8());
-    outFile.close();
-    return true;
-}
-
-// The deps-driven umbrella writers (writeUmbrellaHeaderFromDeps /
-// writeUmbrellaSourceFromDeps) moved to ../main.cpp's umbrella mode, which is
-// now the only caller of makeUmbrellaHeaderFromDeps / makeUmbrellaSourceFromDeps.
-// The two directory-SCRAPING writers above stay: they belong to
-// generateFromPlugin (QPluginLoader introspection) and die with it.
-
-static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, bool moduleOnly, ApiStyle apiStyle, const QJsonArray& events, QTextStream& out, QTextStream& err, const QJsonArray& records = {})
+static int generateFromPlugin(const QString& pluginInputPath, const QString& outputDir, ApiStyle apiStyle, const QJsonArray& events, QTextStream& out, QTextStream& err, const QJsonArray& records = {})
 {
     QFileInfo fi(pluginInputPath);
     if (!fi.exists()) {
@@ -297,19 +197,6 @@ static int generateFromPlugin(const QString& pluginInputPath, const QString& out
         f.close();
     }
 
-    if (!moduleOnly) {
-        if (!writeUmbrellaHeader(genDirPath, err)) {
-            loader.unload();
-            return 7;
-        }
-        if (!writeUmbrellaSource(genDirPath, err)) {
-            loader.unload();
-            return 8;
-        }
-    }
-
-    QJsonDocument doc(methods);
-    // out << doc.toJson(QJsonDocument::Indented) << "\n";
     out << "Generated: " << QDir(genDirPath).filePath(headerRel) << " and " << QDir(genDirPath).filePath(sourceRel) << "\n";
     out.flush();
 
@@ -317,7 +204,7 @@ static int generateFromPlugin(const QString& pluginInputPath, const QString& out
     return 0;
 }
 
-int legacy_main(int argc, char* argv[])
+int runPluginIntrospectMode(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);
 
@@ -336,12 +223,15 @@ int legacy_main(int argc, char* argv[])
         }
     }
 
-    // Parse --module-only option
-    bool moduleOnly = args.contains("--module-only");
+    // `--module-only` is accepted and ignored. The only thing it ever
+    // suppressed was the directory-scraping umbrella pair above, which is gone
+    // — generator_lib's deps-driven makeUmbrella*FromDeps is the sole umbrella
+    // emitter now. generate-module-headers.sh:60 always passes the flag, so it
+    // stays tolerated rather than rejected.
 
     // `--general-only` (the umbrella) is NOT handled here any more: ../main.cpp
     // intercepts it, together with its new `--umbrella` spelling, and runs the
-    // one non-legacy implementation. It can only reach legacy_main when it was
+    // one non-legacy implementation. It can only reach runPluginIntrospectMode when it was
     // passed WITHOUT --metadata, which was never a mode — the plugin path
     // below reports it as a missing plugin file, exactly as before.
 
@@ -471,5 +361,5 @@ int legacy_main(int argc, char* argv[])
     }
 
     QString argPath = args.at(1);
-    return generateFromPlugin(argPath, outputDir, moduleOnly, apiStyle, eventsFromSidecar, out, err, recordsFromSidecar);
+    return generateFromPlugin(argPath, outputDir, apiStyle, eventsFromSidecar, out, err, recordsFromSidecar);
 }

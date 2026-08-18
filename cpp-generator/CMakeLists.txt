@@ -22,7 +22,7 @@ add_executable(logos-cpp-generator
     main.cpp
     generator_lib.cpp
     lidl_to_json.cpp
-    legacy/main.cpp
+    plugin_introspect.cpp
     experimental/lidl_emit_common.cpp
     experimental/lidl_gen_client.cpp
     experimental/lidl_gen_cdylib.cpp

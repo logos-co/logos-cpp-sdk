@@ -33,7 +33,7 @@ enum class ApiStyle { Qt, Lp };
 // refuses, in which case `outStyle` is untouched and the caller must exit 1.
 //
 // Lives here, next to the enum, because BOTH CLI entry points need it: the
-// umbrella mode in main.cpp and legacy_main's plugin path. Two copies of this
+// umbrella mode in main.cpp and the plugin-introspection path. Two copies of this
 // table is exactly how the surfaces drift apart.
 //
 // `std` was a third surface (std types over a QVariant/LogosAPIClient body).
