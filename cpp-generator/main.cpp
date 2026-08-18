@@ -222,11 +222,30 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
     ApiStyle apiStyle = ApiStyle::Qt;
     if (!parseApiStyleFlag(args, apiStyle, err)) return 1;
 
+    // `--binding api|origin` — the umbrella's transport binding (generator_lib.h,
+    // next to the UmbrellaBinding enum).
+    UmbrellaBinding binding = UmbrellaBinding::FromApi;
+    if (!parseUmbrellaBindingFlag(args, binding, err)) return 1;
+
+    // With the Qt surface, `origin` means the per-dependency wrappers are
+    // logos-qt-generator's (`--backend consumer --binding origin`) and this
+    // run emits the UMBRELLA ONLY. The wrapper emitter reached below is the
+    // legacy Qt one, whose every constructor takes a LogosAPI — writing those
+    // next to an origin-bound umbrella would put two mutually incompatible
+    // wrapper flavours in one output directory, and the umbrella's members
+    // would not compile against them. Skipping is the honest outcome, and it
+    // is said out loud rather than inferred from an empty directory.
+    //
+    // Interface NAMES are still collected below, and still drive the
+    // `bind_<name>(...)` factories; only the wrapper FILES are skipped.
+    const bool skipWrappers =
+        (apiStyle == ApiStyle::Qt && binding == UmbrellaBinding::ExplicitOrigin);
+
     const int metaIdx = args.indexOf("--metadata");
     if (metaIdx == -1 || metaIdx + 1 >= args.size()) {
         err << "Usage: " << progName
             << " --metadata /absolute/path/to/metadata.json --umbrella (or --general-only)"
-               " [--output-dir /path/to/output] [--api-style qt|lp]"
+               " [--output-dir /path/to/output] [--api-style qt|lp] [--binding api|origin]"
                " [--interface <name>=<file.lidl|file.h>[=<ImplClass>]]"
                " [--dep <name>=<file.lidl>]\n";
         return 1;
@@ -316,10 +335,14 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
     }
 
     // Generate one bound wrapper (<name>_api.{h,cpp}) per interface.
-    if (!ifaceSpecs.isEmpty()) {
+    if (!ifaceSpecs.isEmpty() && !skipWrappers) {
         if (!generateInterfaceWrappers(ifaceSpecs, genDirPath, apiStyle, out, err)) {
             return 9;
         }
+    } else if (!ifaceSpecs.isEmpty()) {
+        err << "Note: --binding origin — emitting the umbrella only. The "
+            << ifaceSpecs.size() << " interface wrapper(s) must come from "
+            << "logos-qt-generator --backend consumer --bind bound --binding origin.\n";
     }
 
     // Concrete dependencies generated from their published LIDL
@@ -347,10 +370,14 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
         haveDep.insert(sp.name);
         depSpecs.append(sp);
     }
-    if (!depSpecs.isEmpty()) {
+    if (!depSpecs.isEmpty() && !skipWrappers) {
         if (!generateInterfaceWrappers(depSpecs, genDirPath, apiStyle, out, err, BindMode::Static)) {
             return 9;
         }
+    } else if (!depSpecs.isEmpty()) {
+        err << "Note: --binding origin — emitting the umbrella only. The "
+            << depSpecs.size() << " dependency wrapper(s) must come from "
+            << "logos-qt-generator --backend consumer --bind static --binding origin.\n";
     }
 
     QStringList interfaceNames;
@@ -362,6 +389,17 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
     // what those return. For the Lp (Qt-free) flavor the umbrella bakes this
     // module's name as the lp_client origin.
     const QString originName = obj.value("name").toString();
+    // The origin is this module's OWN name, and with `--binding origin` it is
+    // the only thing standing between a generated wrapper and calling out under
+    // somebody else's identity. Refuse at the CLI as well as in the emitter
+    // (which writes an `#error`): failing here names the metadata file, which
+    // is where the fix is.
+    if (binding == UmbrellaBinding::ExplicitOrigin && originName.isEmpty()) {
+        err << "--binding origin needs the consuming module's own name, and "
+            << metaResolvedPath << " declares no \"name\". The origin is asserted, "
+            << "never derived from a caller.\n";
+        return 6;
+    }
     const QDir genDir(genDirPath);
     {
         QFile outFile(genDir.filePath("logos_sdk.h"));
@@ -369,7 +407,7 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
             err << "Failed to write umbrella header: " << outFile.fileName() << "\n";
             return 7;
         }
-        outFile.write(makeUmbrellaHeaderFromDeps(deps, interfaceNames, apiStyle, originName).toUtf8());
+        outFile.write(makeUmbrellaHeaderFromDeps(deps, interfaceNames, apiStyle, originName, binding).toUtf8());
         outFile.close();
     }
     {

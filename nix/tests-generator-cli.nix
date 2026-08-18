@@ -81,6 +81,73 @@ pkgs.runCommand "${common.pname}-generator-cli-tests"
     [ -s ./gen/logos_sdk.h ] || fail "--general-only emitted no logos_sdk.h"
     echo "OK: --general-only still emits the umbrella"
 
+    # ── `--binding origin`: the umbrella a module with no LogosAPI needs ──
+    #
+    # Emitter-level assertions live in the gtest suite; these are the ones only
+    # the BINARY can answer — that the flag is wired to the mode at all, that an
+    # unrecognised value is refused rather than defaulted, and that a module
+    # with no name of its own is refused rather than given a blank identity.
+    cat > origin_metadata.json <<'EOF'
+    {
+      "name": "cli_origin_module",
+      "version": "1.0.0",
+      "type": "core",
+      "dependencies": ["dep_one", "dep_two"]
+    }
+    EOF
+
+    logos-cpp-generator --metadata ./origin_metadata.json --general-only       --api-style qt --binding origin --output-dir ./gen-origin       >/dev/null 2>origin.err       || { cat origin.err >&2; fail "--binding origin was refused"; }
+    [ -s ./gen-origin/logos_sdk.h ] || fail "--binding origin emitted no logos_sdk.h"
+
+    # Default-constructible, so the cdylib glue's `new LogosModules()` compiles.
+    grep -q 'LogosModules() : dep_one(QStringLiteral("cli_origin_module"))'       ./gen-origin/logos_sdk.h       || { cat ./gen-origin/logos_sdk.h >&2
+           fail "the origin-bound umbrella is not default-constructible"; }
+
+    # THE property: the origin is this module's OWN name, never an api object's.
+    # `forTarget` derives an origin from `api->moduleName()`, and a wrapper
+    # built on a borrowed api calls out under the lender's identity — so the
+    # umbrella must hand every wrapper a stated name and hold no LogosAPI at all.
+    if grep -q 'LogosAPI' ./gen-origin/logos_sdk.h; then
+      cat ./gen-origin/logos_sdk.h >&2
+      fail "the origin-bound umbrella still mentions LogosAPI"
+    fi
+    grep -q 'dep_two(QStringLiteral("cli_origin_module"))' ./gen-origin/logos_sdk.h       || fail "a dependency was not handed the consuming module's own name"
+    echo "OK: --binding origin emits a default-constructible, LogosAPI-free umbrella"
+
+    # The default is unchanged — same metadata, no flag, the historical shape.
+    logos-cpp-generator --metadata ./origin_metadata.json --general-only       --api-style qt --output-dir ./gen-api >/dev/null 2>&1       || fail "the default (LogosAPI) umbrella regressed"
+    grep -q 'explicit LogosModules(LogosAPI\* api)' ./gen-api/logos_sdk.h       || { cat ./gen-api/logos_sdk.h >&2
+           fail "the default umbrella is no longer the LogosAPI-taking one"; }
+    echo "OK: the default binding still emits the LogosAPI umbrella"
+
+    # A misspelt value is refused. Defaulting it back to the LogosAPI form would
+    # emit `LogosModules(LogosAPI*)` into a module that has none, and the
+    # diagnostic would land as a constructor mismatch in generated code.
+    set +e
+    logos-cpp-generator --metadata ./origin_metadata.json --general-only       --api-style qt --binding orgin --output-dir ./gen-bad >badbinding.out 2>badbinding.err
+    status=$?
+    set -e
+    [ "$status" -ne 0 ] || fail "--binding orgin (misspelt) exited 0"
+    grep -q -- 'Unknown --binding value' badbinding.err       || { cat badbinding.err >&2; fail "a bad --binding failed without saying why"; }
+    echo "OK: an unrecognised --binding is refused"
+
+    # A module with no name cannot state an origin, and must not be given a
+    # blank one. Refused at the CLI, where the metadata file can be named.
+    cat > anonymous_metadata.json <<'EOF'
+    {
+      "version": "1.0.0",
+      "type": "core",
+      "dependencies": ["dep_one"]
+    }
+    EOF
+    set +e
+    logos-cpp-generator --metadata ./anonymous_metadata.json --general-only       --api-style qt --binding origin --output-dir ./gen-anon >anon.out 2>anon.err
+    status=$?
+    set -e
+    [ "$status" -ne 0 ] || fail "--binding origin accepted metadata with no name"
+    grep -q "asserted" anon.err       || { cat anon.err >&2; fail "the anonymous-origin refusal does not explain itself"; }
+    echo "OK: --binding origin refuses a module that cannot name itself"
+
     mkdir -p "$out"
     echo "logos-cpp-generator CLI argument-surface tests passed" > "$out/result.txt"
   ''

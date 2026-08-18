@@ -42,6 +42,41 @@ bool parseApiStyleFlag(const QStringList& args, ApiStyle& outStyle, QTextStream&
     return true;
 }
 
+// `--binding api|origin` (both spellings, as above). Absent means FromApi, so
+// every current invocation is unchanged. Lives here, next to UmbrellaBinding,
+// for the same reason parseApiStyleFlag does: one table, no second copy to
+// drift.
+//
+// An unrecognised value is REFUSED rather than defaulted. Defaulting a misspelt
+// `--binding orgin` back to the LogosAPI umbrella would emit `LogosModules(
+// LogosAPI*)` into a module that has no LogosAPI, and the diagnostic would
+// arrive as a constructor mismatch in generated code rather than as a typo.
+bool parseUmbrellaBindingFlag(const QStringList& args, UmbrellaBinding& outBinding, QTextStream& err)
+{
+    QString val;
+    for (int i = 0; i < args.size(); ++i) {
+        const QString& a = args.at(i);
+        if (a == "--binding") {
+            if (i + 1 < args.size()) val = args.at(i + 1);
+            break;
+        }
+        if (a.startsWith("--binding=")) {
+            val = a.section('=', 1);
+            break;
+        }
+    }
+    if (val == "origin") {
+        outBinding = UmbrellaBinding::ExplicitOrigin;
+        return true;
+    }
+    if (!val.isEmpty() && val != "api") {
+        err << "Unknown --binding value: " << val << " (expected 'api' or 'origin')\n";
+        return false;
+    }
+    outBinding = UmbrellaBinding::FromApi;
+    return true;
+}
+
 QString toPascalCase(const QString& name)
 {
     QString out;
@@ -1493,12 +1528,81 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
 
 // ── Umbrella (logos_sdk.h / logos_sdk.cpp) over a module's dependencies ──────
 
-QString makeUmbrellaHeaderFromDeps(const QJsonArray& deps, const QStringList& interfaceNames, ApiStyle apiStyle, const QString& originName)
+QString makeUmbrellaHeaderFromDeps(const QJsonArray& deps, const QStringList& interfaceNames, ApiStyle apiStyle, const QString& originName, UmbrellaBinding binding)
 {
     const QStringList depNames = dependencyNames(deps);
 
     QString content;
     QTextStream s(&content);
+
+    // Qt types, explicit origin: the umbrella a module with NO LogosAPI — a
+    // cdylib, whose provider surface is the std `logos_module_impl.h` C ABI —
+    // aggregates its Qt-typed dependency wrappers into. Structurally the Lp
+    // branch below with Qt spellings: default-constructible, so the generated
+    // glue's unconditional `new LogosModules()` compiles, and no LogosAPI
+    // member, so nothing in the module has to hold one.
+    //
+    // The per-dep wrappers are logos-qt-generator's
+    // (`--backend consumer --binding origin`); this emitter has no Qt-typed
+    // wrapper flavour to match it, and adding one would put two emitters back
+    // on the one artifact they currently agree on.
+    if (apiStyle == ApiStyle::Qt && binding == UmbrellaBinding::ExplicitOrigin) {
+        s << "#pragma once\n";
+        s << "#include <QString>\n";
+        // Only for the std::string bind_<iface> overloads, matching the FromApi
+        // branch's rule.
+        if (!interfaceNames.isEmpty()) s << "#include <string>\n";
+        // Deliberately NO logos_api.h / logos_api_client.h: this umbrella names
+        // neither type, and a translation unit that includes it must be able to
+        // compile with no LogosAPI in scope at all.
+        for (const QString& depName : depNames)
+            s << "#include \"" << depName << "_api.h\"\n";
+        for (const QString& ifaceName : interfaceNames)
+            s << "#include \"" << ifaceName << "_api.h\"\n";
+        s << "\n";
+
+        // A module that does not know its own name must not compile. Every
+        // origin below would otherwise be the empty string, and an empty origin
+        // is not "no identity" to the transport — it is a client that
+        // authenticates as nobody, which fails far from here and looks like a
+        // capability bug. The one thing it must NEVER do is borrow a name.
+        if (originName.isEmpty()) {
+            s << "#error \"logos_sdk.h: the origin-bound umbrella needs the consuming "
+                 "module's own name (metadata.json#name); none was given, and an origin "
+                 "is asserted here, never derived or borrowed\"\n\n";
+        }
+
+        const QString origin = "QStringLiteral(\"" + originName + "\")";
+
+        s << "struct LogosModules {\n";
+        s << "    LogosModules()";
+        bool first = true;
+        for (const QString& depName : depNames) {
+            s << (first ? " : " : ",\n        ");
+            first = false;
+            s << depName << "(" << origin << ")";
+        }
+        s << " {}\n";
+        for (const QString& depName : depNames)
+            s << "    " << toPascalCase(depName) << " " << depName << ";\n";
+        // Bind factories. Unlike the Lp branch there is no umbrella-owned
+        // State: the Qt consumer wrapper is already a thin handle over a
+        // process-lifetime LpBridge keyed by (origin, target), so a
+        // `bind_x(...)` temporary's subscriptions outlive it exactly as they do
+        // on the LogosAPI-taking path. Same two overloads, same reason.
+        for (const QString& ifaceName : interfaceNames) {
+            const QString className = toPascalCase(ifaceName);
+            s << "    " << className << " bind_" << ifaceName << "(const QString& moduleName) {\n";
+            s << "        return " << className << "(" << origin << ", moduleName);\n";
+            s << "    }\n";
+            s << "    " << className << " bind_" << ifaceName << "(const std::string& moduleName) {\n";
+            s << "        return " << className << "(" << origin
+              << ", QString::fromStdString(moduleName));\n";
+            s << "    }\n";
+        }
+        s << "};\n";
+        return content;
+    }
 
     // Lp (Qt-free) umbrella: no LogosAPI. Each dep wrapper self-creates its
     // lp_client on behalf of `originName` (this module), so the struct is
