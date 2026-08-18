@@ -1610,10 +1610,21 @@ QString makeUmbrellaHeaderFromDeps(const QJsonArray& deps, const QStringList& in
     if (apiStyle == ApiStyle::Lp) {
         s << "#pragma once\n";
         s << "#include <string>\n";
-        if (!interfaceNames.isEmpty()) {
-            s << "#include <map>\n";
-            s << "#include <memory>\n";
-        }
+        // <map>, <memory> and logos_lp_client.h are UNCONDITIONAL because
+        // dynamic() below is: it caches a logos::LpClient per target in a
+        // std::map of unique_ptr, whatever the dependency list looks like.
+        //
+        // They were conditional on interfaceNames when the only user was the
+        // bind_<iface> state map, and a module WITH dependencies still compiled
+        // by accident — <dep>_api.h drags logos_lp_client.h in transitively. A
+        // module with NO dependencies and NO interfaces includes nothing else,
+        // so it got an umbrella naming logos::LpClient with the type undeclared
+        // ("no type named 'LpClient' in namespace 'logos'"). test_fullapi_cpp is
+        // exactly that shape, which is why the SDK's own #default and checks
+        // stayed green while a real dependency-free module could not build.
+        s << "#include <map>\n";
+        s << "#include <memory>\n";
+        s << "#include \"logos_lp_client.h\"\n";
         for (const QString& depName : depNames)
             s << "#include \"" << depName << "_api.h\"\n";
         for (const QString& ifaceName : interfaceNames)

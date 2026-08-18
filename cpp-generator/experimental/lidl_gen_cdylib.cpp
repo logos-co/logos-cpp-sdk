@@ -140,8 +140,23 @@ QString jsonArgToStd(const TypeExpr& te, const QString& expr, const QString& pat
         if (te.name == "any")  return expr;
     }
     const QString cpp = lidlTypeToStdCdylib(te, recs);
-    if (cpp == "LogosMap" || cpp == "LogosList")
-        return expr;  // untyped JSON passes through, as it always has
+    // `[any]` / `{tstr:any}`. The ELEMENT type is unconstrained, so there is
+    // nothing to decode — but the SHAPE is declared, and it used to pass through
+    // unchecked ("as it always has"). That let a scalar reach a LogosList
+    // parameter, and a proxy forwarding it through a Qt-typed consumer turned
+    // "notalist" into ["n","o","t","a","l","i","s","t"] — qvariant_cast reads a
+    // QString as a sequential container. The downstream provider then saw a
+    // well-formed array and had nothing to refuse.
+    //
+    // Checked here rather than deeper: LogosList and LogosMap are both aliases
+    // of nlohmann::json, so no codec specialization can tell them apart. The
+    // value is still handed on unchanged, and the throw lands in the dispatch's
+    // existing catch as {"code":"dispatch_failed"} — the same answer, with the
+    // same message, that every non-Qt surface already gives.
+    if (cpp == "LogosList")
+        return "logos::jsonRequireArray(" + expr + ", \"" + path + "\")";
+    if (cpp == "LogosMap")
+        return "logos::jsonRequireObject(" + expr + ", \"" + path + "\")";
     // A TYPED map does not NAME its C++ type — it hands the compiler a proxy and
     // lets the author's own declaration pick it.
     //
