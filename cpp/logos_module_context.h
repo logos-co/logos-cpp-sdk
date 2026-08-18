@@ -85,6 +85,14 @@ public:
     // resources bundled next to the plugin (icons, qml/, schema files…).
     const std::string& modulePath() const { return m_modulePath; }
 
+    // This module's own registry name — the name other modules address it by,
+    // and the `origin` it authenticates as. Needed by any BY-NAME call: the
+    // typed wrappers bake their origin in at codegen time, but a dynamic call
+    // has to state it, and a wrong origin authenticates as nobody and fails far
+    // from the call site. Empty outside a framework-provisioned context, like
+    // the getters below.
+    const std::string& moduleName() const { return m_moduleName; }
+
     // Short ID the host assigns to this instance. Stable across restarts
     // for the same on-disk persistence directory; multiple side-by-side
     // instances of the same module get distinct IDs.
@@ -152,6 +160,16 @@ public:
         onContextReady();
     }
 
+    // Framework-only — sets moduleName(). Separate from
+    // `_logosCoreSetContext_` on purpose: that signature is called by every
+    // generated provider, so widening it would break each one until
+    // regenerated, for a value the generator knows statically anyway. Called
+    // BEFORE the context setter, so moduleName() is already populated when
+    // onContextReady() fires.
+    void _logosCoreSetModuleName_(std::string moduleName) {
+        m_moduleName = std::move(moduleName);
+    }
+
     // Framework-only — sets the typed `LogosModules` pointer that
     // `logos<T>()` dereferences. Untyped (void*) at this layer because
     // the SDK header is shared by every module; the codegen-generated
@@ -194,6 +212,7 @@ protected:
     virtual void onContextReady() {}
 
 private:
+    std::string m_moduleName;
     std::string m_modulePath;
     std::string m_instanceId;
     std::string m_instancePersistencePath;
@@ -229,6 +248,19 @@ private:
 // template instantiation.
 // ---------------------------------------------------------------------------
 namespace _logos_codegen_ {
+
+template<class T>
+inline auto maybeSetModuleName(T& impl, std::string moduleName)
+    -> std::enable_if_t<std::is_base_of_v<LogosModuleContext, T>>
+{
+    static_cast<LogosModuleContext&>(impl)._logosCoreSetModuleName_(std::move(moduleName));
+}
+
+template<class T>
+inline auto maybeSetModuleName(T&, std::string)
+    -> std::enable_if_t<!std::is_base_of_v<LogosModuleContext, T>>
+{
+}
 
 template<class T>
 inline auto maybeSetContext(T& impl,

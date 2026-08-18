@@ -716,6 +716,9 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     // modules() was already wired by lidlEnsureModulesWired() above (before this
     // context-gated early return), so onContextReady can safely call
     // modules().<dep>... / subscribe to dependency events from the hook.
+    // The module's own registry name, which the generator knows statically.
+    // Set BEFORE the context so moduleName() is live inside onContextReady().
+    s << "    _logos_codegen_::maybeSetModuleName(lidlImpl(), \"" << module.name << "\");\n";
     s << "    _logos_codegen_::maybeSetContext(lidlImpl(), path, id, persist);\n";
     s << "}\n\n";
 

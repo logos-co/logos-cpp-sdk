@@ -1649,6 +1649,31 @@ QString makeUmbrellaHeaderFromDeps(const QJsonArray& deps, const QStringList& in
             s << "    std::map<std::string, std::unique_ptr<" << className << "::State>> m_"
               << ifaceName << "_bound;\n";
         }
+
+        // Untyped, BY-NAME access to a module this umbrella does not wrap.
+        //
+        // The typed members above cover `metadata.json#dependencies`, which is
+        // the right default and stays the ordinary way to call another module.
+        // But the by-name path already exists at every layer beneath this one
+        // (lp_client_create / lp_invoke, logos::LpClient), so a consumer that
+        // genuinely needs it — a proxy, a router, anything whose target is a
+        // runtime value — has been reaching around the umbrella to get it.
+        // Exposing it here is what makes that a supported surface rather than
+        // an accident.
+        //
+        // The origin is baked in, exactly as the typed members' is: an origin
+        // is asserted, never borrowed, and a wrong one authenticates as nobody
+        // and fails far from the call. Clients are cached per target, mirroring
+        // the bind_ state map above, because LpClient owns a connection.
+        //
+        // Pair it with LpClient::getMethods() — invoke without introspect is
+        // guessing.
+        s << "    logos::LpClient& dynamic(const std::string& target) {\n";
+        s << "        auto& _c = m_dynamic[target];\n";
+        s << "        if (!_c) _c = std::make_unique<logos::LpClient>(target, \"" << originName << "\");\n";
+        s << "        return *_c;\n";
+        s << "    }\n";
+        s << "    std::map<std::string, std::unique_ptr<logos::LpClient>> m_dynamic;\n";
         s << "};\n";
         return content;
     }
