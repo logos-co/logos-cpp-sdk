@@ -20,12 +20,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #               generated <dep>_api.{h,cpp} wrappers and their logos_sdk.h
 #               umbrella, which the module builder emits per build.
 #
-#   ::provider  logos_module_context.h, logos_privileged_services.h
+#   ::provider  logos_module_context.h, logos_host_services.h
 #               IMPLEMENTING a module. LogosModuleContext is the seam the
-#               generated provider injects into; logos_privileged_services.h
-#               is the veneer a module uses for services the HOST granted it
-#               (it is module-side despite what its old `host_services` name
-#               suggested — that name is what motivated this split).
+#               generated provider injects into; logos_host_services.h is the
+#               veneer a module uses for services the HOST granted it. (It is
+#               module-side despite the `host_services` name, which is what
+#               motivated this split; a rename to logos_privileged_services.h
+#               has NOT happened — the file installed below is still
+#               logos_host_services.h.)
 #
 #   ::host      logos_host_core.h
 #               STANDING UP a core and loading modules into it. Used by

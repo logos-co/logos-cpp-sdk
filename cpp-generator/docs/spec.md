@@ -2,7 +2,7 @@
 
 ## Overall Description
 
-The experimental code generator extends `logos-cpp-generator` with two new capabilities: a lightweight Interface Definition Language (LIDL) for declaring module contracts, and a C++header parser that can infer module interfaces directly from pure C++ implementation classes. Both paths produce the same output: Qt plugin glue code that bridges pure C++ module implementations to the Logos runtime's Qt Remote Objects transport.
+The experimental code generator extends `logos-cpp-generator` with two new capabilities: a lightweight Interface Definition Language (LIDL) for declaring module contracts, and a C++header parser that can infer module interfaces directly from pure C++ implementation classes. Both paths produce the same output: the **Qt-free** `logos_module_*` C-ABI provider glue that bridges pure C++ module implementations to the runtime. (It used to emit the Qt plugin glue directly; turning the C ABI into a Qt plugin is now a downstream step, `logos-qt-host-generator --backend cdylib` in logos-plugin-qt, and that seam is what lets the Rust and JS providers target the same ABI.)
 
 The goal is to decouple module business logic from the Qt framework. Module authors write standard C++ using `std::string`, `int64_t`, `std::vector<T>`, and the build system generates all Qt boilerplate (`QObject`, `Q_PLUGIN_METADATA`, `QString` conversions, method dispatch) automatically.
 
@@ -29,18 +29,18 @@ The goal is to decouple module business logic from the Qt framework. Module auth
 Path 1: LIDL file                    Path 2: C++ impl header
     │                                     │
     ▼                                     ▼
- lidlTokenize()                    parseImplHeader()
-    │                                     │
-    ▼                                     │
- lidlParse()                              │
-    │                                     │
+ lidlParse()                       parseImplHeader()
+    │  (logos-lidl's lidl::parse,         │
+    │   via lidl_compat.h)                │
     ▼                                     │
  lidlValidate()                           │
     │                                     │
     ▼                                     ▼
  ModuleDecl  ◄────── same AST ──────► ModuleDecl
     │                                     │
-    ├──► lidlMakeCdylibGlue*()             │
+    ├──► lidlMakeTypesHeaderCdylib()      │
+    │    lidlMakeModuleImplExports()      │
+    │    lidlMakeEventsSourceCdylib()     │
     │         → logos_module_* C ABI       │
     │           (Qt packaging is a         │
     │            downstream step:          │
@@ -52,6 +52,9 @@ Path 1: LIDL file                    Path 2: C++ impl header
     └──► lidlMakeSource()                 │
               → <name>_api.cpp            │
 ```
+
+(There is no `lidlTokenize()` step here any more: the lexer lives in
+logos-lidl with the rest of the frontend, behind `lidl::parse`.)
 
 Both paths converge at `ModuleDecl`, the shared AST. From there, the same generation functions produce identical output regardless of the input format.
 
@@ -92,8 +95,8 @@ Built-in primitive types:
 | --------- | --------------------------------------- | ------------- | ---------------------- |
 | `tstr`    | Text string                             | `QString`     | `std::string`          |
 | `bstr`    | Binary data                             | `QByteArray`  | `std::vector<uint8_t>` |
-| `int`     | Signed 64-bit integer                   | `int`         | `int64_t`              |
-| `uint`    | Unsigned 64-bit integer                 | `int`         | `uint64_t`             |
+| `int`     | Signed 64-bit integer                   | `qlonglong`   | `int64_t`              |
+| `uint`    | Unsigned 64-bit integer                 | `qulonglong`  | `uint64_t`             |
 | `float64` | Double precision float                  | `double`      | `double`               |
 | `bool`    | Boolean                                 | `bool`        | `bool`                 |
 | `result`  | Structured result (success/value/error) | `LogosResult` | `LogosResult`          |
@@ -105,7 +108,8 @@ Composite types:
 
 - `[T]` — Array of T (e.g., `[tstr]` → `QStringList` / `std::vector<std::string>`)
 - `{K: V}` — Map from K to V (e.g., `{tstr: int}` → `QVariantMap`)
-- `?T` — Optional T (→ `QVariant`)
+- `?T` — Optional T (→ `QVariant` on the Qt surface, which loses the value type;
+  `std::optional<T>` on the std surface — see *Optionality* in `project.md`)
 
 Named types reference `type` definitions within the same module.
 
@@ -245,29 +249,37 @@ logos_events:                                     // expands to `public:`; recog
 
 `impl_header_parser.cpp` recognises the raw `logos_events:` token (before preprocessing) and populates `ModuleDecl.events` with one `EventDecl` per prototype. Three artifacts get emitted from this:
 
-1. **`<name>_events.cpp`** — Qt-MOC-style definitions of each declared event method on the impl class. Bodies marshal typed args into a `QVariantList` and call `this->emitEventImpl_("<event>", &args)`, a protected helper on `LogosModuleContext`:
+1. **`<name>_events_cdylib.cpp`** — Qt-MOC-style definitions of each declared event method on the impl class. Bodies marshal typed args into an `nlohmann::json` array and call `this->emitEventImpl_("<event>", &args)`, a protected helper on `LogosModuleContext`:
 
    ```cpp
    void MyModuleImpl::userLoggedIn(const std::string& userId, int64_t timestamp) {
-       QVariantList _args{
-           QVariant(QString::fromStdString(userId)),
-           QVariant(static_cast<qlonglong>(timestamp))
-       };
-       this->emitEventImpl_("userLoggedIn", &_args);
+       nlohmann::json args = nlohmann::json::array();
+       args.push_back(userId);
+       args.push_back(timestamp);
+       emitEventImpl_("userLoggedIn", &args);
    }
    ```
 
-2. **Provider `onInit` wiring** — `<name>_qt_glue.h` adds a `_logos_codegen_::maybeSetEmitEvent` call alongside the existing `maybeSetContext` / `maybeSetLogosModules`. The lambda casts the void* back to QVariantList and forwards to `LogosProviderBase::emitEvent(QString, QVariantList)` (same wire as before):
+   (This used to be a `<name>_events.cpp` marshalling into a `QVariantList`, back
+   when the emitter it fed was a Qt provider object. A universal module's impl
+   side is Qt-free, so the payload is JSON and the file carries the `_cdylib`
+   suffix.)
+
+2. **Emit-callback wiring** — `<name>_module_impl.cpp`, the generated C-ABI export TU, installs the callback through `_logos_codegen_::maybeSetEmitEvent` alongside `maybeSetModuleName` / `maybeSetContext` / `maybeSetLogosModules`. The lambda casts the void* back to `nlohmann::json`, dumps it, and hands it to the `logos_module_emit_cb` the host registered via `logos_module_set_emit_callback`:
 
    ```cpp
-   _logos_codegen_::maybeSetEmitEvent(m_impl,
-       [this](const std::string& name, void* args) {
-           emitEvent(QString::fromStdString(name),
-                     *static_cast<QVariantList*>(args));
+   _logos_codegen_::maybeSetEmitEvent(lidlImpl(),
+       [](const std::string& name, void* args) {
+           const nlohmann::json* payload = static_cast<const nlohmann::json*>(args);
+           std::lock_guard<std::mutex> lock(g_emitMutex);
+           if (g_emitCb)
+               g_emitCb(name.c_str(), payload ? payload->dump().c_str() : "[]", g_emitUd);
        });
    ```
 
-3. **`<name>.lidl` sidecar** — a serialised view of the module's declared events (using the existing `lidlSerialize` from `lidl_serializer.cpp`):
+   (Was a `<name>_qt_glue.h` lambda forwarding to `LogosProviderBase::emitEvent(QString, QVariantList)`; that glue is the retired shape described under *Generated Output* below.)
+
+3. **`<name>.lidl` sidecar** — a serialised view of the module's declared events (using `lidlSerialize`, which since the frontend extraction is `lidl::serialize` in the logos-lidl library, re-exported by `experimental/lidl_compat.h`; the `lidl_serializer.cpp` that used to hold it is gone from this repo):
 
    ```
    module my_module {
@@ -328,11 +340,11 @@ Generated from LIDL (not from `--from-header`). Each module gets **one** `<Modul
 
 Both styles provide:
 
-- Typed sync methods that call `invokeRemoteMethod()` and convert the `QVariant` result.
+- Typed sync methods. The Qt style calls `LogosAPIClient::invokeRemoteMethod()` and converts the `QVariant` result; the lp style calls `logos::LpClient::invoke()` and converts the `nlohmann::json` result — no Qt anywhere in the call.
 - Async overloads with callback + timeout.
-- The Qt style additionally exposes event subscription (`on()`) and emission (`trigger()`); the std style omits these — universal modules that need cross-module events can be addressed in a follow-up.
+- Event subscription. The Qt style exposes the generic `on(eventName, callback)` channel plus one typed `on<EventName>(callback)` adapter per declared event; the std style exposes the typed adapters over `logos::LpClient::subscribe`, holding each RAII `LpSubscription` for the wrapper's lifetime. (Both styles once also emitted `setEventSource()` / `eventSource()` / `trigger()` — a consumer-side *emission* surface. It is gone: `test_lidl_gen_client.cpp` asserts no `trigger(` is emitted. A module emits its own events through `logos_events:`, never through a dependency's wrapper.)
 
-The std wrappers call the same underlying `invokeRemoteMethod`; the Qt↔std conversion is generated inline in their `.cpp` so the calling translation unit needs zero Qt headers. Both styles emit the **same filename** (`<name>_api.h` / `<name>_api.cpp`) and the **same class name** (`<Module>`) — the two are mutually exclusive at build time. No `_api_std.{h,cpp}` files are ever produced.
+The lp wrappers marshal over the logos-protocol C ABI (`lp_*`) instead, so the calling translation unit needs zero Qt headers and links no qt-sdk. (The retired `std` style was the one that shared `invokeRemoteMethod` with the Qt path and generated a Qt<->std conversion inline in its `.cpp`.) Both styles emit the **same filename** (`<name>_api.h` / `<name>_api.cpp`) and the **same class name** (`<Module>`) — the two are mutually exclusive at build time. No `_api_std.{h,cpp}` files are ever produced.
 
 Umbrella files (`logos_sdk.h` / `logos_sdk.cpp`) aggregate every dep into a flat `LogosModules` struct — one accessor per `metadata.json#dependencies` entry, nothing else:
 
@@ -350,10 +362,16 @@ Only the modules explicitly listed as dependencies appear. The runtime's `core_m
 
 ### LIDL Pipeline
 
-1. **Lexer** (`lidlTokenize`) — tokenizes source into keywords, identifiers, string literals, symbols
-2. **Parser** (`lidlParse`) — recursive descent parser producing a `ModuleDecl` AST
-3. **Validator** (`lidlValidate`) — checks for duplicate names, unknown type references, builtin shadowing, duplicate parameters
-4. **Serializer** (`lidlSerialize`) — pretty-prints a `ModuleDecl` back to LIDL text (useful for roundtrip testing)
+The whole frontend now lives in the standalone **logos-lidl** repo; this
+generator links it and reaches it through `experimental/lidl_compat.h`, which
+re-exports the three stages below under their historical `lidl*` names. There is
+no separately callable lexer entry point here any more — `lidlTokenize` was part
+of the embedded copy that was deleted.
+
+1. **Lexer** — tokenizes source into keywords, identifiers, string literals, symbols (internal to `lidl::parse`)
+2. **Parser** (`lidlParse` → `lidl::parse`) — recursive descent parser producing a `ModuleDecl` AST
+3. **Validator** (`lidlValidate` → `lidl::validate`) — checks for duplicate names, unknown type references, builtin shadowing, duplicate parameters
+4. **Serializer** (`lidlSerialize` → `lidl::serialize`) — pretty-prints a `ModuleDecl` back to LIDL text (useful for roundtrip testing)
 
 ### Impl Header Pipeline
 

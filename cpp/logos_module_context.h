@@ -14,7 +14,10 @@
 // `#define signals public`). The cpp-generator's impl_header_parser
 // recognises the raw `logos_events:` token before preprocessing and
 // emits typed method bodies for each declaration in a sidecar
-// `<name>_events.cpp` that calls `emitEventImpl_()` underneath.
+// `<name>_events_cdylib.cpp` that calls `emitEventImpl_()` underneath.
+// (The file was `<name>_events.cpp` while the bodies marshalled into a
+// QVariantList for a Qt provider object; the cdylib flavour marshals
+// into nlohmann::json and is the only one emitted now.)
 //
 //     class MyImpl : public LogosModuleContext {
 //     public:
@@ -30,9 +33,11 @@
 // ---------------------------------------------------------------------------
 // LogosModuleContext — opt-in mixin for codegen-generated modules
 //
-// The Logos runtime stamps three properties onto every module's LogosAPI
-// instance before the first method is dispatched (see
-// `logos-liblogos/src/runtimes/runtime_qt/host/module_initializer.cpp`):
+// The Logos runtime stamps three properties onto every module before the
+// first method is dispatched (they are assembled into the module's
+// ModuleDescriptor in `logos-liblogos/src/logos_core/module_manager.cpp`;
+// the path this comment used to name,
+// `src/runtimes/runtime_qt/host/module_initializer.cpp`, no longer exists):
 //
 //   - modulePath               — directory the module's plugin file lives in
 //   - instanceId               — short ID the host assigns to this instance
@@ -40,12 +45,13 @@
 //   - instancePersistencePath  — per-instance, host-owned data directory
 //                                (e.g. `<basecamp>/module_data/<name>/<id>/`)
 //
-// Universal (codegen-generated, "qt_glue") modules used to have no path
-// to these values short of being handed the full LogosAPI — too much
-// surface for what's almost always a one-line lookup. This mixin
-// confines the exposure to the three getters below; the codegen-emitted
-// provider copies the values in via `_logosCoreSetContext_`, then fires
-// `onContextReady()` so the impl can react in one well-defined place.
+// Universal (codegen-generated) modules used to have no path to these
+// values short of being handed the full LogosAPI — too much surface for
+// what's almost always a one-line lookup. This mixin confines the
+// exposure to the three getters below; the generated C-ABI export TU
+// (`<name>_module_impl.cpp`) copies the values in via
+// `_logosCoreSetContext_`, then fires `onContextReady()` so the impl can
+// react in one well-defined place.
 //
 // Usage from a module impl:
 //
@@ -128,8 +134,10 @@ public:
     //         modules().some_dep.someMethod(arg);
     //     }
     //
-    // The pointer is set by the codegen-generated provider's `onInit`,
-    // which constructs the `LogosModules` from the `LogosAPI`. The
+    // The pointer is set by the generated C-ABI export TU, which
+    // default-constructs the `LogosModules` on first use (each dep
+    // wrapper bakes in its target + this module's origin, so no
+    // `LogosAPI` is involved). The
     // return type is forward-declared above so this header stays
     // decoupled from per-module codegen; call sites need to have
     // `logos_sdk.h` included (which defines `LogosModules` as a
@@ -141,8 +149,8 @@ public:
         return *static_cast<LogosModules*>(m_logosModulesPtr);
     }
 
-    // Framework-only entry point — invoked by the generated provider's
-    // `onInit` once the LogosAPI properties are readable. The
+    // Framework-only entry point — invoked by the generated glue once the
+    // host has delivered the context (`logos_module_set_context`). The
     // leading-underscore-trailing-underscore name signals "do not call
     // from user code"; a friend declaration would be cleaner but would
     // require the generator to spell out a specific provider class
@@ -179,21 +187,26 @@ public:
     }
 
     // Framework-only — installs the callback that the codegen-emitted
-    // bodies of `logos_events:` methods invoke. The `void*` carries a
-    // `QVariantList*` constructed inside the .cpp; keeping the
-    // signature Qt-free here lets impl headers stay pure C++. The
-    // codegen-emitted provider plugs in a lambda that casts the
-    // pointer back to QVariantList and forwards through
-    // `LogosProviderBase::emitEvent(QString, QVariantList)`.
+    // bodies of `logos_events:` methods invoke. The `void*` carries an
+    // `nlohmann::json*` constructed inside the .cpp (it was a
+    // `QVariantList*` under the retired Qt provider glue); keeping the
+    // signature untyped here lets impl headers stay pure C++. The
+    // generated C-ABI export TU plugs in a lambda that casts the
+    // pointer back to nlohmann::json, dumps it, and forwards through the
+    // `logos_module_emit_cb` the host installed. (It used to cast to
+    // QVariantList and call `LogosProviderBase::emitEvent(QString,
+    // QVariantList)`, back when the impl was wrapped directly in a Qt
+    // provider object.)
     void _logosCoreSetEmitEvent_(std::function<void(const std::string&, void*)> cb) {
         m_emitEventCallback = std::move(cb);
     }
 
 protected:
-    // Invoked from `<name>_events.cpp` (codegen-emitted method bodies)
-    // to dispatch a typed event. `args` is the address of a stack-
-    // local `QVariantList` constructed by the generated body; the
-    // callback the provider installs casts it back and forwards.
+    // Invoked from `<name>_events_cdylib.cpp` (codegen-emitted method
+    // bodies) to dispatch a typed event. `args` is the address of a
+    // stack-local `nlohmann::json` array constructed by the generated
+    // body; the callback the export TU installs casts it back and
+    // forwards. Kept `void*` so this header stays Qt- AND json-free.
     // No-op when called outside a framework context (the callback
     // stays default-constructed and empty) — same fallback shape as
     // the property getters above.
@@ -225,7 +238,7 @@ private:
     // a framework-provisioned context (e.g. lgpd CLI / unit tests),
     // matching the empty-string fallback for the other getters.
     void* m_logosModulesPtr = nullptr;
-    // Set by the codegen-generated provider in onInit() via the SFINAE'd
+    // Set by the generated glue via the SFINAE'd
     // _logos_codegen_::maybeSetEmitEvent helper below. Default-empty
     // when the impl is constructed outside a framework-provisioned
     // context, in which case `emitEventImpl_` becomes a no-op.
@@ -235,7 +248,7 @@ private:
 // ---------------------------------------------------------------------------
 // _logos_codegen_::maybeSetContext — codegen helper, do not call directly.
 //
-// The generated <Module>ProviderObject::onInit always wants to "set the
+// The generated glue always wants to "set the
 // context if the impl inherits from LogosModuleContext, otherwise do
 // nothing." Doing this with `if constexpr` inside the override fails to
 // compile for non-inheriting impls, because the discarded `static_cast`
@@ -285,8 +298,8 @@ inline auto maybeSetContext(T&,
     // Module impl didn't opt into LogosModuleContext; nothing to do.
 }
 
-// Sets the (untyped) `LogosModules` pointer the generated provider
-// constructs in onInit. Same tag-dispatch trick as maybeSetContext —
+// Sets the (untyped) `LogosModules` pointer the generated glue
+// constructs. Same tag-dispatch trick as maybeSetContext —
 // the static_cast must be invisible to non-inheriting impls or their
 // compile would break.
 template<class T>
@@ -303,10 +316,10 @@ inline auto maybeSetLogosModules(T&, void*)
     // Module impl didn't opt into LogosModuleContext; nothing to do.
 }
 
-// Sets the typed-event callback that codegen-emitted `<name>_events.cpp`
-// bodies dispatch through. Same tag-dispatch trick as the two above —
-// impls that don't inherit LogosModuleContext fall through to the no-op
-// overload and compile unchanged.
+// Sets the typed-event callback that codegen-emitted
+// `<name>_events_cdylib.cpp` bodies dispatch through. Same tag-dispatch
+// trick as the two above — impls that don't inherit LogosModuleContext
+// fall through to the no-op overload and compile unchanged.
 template<class T>
 inline auto maybeSetEmitEvent(T& impl, std::function<void(const std::string&, void*)> cb)
     -> std::enable_if_t<std::is_base_of_v<LogosModuleContext, T>>
