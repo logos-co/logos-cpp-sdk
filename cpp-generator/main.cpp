@@ -743,18 +743,12 @@ int main(int argc, char* argv[])
                 return 0;
             }
 
-            if (implClassIdx == -1 || implClassIdx + 1 >= args.size()) {
-                err << "Error: --backend " << backend << " requires --impl-class <ClassName>\n";
-                return 1;
-            }
-            if (implHeaderIdx == -1 || implHeaderIdx + 1 >= args.size()) {
-                err << "Error: --backend " << backend << " requires --impl-header <header.h>\n";
-                return 1;
-            }
-
-            QString implClass = args.at(implClassIdx + 1);
-            QString implHeader = args.at(implHeaderIdx + 1);
-
+            // The backend is not cdylib (that branch returned above), so the
+            // only thing left to do is refuse. This must come BEFORE any
+            // --impl-class / --impl-header validation: those flags cannot
+            // rescue a removed backend, and reporting them first told a user
+            // typing `--backend qt` that qt would work if they passed one more
+            // flag.
             if (backend == "qt") {
                 err << "Error: --backend qt was removed. Qt-PLUGIN (provider) glue "
                        "generation moved to logos-qt-host-generator --backend cdylib "
