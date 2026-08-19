@@ -7,13 +7,13 @@
   # logos-nix so both repos resolve the identical nixpkgs/Qt pin — the QRO
   # wire is Qt-version-sensitive.
   #
-  # Rev-pinned, not master-tracking: logos_host_services.h is a veneer over the
-  # trust-root surface (lp_token_keys, lp_inform_module_token_to,
-  # lp_grant_host_services) that landed on feat/per-client-token-store and is
-  # NOT on logos-protocol master — protocol master is still
-  # LOGOS_PROTOCOL_VERSION_MINOR 2, and the `tests` check would fail to compile
-  # against it. Re-point this at master once that branch merges.
-  inputs.logos-protocol.url = "github:logos-co/logos-protocol/c8bab12834dbf92155b483546875e6078d17c74e";
+  # Master-tracking. This was rev-pinned to feat/per-client-token-store while
+  # logos_host_services.h's trust-root surface (lp_token_keys,
+  # lp_inform_module_token_to, lp_grant_host_services) lived only on that
+  # branch, with protocol master still at LOGOS_PROTOCOL_VERSION_MINOR 2 —
+  # the `tests` check could not compile against it. That branch has merged
+  # (logos-protocol#59): master is 0.4.0 and carries all three.
+  inputs.logos-protocol.url = "github:logos-co/logos-protocol";
   inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
   # The canonical, language-neutral LIDL frontend (lexer/parser/AST/serializer/
   # validator) the code generator links. Follows our logos-nix so it resolves
