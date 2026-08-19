@@ -362,7 +362,7 @@ Only the modules explicitly listed as dependencies appear. The runtime's `core_m
 
 ### Backwards Compatibility
 
-- The remaining generator modes (`--metadata`, plugin path) continue to work unchanged via `legacy_main()`. `--provider-header` (the `LOGOS_METHOD` dispatch behind `interface: "provider"`) was REMOVED — every provider now goes through the module-impl C ABI; the flag is refused with a message pointing at `interface: "universal"`
+- The remaining generator modes (`--metadata`, plugin path) continue to work unchanged via `runPluginIntrospectMode()` (`plugin_introspect.cpp`; was `legacy/main.cpp`'s `legacy_main()`). `--provider-header` (the `LOGOS_METHOD` dispatch behind `interface: "provider"`) was REMOVED — every provider now goes through the module-impl C ABI; the flag is refused with a message pointing at `interface: "universal"`
 - The new `--from-header` and `--lidl` modes are additive
 - Generated plugins implement both `PluginInterface` (for `lm` introspection) and `LogosProviderPlugin` (for new-API provider creation)
 - The runtime (`logos-liblogos`) already supports both old and new plugin types via `qobject_cast` detection

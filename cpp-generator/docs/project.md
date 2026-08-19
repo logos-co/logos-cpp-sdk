@@ -4,15 +4,16 @@
 
 ```
 cpp-generator/
-├── main.cpp                        # Entry point — `--umbrella`/`--general-only` mode, dispatch to legacy or experimental
+├── main.cpp                        # Entry point — `--umbrella`/`--general-only` mode, dispatch to the LIDL backends or plugin introspection
 ├── CMakeLists.txt                  # Build config
 ├── compile.sh                      # Standalone build script
 ├── metadata_dependencies.h         # What a metadata.json `dependencies[]` array declares
 ├── generator_lib.h/cpp             # Shared emitter library: type mapping, wrapper + umbrella emission
 ├── lidl_to_json.h/cpp              # ModuleDecl → the JSON surface generator_lib consumes
-├── legacy/                         # Original generator (plugin-introspection modes only)
-│   ├── main.cpp                    # legacy_main() — plugin/metadata modes
-│   └── legacy_main.h              # Forward declaration
+├── plugin_introspect.h/cpp         # runPluginIntrospectMode() — the QPluginLoader path
+│                                   # (plugin/metadata modes). Was `legacy/`, which was
+│                                   # never a library: one exported symbol, compiled into
+│                                   # this binary and reached by fallthrough.
 ├── experimental/                   # C++/Qt-specific generator backends
 │   ├── lidl_compat.h              # Bridges the backends onto logos-lidl's std AST
 │   ├── lidl_emit_common.h/cpp     # LIDL type → Qt/std type-name mapping
@@ -29,7 +30,7 @@ cpp-generator/
 
 ### Entry Point (`main.cpp`)
 
-Checks for `--from-header` or `--lidl` flags before creating `QCoreApplication`. If neither is present, falls through to `legacy_main()`.
+Checks for `--from-header` or `--lidl` flags before creating `QCoreApplication`. If neither is present, falls through to `runPluginIntrospectMode()` in `plugin_introspect.cpp`.
 
 ### LIDL frontend — `logos-lidl` (consumed as a library)
 
@@ -175,7 +176,7 @@ Flag plumbing:
 
 1. `metadata.json#interface == "universal"` (or `"cdylib"`) → `mkLogosModule.nix` adds `-DLOGOS_API_STYLE=lp` to `extraCmakeFlags`. Anything else (`"legacy"`, `"provider"`, absent) leaves the default `qt`.
 2. `LogosModule.cmake` reads `${LOGOS_API_STYLE}` (default `qt`) and forwards `--api-style=${LOGOS_API_STYLE}` to the `logos-cpp-generator --general-only` invocation that writes the umbrella. Each module's Nix build emits **two** header derivations (`<name>.headers-qt` and `<name>.headers-lp`) via `buildHeaders.nix` — one `logos-cpp-generator --api-style=…` run per style, at the dep's build time. A consumer's `buildPlugin.nix` picks `dep.headers-${apiStyle}` and copies its `include/` straight into the build sandbox; no codegen runs at consume time. Nix's laziness means only the variant a downstream actually depends on is realised.
-3. `parseApiStyleFlag()` in `generator_lib` parses `--api-style` once (rejecting the retired `std`); `main.cpp`'s `runUmbrellaMode` threads the resulting `ApiStyle` into `makeUmbrella*FromDeps`, and `legacy/main.cpp` threads it through `generateFromPlugin` / `writeUmbrellaHeader` (the QPluginLoader path). No per-style filenames are ever emitted; each module gets a single `<name>_api.h` + `<name>_api.cpp` pair regardless of style.
+3. `parseApiStyleFlag()` in `generator_lib` parses `--api-style` once (rejecting the retired `std`); `main.cpp`'s `runUmbrellaMode` threads the resulting `ApiStyle` into `makeUmbrella*FromDeps`, and `plugin_introspect.cpp` threads it through `generateFromPlugin` (the QPluginLoader path). The directory-scraping `writeUmbrellaHeader`/`writeUmbrellaSource` pair that used to sit beside it is deleted — `makeUmbrella*FromDeps` is the only umbrella emitter now, so the two cannot drift. No per-style filenames are ever emitted; each module gets a single `<name>_api.h` + `<name>_api.cpp` pair regardless of style.
 
 ### Provider Generation — REMOVED
 
@@ -245,7 +246,7 @@ logos-cpp-generator --metadata metadata.json --general-only --output-dir ./gener
 
 ### Consumer wrapper with typed event accessors
 
-The `--events-from <path>` flag points the legacy `<plugin>.dylib --module-only` codegen at a LIDL sidecar shipped alongside the dep's pre-built headers. When set, the generated `<name>_api.{h,cpp}` gains one typed `on<EventName>(callback)` accessor per declared event (callback arg types match `--api-style`):
+The `--events-from <path>` flag points the `<plugin>.dylib` plugin-introspection codegen at a LIDL sidecar shipped alongside the dep's pre-built headers. When set, the generated `<name>_api.{h,cpp}` gains one typed `on<EventName>(callback)` accessor per declared event (callback arg types match `--api-style`):
 
 ```bash
 logos-cpp-generator /path/to/plugin.dylib \
@@ -268,7 +269,7 @@ The generator binary is available as `logos-cpp-generator` in module build envir
 
 ## Testing
 
-The backends are tested in `tests/experimental/`, the legacy emitters in `tests/generator/`:
+The LIDL backends are tested in `tests/experimental/`, the shared `generator_lib` emitters in `tests/generator/`:
 
 ```bash
 ws test logos-cpp-sdk      # runs all tests including experimental
@@ -313,7 +314,7 @@ Fixture files in `tests/experimental/fixtures/`:
 - `--from-header` emits the **cdylib** backend here (the `qt` glue backend moved to logos-qt-generator); the **Rust** backend lives in logos-rust-sdk's `lidl-gen`, generating over logos-lidl's C ABI
 - Client stub generation (`lidlMakeHeader`/`lidlMakeSource`) is only available from LIDL files, not from `--from-header`
 - **Optionality is still untyped in *positional* slots on the legacy consumer path.** The
-  consumer wrappers real modules get come from `legacy/main.cpp` →
+  consumer wrappers real modules get come from `main.cpp` →
   `generateInterfaceWrappers` → `lidl_to_json` → `generator_lib`, and that JSON boundary
   carries a single Qt **type-name string** per slot. Record *fields* now carry an
   `optional` flag alongside the value type, so both LIDL spellings emit identical, typed
