@@ -780,3 +780,72 @@ TEST(LidlGenCdylib, AVersionlessModuleFallsBackRatherThanEmittingEmpty)
     EXPECT_TRUE(implExportsFor(m).contains("std::string(\"1.0.0\")"))
         << implExportsFor(m).toStdString();
 }
+
+// --- Teardown exports --------------------------------------------------------
+//
+// The module ABI's unload pair is OPTIONAL by construction: the glue is
+// generated alongside the module, so a cdylib built before this existed emits
+// neither symbol and its consumer emits no calls. These pin what a module built
+// WITH it looks like.
+
+TEST(LidlGenCdylib, EmitsTheOptionalTeardownExports)
+{
+    ModuleDecl m;
+    m.name = "weather_module";
+    m.version = "1.0.0";
+    const QString src = lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+
+    EXPECT_TRUE(src.contains("int logos_module_about_to_unload(void)")) << src.toStdString();
+    EXPECT_TRUE(src.contains("void logos_module_set_unload_done_callback(")) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, InstallsTheCompletionCallbackBeforeAskingTheImpl)
+{
+    // Ordering is the whole correctness of the async path. An impl that
+    // finishes INLINE -- does its work and calls unloadFinished() before
+    // returning Asynchronous -- would otherwise signal into a slot that is
+    // still empty, and the host would wait out its entire grace period for a
+    // module that was already done.
+    ModuleDecl m;
+    m.name = "weather_module";
+    const QString src = lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+
+    const int install = src.indexOf("maybeSetUnloadFinished");
+    const int ask     = src.indexOf("maybeAboutToUnload");
+    ASSERT_GE(install, 0) << src.toStdString();
+    ASSERT_GE(ask, 0) << src.toStdString();
+    EXPECT_LT(install, ask) << "completion callback installed after the unload request";
+}
+
+TEST(LidlGenCdylib, TeardownEmissionIsGuardedOnTheProtocolThatCarriesIt)
+{
+    // The teardown pair arrived in logos-protocol 0.5. A module built against
+    // an older protocol has neither the callback typedef nor the two
+    // declarations, so unguarded emission is a hard compile error in generated
+    // code the author never wrote and cannot see -- which is exactly what
+    // happened before this guard existed. Same shape as the 0.3 trust-root
+    // guard a few lines below it in the emitter.
+    ModuleDecl m;
+    m.name = "weather_module";
+    const QString src = lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+
+    EXPECT_TRUE(src.contains("LOGOS_PROTOCOL_VERSION_MINOR >= 5")) << src.toStdString();
+
+    // Both the statics and the exports must sit inside a guard: the typedef is
+    // what is missing on an older header, and it is named by the statics.
+    EXPECT_EQ(src.count("LOGOS_PROTOCOL_VERSION_MINOR >= 5"), 2) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, TeardownGoesThroughTheSfinaeHelpersNotTheImplDirectly)
+{
+    // An impl that never inherited LogosModuleContext has no hook at all. The
+    // helpers resolve that to Synchronous at compile time; calling the impl
+    // directly would simply not compile for those modules.
+    ModuleDecl m;
+    m.name = "weather_module";
+    const QString src = lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+
+    EXPECT_TRUE(src.contains("_logos_codegen_::maybeAboutToUnload(lidlImpl())"))
+        << src.toStdString();
+    EXPECT_FALSE(src.contains("lidlImpl().aboutToUnload(")) << src.toStdString();
+}
