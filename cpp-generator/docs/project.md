@@ -364,3 +364,12 @@ Fixture files in `tests/experimental/fixtures/`:
   callback still receives the default-converted value. `…AsyncResult` exists precisely
   because giving async an error channel was an API addition rather than a code-generation
   fix — a caller that needs to SEE the rejection uses it.
+
+  The **Qt-free (`lp`) emitter** folds the same rejection through a `nlohmann::json` twin
+  of the detector (`logosDispatchRejectionJson`, under its own guard macro so both can
+  share a translation unit), into the same two surfaces: the sync `logos::CallError*`
+  out-parameter and `…AsyncResult`. Two differences from the Qt twin, both deliberate:
+  its sync path has no `qWarning` fallback for a caller that passed no `err` (a Qt-free
+  wrapper pulling in `<iostream>` to say so would cost every generated TU for a
+  diagnostic nobody reads), and lp `…Async` is left alone for the same reason the Qt one
+  is — its callback takes the value alone.

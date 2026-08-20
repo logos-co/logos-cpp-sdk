@@ -15,6 +15,7 @@
 // `LpSubscription` (mirrors rust-sdk's EventSubscription: unsubscribes on
 // destruction so the callback never fires after the owner is gone).
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -108,7 +109,10 @@ class LpClient {
 public:
     LpClient(std::string target, std::string origin)
         : m_target(std::move(target)), m_origin(std::move(origin)) {}
-    ~LpClient() { if (m_client) lp_client_destroy(m_client); }
+    ~LpClient() {
+        if (lp_client* c = m_client.load(std::memory_order_acquire))
+            lp_client_destroy(c);
+    }
     LpClient(const LpClient&) = delete;
     LpClient& operator=(const LpClient&) = delete;
 
@@ -164,6 +168,53 @@ public:
             &LpClient::resultTrampoline, box);
     }
 
+    // Async call carrying the error — the async twin of invoke()'s `err`
+    // out-parameter, and what the generated `<name>AsyncResult` wrappers are
+    // built on. `cb` fires exactly once; on failure the JSON is null and the
+    // CallError is populated from the C ABI's canonical {code, message, origin}
+    // object.
+    //
+    // Why this exists next to invokeAsync rather than replacing it: invokeAsync
+    // collapses the C ABI's failure form (`ok == 0` with `json` set to the error
+    // object) into a bare JSON null, which is also what a successful call
+    // returning nothing delivers. That is fine for a callback that only takes a
+    // value and has nowhere to put an error, and useless for one that does.
+    //
+    // A DISTINCT NAME, not an overload of invokeAsync: two std::function
+    // parameters differing only in arity are ambiguous for a generic lambda —
+    // the same hazard that made the generator spell `<name>AsyncResult` as its
+    // own name instead of an overload of `<name>Async`.
+    //
+    // Safe to call from any thread. logos-qt-sdk's LpBridge::invokeAsyncResult
+    // is this function with a private second lp_client bolted on because this
+    // one did not exist; it can now delegate here and drop that connection.
+    void invokeAsyncResult(const std::string& method,
+                           const nlohmann::json& args,
+                           std::function<void(nlohmann::json, const CallError&)> cb,
+                           int timeout_ms = 0) {
+        if (!cb) return;
+        lp_client* c = ensure();
+        if (!c) {
+            cb(nlohmann::json(),
+               callErrorObjectUnavailable(m_target, "could not create client for " + m_target));
+            return;
+        }
+        auto* box = new ResultErrBox(std::move(cb));
+        const std::string argsStr = args.dump();
+        const int rc = lp_invoke_async(c, method.c_str(), argsStr.c_str(), timeout_ms,
+                                       &LpClient::resultErrorTrampoline, box);
+        if (rc != LP_OK) {
+            // A synchronous refusal does NOT call back (the C ABI's rule), so
+            // the completion is this function's to make — `cb` still has to fire
+            // exactly once, which is the whole contract a caller schedules on.
+            ResultErrBox fn = std::move(*box);
+            delete box;
+            fn(nlohmann::json(),
+               callErrorCallFailed(m_target, "lp_invoke_async refused the call (rc="
+                                                 + std::to_string(rc) + ")"));
+        }
+    }
+
     // The target's method list, as the JSON the host reports. Empty on
     // failure. Invoke-without-introspect is what makes a by-name call an
     // escape hatch rather than an API: a caller that cannot ask what exists
@@ -193,11 +244,49 @@ public:
 
 private:
     using Box = std::function<void(nlohmann::json)>;
+    using ResultErrBox = std::function<void(nlohmann::json, const CallError&)>;
 
+    // Create-once, and never while holding a lock.
+    //
+    // Two threads reach a dep's FIRST call concurrently more often than the
+    // lazy-init shape suggests: a concurrency:"multi" module runs its handlers
+    // on concurrent QThreads, and any module with a worker of its own (an HTTP
+    // handler, a chain-sync pump) races that worker against the dispatch
+    // thread. The plain `if (!m_client) m_client = lp_client_create(...)` this
+    // replaces was a data race on m_client, and leaked whichever client lost.
+    //
+    // A mutex around the whole body is the obvious fix and the WRONG one. For a
+    // Qt-affine transport lp_client_create marshals construction onto the Qt
+    // main thread and BLOCKS there (logos_protocol.cpp's runOnQtMainThread). A
+    // worker holding the lock across that waits for the main thread — while the
+    // main thread, reaching this same ensure() from an inbound call, waits for
+    // the lock and so never returns to the event loop that would run the
+    // construction. That trades a data race for a deadlock.
+    //
+    // So construct OUTSIDE any lock and publish with a CAS. Both racers may
+    // build a client; exactly one is ever published, and the loser destroys its
+    // own. That is safe and cheap: lp_client_destroy may be called from any
+    // thread and defers the teardown to the owner thread (logos_protocol.h),
+    // and construction has no effect at the target — the capability handshake
+    // is lazy, inside invokeRemoteMethod — so a discarded client mints no token
+    // and leaves no trace.
+    //
+    // A failed create is deliberately NOT latched: the next call retries, which
+    // is what the pre-CAS version did.
     lp_client* ensure() {
-        if (!m_client)
-            m_client = lp_client_create(m_target.c_str(), m_origin.c_str(), nullptr, nullptr);
-        return m_client;
+        if (lp_client* c = m_client.load(std::memory_order_acquire))
+            return c;
+        lp_client* fresh = lp_client_create(m_target.c_str(), m_origin.c_str(), nullptr, nullptr);
+        // Creation failed — report whatever is published (usually null, but a
+        // racer may have succeeded meanwhile) rather than caching the failure.
+        if (!fresh) return m_client.load(std::memory_order_acquire);
+        lp_client* expected = nullptr;
+        if (m_client.compare_exchange_strong(expected, fresh,
+                                             std::memory_order_acq_rel,
+                                             std::memory_order_acquire))
+            return fresh;
+        lp_client_destroy(fresh);   // lost the publish race
+        return expected;
     }
 
     static void resultTrampoline(int ok, const char* json, void* ud) {
@@ -208,6 +297,35 @@ private:
             if (!parsed.is_discarded()) r = std::move(parsed);
         }
         (*fn)(std::move(r));
+        delete fn;  // result callback fires exactly once
+    }
+
+    // The error-aware twin of resultTrampoline. `ok == 0` means `json` is the
+    // canonical error object rather than a value, so the value is dropped and
+    // the error decoded; a malformed/absent one still yields a NON-ok
+    // CallError, because reporting ok() for a call the ABI said failed is the
+    // one outcome this trampoline exists to prevent.
+    static void resultErrorTrampoline(int ok, const char* json, void* ud) {
+        auto* fn = static_cast<ResultErrBox*>(ud);
+        nlohmann::json parsed;  // null
+        if (json) {
+            auto p = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+            if (!p.is_discarded()) parsed = std::move(p);
+        }
+        CallError err;
+        if (!ok) {
+            err = callErrorCallFailed("", "lp_invoke_async failed");
+            if (parsed.is_object()) {
+                if (parsed.contains("code") && parsed["code"].is_string())
+                    err.code = parsed["code"].get<std::string>();
+                if (parsed.contains("message") && parsed["message"].is_string())
+                    err.message = parsed["message"].get<std::string>();
+                if (parsed.contains("origin") && parsed["origin"].is_string())
+                    err.origin = parsed["origin"].get<std::string>();
+            }
+            parsed = nlohmann::json();
+        }
+        (*fn)(std::move(parsed), err);
         delete fn;  // result callback fires exactly once
     }
 
@@ -240,7 +358,8 @@ private:
 
     std::string m_target;
     std::string m_origin;
-    lp_client* m_client = nullptr;
+    // Published exactly once by ensure(); read from any thread.
+    std::atomic<lp_client*> m_client{nullptr};
 };
 
 }  // namespace logos

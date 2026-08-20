@@ -295,11 +295,32 @@ overloads differing only in `std::function<void(T)>` vs
 `std::function<void(AsyncResult<T>)>` are ambiguous for a generic lambda
 (`[](auto v){…}`), which would break existing call sites.
 
-**Qt-free (`--api-style lp`) wrappers** spell the deadline `int timeout_ms = 0`
-(`<= 0` selects the protocol default) because `Timeout` lives in a Qt header,
-and they do **not** yet get `fooAsyncResult` — logos-protocol's
-`lp_invoke_async` does not report the call error to its callback, so an
-`AsyncResult` there would report success on a failed call.
+**Qt-free (`--api-style lp`) wrappers** get all three entry points, spelling the
+deadline `int timeout_ms = 0` (`<= 0` selects the protocol default) because
+`Timeout` lives in a Qt header:
+
+```cpp
+void fooAsyncResult(params…, std::function<void(logos::AsyncResult<T>)> cb,
+                    int timeout_ms = 0);
+```
+
+One asymmetry, deliberate: `fooAsync` on this surface takes no deadline. It has
+existing callers and adding a parameter to it buys nothing that (3) does not
+already give.
+
+`fooAsyncResult` was withheld here for a long time, and the reason is worth
+knowing if you find a comment that still claims it: `lp_invoke_async` used to
+hard-code `ok = 1`, so an `AsyncResult` over it would have reported success for
+a call to a module that was not even loaded — an error channel that lies is
+worse than none. logos-protocol#40 fixed that, and
+`logos::LpClient::invokeAsyncResult` surfaces the failure in C++, so the twin is
+honest.
+
+Both `foo(…, &err)` and `fooAsyncResult` on this surface also fold a provider
+**rejection** into the error, matching the Qt path: a provider that ran and
+refused answers `{"code": "dispatch_failed", …}` as its *result*, which the
+return decode would otherwise erase into a default value. `fooAsync` still
+cannot report it — its callback has nowhere to put it.
 
 ### Universal modules: LogosModuleContext
 
