@@ -656,9 +656,18 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "logos_module_emit_cb g_emitCb = nullptr;\n";
     s << "void* g_emitUd = nullptr;\n";
     s << "std::mutex g_emitMutex;\n";
+    // Guarded on the protocol MINOR that introduced the teardown surface (0.5),
+    // exactly like the trust-root surface below. The emitted module must still
+    // COMPILE against an older logos-protocol, which has neither the callback
+    // typedef nor the two logos_module_impl.h declarations -- a module built
+    // against 0.4 simply has no teardown entry point, which is the same state
+    // as a module that never overrode the hook. Without this an older protocol
+    // is a hard compile error in generated code the author never sees.
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && LOGOS_PROTOCOL_VERSION_MINOR >= 5\n";
     s << "logos_module_unload_done_cb g_unloadCb = nullptr;\n";
     s << "void* g_unloadUd = nullptr;\n";
     s << "std::mutex g_unloadMutex;\n";
+    s << "#endif\n";
     s << "std::mutex g_ctxMutex;\n";
     s << "bool g_ctxStored = false;\n";
     s << "std::string g_ctxPath, g_ctxId, g_ctxPersist;\n";
@@ -921,6 +930,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     // the emit one: it is installed on the host's thread and fired from
     // whichever thread the module finishes its work on, and those are the same
     // two threads the emit path already keeps apart.
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && LOGOS_PROTOCOL_VERSION_MINOR >= 5\n";
     s << "void logos_module_set_unload_done_callback(logos_module_unload_done_cb cb,\n";
     s << "                                          void* user_data)\n{\n";
     s << "    std::lock_guard<std::mutex> lock(g_unloadMutex);\n";
@@ -944,7 +954,8 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    });\n";
     s << "    return _logos_codegen_::maybeAboutToUnload(lidlImpl())\n";
     s << "               == LogosShutdown::Asynchronous ? 1 : 0;\n";
-    s << "}\n\n";
+    s << "}\n";
+    s << "#endif\n\n";
 
     s << "const char* logos_module_get_protocol_version(void)\n{\n";
     s << "    return LOGOS_PROTOCOL_VERSION_STRING;\n}\n\n";

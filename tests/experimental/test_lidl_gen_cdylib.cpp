@@ -817,6 +817,25 @@ TEST(LidlGenCdylib, InstallsTheCompletionCallbackBeforeAskingTheImpl)
     EXPECT_LT(install, ask) << "completion callback installed after the unload request";
 }
 
+TEST(LidlGenCdylib, TeardownEmissionIsGuardedOnTheProtocolThatCarriesIt)
+{
+    // The teardown pair arrived in logos-protocol 0.5. A module built against
+    // an older protocol has neither the callback typedef nor the two
+    // declarations, so unguarded emission is a hard compile error in generated
+    // code the author never wrote and cannot see -- which is exactly what
+    // happened before this guard existed. Same shape as the 0.3 trust-root
+    // guard a few lines below it in the emitter.
+    ModuleDecl m;
+    m.name = "weather_module";
+    const QString src = lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+
+    EXPECT_TRUE(src.contains("LOGOS_PROTOCOL_VERSION_MINOR >= 5")) << src.toStdString();
+
+    // Both the statics and the exports must sit inside a guard: the typedef is
+    // what is missing on an older header, and it is named by the statics.
+    EXPECT_EQ(src.count("LOGOS_PROTOCOL_VERSION_MINOR >= 5"), 2) << src.toStdString();
+}
+
 TEST(LidlGenCdylib, TeardownGoesThroughTheSfinaeHelpersNotTheImplDirectly)
 {
     // An impl that never inherited LogosModuleContext has no hook at all. The
