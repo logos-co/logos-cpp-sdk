@@ -379,14 +379,23 @@ TEST(MakeSourceTest, QtNoInvokableMethodsEmitsNoDetector)
     EXPECT_FALSE(src.contains("logosDispatchRejection"));
 }
 
-TEST(MakeSourceTest, LpSurfaceIsUntouched)
+TEST(MakeSourceTest, LpSurfaceUsesItsOwnJsonDetectorNotTheQtOne)
 {
-    // The fix is Qt-consumer-only; the lp wrapper must generate exactly as
-    // before (byte-identical output is the negative control for the change).
+    // The Qt-consumer fix stays Qt-only: a QVariant-typed detector must never
+    // reach a translation unit whose whole purpose is not to see Qt. The lp
+    // surface folds the SAME wire object through its own nlohmann::json twin,
+    // on both the sync path and `<name>AsyncResult` (see test_async_result.cpp).
+    //
+    // This test used to assert the lp wrapper contained no detector at all —
+    // the negative control for a fix that was Qt-only at the time. What it was
+    // really protecting is the Qt-freeness, which is what it asserts now.
     QJsonArray methods;
     methods.append(makeMethod("fn", "QVariantList", 1));
     QString src = makeSource("mod", "Mod", "mod.h", methods, ApiStyle::Lp);
-    EXPECT_FALSE(src.contains("logosDispatchRejection"));
+    EXPECT_FALSE(src.contains("logosDispatchRejection(const QVariant&"));
+    EXPECT_TRUE(src.contains("bool logosDispatchRejectionJson(const nlohmann::json& v, logos::CallError& out)"));
+    // Its own guard macro, so the two detectors can coexist in one TU.
+    EXPECT_TRUE(src.contains("#ifndef LOGOS_GENERATED_DISPATCH_REJECTION_JSON"));
 }
 
 TEST(MakeSourceTest, QtRejectionDetectorIsPreprocessorGuarded)
