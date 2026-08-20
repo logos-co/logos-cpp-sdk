@@ -26,6 +26,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -46,6 +48,7 @@ std::atomic<bool> g_slowCreate{false};
 
 std::mutex g_seenMutex;
 std::vector<lp_client*> g_seen;   // the client each getMethods() call observed
+std::atomic<int> g_stringsFreed{0};
 
 // How the next lp_invoke_async should behave. Named for the C ABI outcome each
 // one models, not for the test that uses it.
@@ -63,6 +66,7 @@ void resetStubs() {
     g_failNext = 0;
     g_slowCreate = false;
     g_asyncStub = AsyncStub::Success;
+    g_stringsFreed = 0;
     std::lock_guard<std::mutex> lock(g_seenMutex);
     g_seen.clear();
 }
@@ -84,12 +88,28 @@ void lp_client_destroy(lp_client* client) {
     delete reinterpret_cast<std::uintptr_t*>(client);
 }
 
-// The cheapest public LpClient method that goes through ensure(). Returning
-// NULL makes getMethods() yield an empty json without needing lp_string_free.
+// The cheapest public LpClient method that goes through ensure().
+//
+// It returns a HEAP string the caller must hand back to lp_string_free, which
+// is the real ABI contract — and stubbing it that way is load-bearing rather
+// than cosmetic. This first returned NULL, which left getMethods()'s
+// lp_string_free call unreachable: clang may inline this same-TU definition,
+// prove the pointer null and delete the call, so a missing lp_string_free stub
+// linked fine on macOS/clang and failed on GCC with an undefined reference.
+// Returning a real allocation keeps that path live on every compiler.
 char* lp_get_methods(lp_client* client) {
-    std::lock_guard<std::mutex> lock(g_seenMutex);
-    g_seen.push_back(client);
-    return nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_seenMutex);
+        g_seen.push_back(client);
+    }
+    char* out = static_cast<char*>(std::malloc(3));
+    std::memcpy(out, "[]", 3);
+    return out;
+}
+
+void lp_string_free(char* s) {
+    g_stringsFreed.fetch_add(1, std::memory_order_relaxed);
+    std::free(s);
 }
 
 int lp_invoke_async(lp_client*, const char*, const char*, int, lp_result_cb cb, void* ud) {
@@ -129,6 +149,10 @@ TEST_F(LpClientEnsureTest, RepeatedCallsOnOneThreadBuildExactlyOneClient) {
         for (int i = 0; i < 5; ++i) client.getMethods();
         EXPECT_EQ(g_created.load(), 1);
         EXPECT_EQ(g_destroyed.load(), 0);
+        // Every string the ABI handed out went back through lp_string_free —
+        // the ownership rule getMethods() has to honour, and the reason this
+        // stub returns a real allocation rather than NULL.
+        EXPECT_EQ(g_stringsFreed.load(), 5);
     }
     EXPECT_EQ(g_destroyed.load(), 1) << "the published client outlives every call, not the last one";
 }
