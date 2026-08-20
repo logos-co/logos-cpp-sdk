@@ -450,7 +450,6 @@ with the capability module, and install both modules.
 nix build 'github:logos-co/logos-logoscore-cli' \
   --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
-  --override-input logos-module-client/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-capability-module/logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --out-link ./logos
 ```

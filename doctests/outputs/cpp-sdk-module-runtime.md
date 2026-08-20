@@ -10,7 +10,7 @@ the headless `logoscore` runtime:
 
 1. Build the `logoscore` CLI, **overriding `logos-cpp-sdk` with the commit
    under test** — and overriding it in the same way for every consumer in
-   `logoscore`'s closure (`logos-liblogos`, `logos-module-client`, and the
+   `logoscore`'s closure (`logos-liblogos` and the
    `capability_module`'s `logos-module-builder`). Because the published flakes
    pin the SDK independently (there is no single `follows` unifying them), all
    of these must point at the same commit so the whole runtime is built and
@@ -61,8 +61,8 @@ Build the `logoscore` CLI from its published flake, but **override
 every consumer that pins the SDK in `logoscore`'s closure. The result is
 symlinked to `./logos/`.
 
-> Unlike a leaf input, the SDK is pinned independently by `logos-liblogos`,
-> `logos-module-client`, and the `capability_module`'s `logos-module-builder`
+> Unlike a leaf input, the SDK is pinned independently by `logos-liblogos`
+> and the `capability_module`'s `logos-module-builder`
 > — there is no single `follows` tying them together in the published
 > flakes. So we override it at each of those paths (e.g.
 > `--override-input logos-liblogos/logos-cpp-sdk …`) to keep the whole
@@ -77,7 +77,6 @@ symlinked to `./logos/`.
 nix build 'github:logos-co/logos-logoscore-cli' \
   --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
-  --override-input logos-module-client/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-capability-module/logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --out-link ./logos
 ```
