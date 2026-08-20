@@ -794,6 +794,20 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
             s << "                return lidlStrdup(err.dump());\n";
             s << "            }\n";
         }
+        // A derived method (lidl/identity.hpp) has no member on the impl class
+        // to call — the generator owns its body. name()/version() answer from
+        // the module declaration, which the builder derives from metadata.json,
+        // so the reported value cannot drift from the built one.
+        if (md.derived && lidl::isIdentityMethod(md.name)) {
+            const QString literal = md.name == lidl::kIdentityName
+                ? qs(module.name)
+                : (module.version.empty() ? QStringLiteral("1.0.0") : qs(module.version));
+            s << "            auto result = std::string(\"" << literal << "\");\n";
+            s << "            return lidlStrdup(" << stdReturnToJson(md, "result", recs)
+              << ".dump());\n";
+            s << "        }\n";
+            continue;
+        }
         QString call = "lidlImpl()." + qs(md.name) + "(";
         for (size_t i = 0; i < md.params.size(); ++i) {
             const QString expr = (i < minArgs)

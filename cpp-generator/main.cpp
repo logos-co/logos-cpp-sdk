@@ -168,6 +168,18 @@ static bool generateInterfaceWrappers(const QVector<InterfaceSpec>& ifaces,
             }
         }
 
+        {
+            // Consumers see name()/version() on every dependency and bound
+            // interface. Added here rather than read from the .lidl: the
+            // artifact carries only what the author wrote, and the provider
+            // adds the same two methods from the same function.
+            QString idErr;
+            if (!lidlInjectIdentity(mod, &idErr)) {
+                err << spec.path << ": " << idErr << "\n";
+                return false;
+            }
+        }
+
         noteOptionalPositionalSlots(mod, spec.path, err);
 
         const QString className = toPascalCase(spec.name);
@@ -591,7 +603,14 @@ int main(int argc, char* argv[])
                 return 4;
             }
 
-            const ModuleDecl& mod = pr.module;
+            ModuleDecl mod = pr.module;
+            {
+                QString idErr;
+                if (!lidlInjectIdentity(mod, &idErr)) {
+                    err << headerPath << ": " << idErr << "\n";
+                    return 4;
+                }
+            }
             QString genDirPath = outputDir.isEmpty()
                 ? QDir::current().filePath("generated")
                 : outputDir;
@@ -617,6 +636,9 @@ int main(int argc, char* argv[])
                 if (!mod.events.empty())
                     outs.append({qs(mod.name) + "_events_cdylib.cpp",
                                  lidlMakeEventsSourceCdylib(mod, implClass, implHeader)});
+                // Identity methods are `derived`, and lidlSerialize omits
+                // those — so this stays byte-identical to what
+                // --header-to-lidl writes for the same header.
                 outs.append({qs(mod.name) + ".lidl", lidlSerialize(mod)});
                 for (const Out& o : outs) {
                     const QString abs = QDir(genDirPath).filePath(o.file);
@@ -692,7 +714,17 @@ int main(int argc, char* argv[])
                         << " (line " << pr.errorLine << ")\n";
                     return 4;
                 }
-                const ModuleDecl& mod = pr.module;
+                ModuleDecl mod = pr.module;
+                {
+                    // Contract-first: the committed .lidl is untouched; the
+                    // provider's dispatch and method listing gain the identity
+                    // methods the same way every consumer does.
+                    QString idErr;
+                    if (!lidlInjectIdentity(mod, &idErr)) {
+                        err << lidlPath << ": " << idErr << "\n";
+                        return 4;
+                    }
+                }
                 QString cdErr;
                 if (!lidlCdylibSupported(mod, &cdErr)) {
                     err << "Error: module not cdylib-eligible: " << cdErr << "\n";

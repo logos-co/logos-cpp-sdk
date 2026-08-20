@@ -694,3 +694,89 @@ TEST(LidlGenCdylib, GrantExportIsEmittedForEveryModuleNotJustPrivilegedOnes)
 
     EXPECT_TRUE(src.contains("logos_module_grant_host_services")) << src.toStdString();
 }
+
+// --- Module identity ---------------------------------------------------------
+//
+// name()/version() are injected into the contract by the frontend
+// (lidl/identity.hpp) and marked `derived`. The dispatch must answer them from
+// the module DECLARATION -- the impl class has no such member, so delegating
+// would not compile, and reading anything else would let the reported value
+// drift from the metadata the module was built with.
+
+namespace {
+
+ModuleDecl moduleWithIdentity(const char* name, const char* version)
+{
+    ModuleDecl m;
+    m.name = name;
+    m.version = version;
+    lidl::injectIdentityMethods(m);
+    return m;
+}
+
+QString implExportsFor(const ModuleDecl& m)
+{
+    return lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+}
+
+} // namespace
+
+TEST(LidlGenCdylib, IdentityMethodsAnswerFromTheModuleDeclaration)
+{
+    const QString src = implExportsFor(moduleWithIdentity("weather_module", "2.4.1"));
+
+    // The literal is the module's OWN version, not a default. A generator that
+    // fell back to "1.0.0" here would be indistinguishable from a correct one
+    // on the many modules that happen to be at 1.0.0.
+    EXPECT_TRUE(src.contains("if (m == \"name\")")) << src.toStdString();
+    EXPECT_TRUE(src.contains("std::string(\"weather_module\")")) << src.toStdString();
+    EXPECT_TRUE(src.contains("if (m == \"version\")")) << src.toStdString();
+    EXPECT_TRUE(src.contains("std::string(\"2.4.1\")")) << src.toStdString();
+
+    // ...and never through the impl class, which has no such member.
+    EXPECT_FALSE(src.contains("lidlImpl().name(")) << src.toStdString();
+    EXPECT_FALSE(src.contains("lidlImpl().version(")) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, IdentityMethodsAreListedForIntrospection)
+{
+    // `lm methods` and every untyped caller read this listing, so an identity
+    // method that dispatches but is not advertised is only half present.
+    const QString src = implExportsFor(moduleWithIdentity("weather_module", "2.4.1"));
+    EXPECT_TRUE(src.contains("obj[\"name\"] = \"name\"")) << src.toStdString();
+    EXPECT_TRUE(src.contains("obj[\"name\"] = \"version\"")) << src.toStdString();
+    EXPECT_TRUE(src.contains("obj[\"signature\"] = \"name()\"")) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, AnAuthorsOwnIdentityMethodStillReachesTheImpl)
+{
+    // A module MAY implement name() itself (logos-delivery-module does). It is
+    // then not `derived`, so it must dispatch like any other author method --
+    // silently shadowing it with a generated literal would change behaviour.
+    ModuleDecl m;
+    m.name = "delivery_module";
+    m.version = "1.0.0";
+    MethodDecl mine;
+    mine.name = "name";
+    mine.returnType = prim("tstr");
+    m.methods.push_back(mine);
+    lidl::injectIdentityMethods(m);
+
+    const QString src = implExportsFor(m);
+    EXPECT_TRUE(src.contains("lidlImpl().name(")) << src.toStdString();
+    EXPECT_FALSE(src.contains("std::string(\"delivery_module\")")) << src.toStdString();
+    // version() was still injected, and is still generated.
+    EXPECT_TRUE(src.contains("std::string(\"1.0.0\")")) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, AVersionlessModuleFallsBackRatherThanEmittingEmpty)
+{
+    // A ModuleDecl with no version reaches here from a synthetic/interface
+    // contract. Emitting "" would make version() answer the empty string,
+    // which reads as a failure rather than as "unversioned".
+    ModuleDecl m;
+    m.name = "bare_module";
+    lidl::injectIdentityMethods(m);
+    EXPECT_TRUE(implExportsFor(m).contains("std::string(\"1.0.0\")"))
+        << implExportsFor(m).toStdString();
+}
