@@ -40,7 +40,11 @@ struct CoreStub {
 
     std::vector<std::string> known{"alpha", "beta", "gamma"};
     std::vector<std::string> loaded{"alpha"};
-    std::string statsJson = R"([{"name":"alpha","cpu":12.5,"memory":4096}])";
+    // The REAL contract process-stats emits (src/process_stats.cpp:157-161).
+    // This previously stubbed {"cpu":..,"memory":..}, keys nothing produces, so
+    // it validated the parser's bug instead of the producer's format.
+    std::string statsJson =
+        R"([{"name":"alpha","cpu_percent":12.5,"cpu_time_seconds":3.5,"memory_mb":4096.0}])";
     bool tokenPresent = true;
     int  lastLoadWithDeps = -1;
     int  lastUnloadWithDependents = -1;
@@ -226,7 +230,8 @@ TEST_F(HostCoreTest, StatsAreIndexedOutOfTheSingleBlob)
     ASSERT_TRUE(s.has_value());
     EXPECT_EQ(s->name, "alpha");
     EXPECT_DOUBLE_EQ(s->cpuPercent, 12.5);
-    EXPECT_EQ(s->memoryBytes, 4096);
+    EXPECT_DOUBLE_EQ(s->memoryMb, 4096.0);
+    EXPECT_DOUBLE_EQ(s->cpuTimeSeconds, 3.5);
     EXPECT_EQ(s->raw["name"], "alpha") << "the raw entry stays reachable";
 }
 
