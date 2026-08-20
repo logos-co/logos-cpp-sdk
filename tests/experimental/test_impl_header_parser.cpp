@@ -1319,3 +1319,42 @@ TEST_F(ImplHeaderParserTest, BraceInAStringLiteralIsNotAScope)
     ASSERT_EQ(r.module.types[0].fields.size(), 2u);
     EXPECT_EQ(r.module.types[0].fields[1].name, "n");
 }
+
+// ---------------------------------------------------------------------------
+// Teardown hooks stay out of the contract
+// ---------------------------------------------------------------------------
+
+TEST_F(ImplHeaderParserTest, TeardownHooksAreNotPartOfTheContract)
+{
+    // aboutToUnload() and unloadFinished() are framework plumbing, exactly like
+    // onContextReady(). An impl that overrides one is talking to the host, not
+    // publishing API -- leaking either would generate a consumer wrapper for a
+    // lifecycle hook, and LogosShutdown has no LIDL type to return anyway.
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString hp = dir.filePath("thing_impl.h");
+    {
+        QFile f(hp);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write(
+            "#pragma once\n"
+            "#include <string>\n"
+            "class ThingImpl {\n"
+            "public:\n"
+            "    std::string work();\n"
+            "    void onContextReady();\n"
+            "    LogosShutdown aboutToUnload();\n"
+            "    void unloadFinished();\n"
+            "};\n");
+    }
+    auto r = parseImplHeader(hp, "ThingImpl",
+                             fixturesDir() + "/sample_metadata.json", err);
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+
+    QStringList names;
+    for (const auto& m : r.module.methods) names << QString::fromStdString(m.name);
+    EXPECT_TRUE(names.contains("work")) << "got: " << names.join(",").toStdString();
+    EXPECT_FALSE(names.contains("aboutToUnload")) << "got: " << names.join(",").toStdString();
+    EXPECT_FALSE(names.contains("unloadFinished")) << "got: " << names.join(",").toStdString();
+    EXPECT_FALSE(names.contains("onContextReady")) << "got: " << names.join(",").toStdString();
+}

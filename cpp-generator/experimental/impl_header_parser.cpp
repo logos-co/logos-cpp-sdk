@@ -1267,7 +1267,15 @@ ImplParseResult parseImplHeader(const QString& headerPath,
                     // methods. Skip the reserved names regardless of access.
                     static const QSet<QString> reserved = {
                         "onContextReady", "modules", "modulePath",
-                        "instanceId", "instancePersistencePath"
+                        "instanceId", "instancePersistencePath",
+                        // Teardown plumbing, same rule as onContextReady: an
+                        // impl overriding aboutToUnload() (or calling
+                        // unloadFinished()) is talking to the framework, not
+                        // publishing API. Leaking either would generate a
+                        // consumer wrapper for a lifecycle hook, and
+                        // aboutToUnload's LogosShutdown return has no LIDL
+                        // type anyway.
+                        "aboutToUnload", "unloadFinished"
                     };
                     if (!reserved.contains(qs(md.name))) {
                         md.description = joinDocLines(pendingDoc).toStdString();
