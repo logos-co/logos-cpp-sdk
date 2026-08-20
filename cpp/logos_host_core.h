@@ -104,7 +104,12 @@ namespace host {
 struct ModuleStats {
     std::string name;
     double      cpuPercent = 0.0;
-    long long   memoryBytes = 0;
+    double      cpuTimeSeconds = 0.0;
+    // MEGABYTES, not bytes — that is what the producer emits
+    // (process-stats/src/process_stats.h: `double memoryMB`). This member was
+    // `long long memoryBytes` and read a key that does not exist, so it was
+    // both the wrong unit and always zero.
+    double      memoryMb = 0.0;
     // The raw entry, so a host can read fields this struct does not model
     // without waiting for the SDK to grow them.
     nlohmann::json raw;
@@ -298,8 +303,13 @@ public:
             if (!entry.is_object()) continue;
             ModuleStats s;
             s.name = entry.value("name", std::string{});
-            s.cpuPercent = entry.value("cpu", 0.0);
-            s.memoryBytes = entry.value("memory", 0LL);
+            // Key names are process-stats' (src/process_stats.cpp:157-161):
+            // name, cpu_percent, cpu_time_seconds, memory_mb. This read "cpu"
+            // and "memory", which are emitted by nothing, so every host that
+            // adopted this façade would have silently reported 0 for both.
+            s.cpuPercent     = entry.value("cpu_percent", 0.0);
+            s.cpuTimeSeconds = entry.value("cpu_time_seconds", 0.0);
+            s.memoryMb       = entry.value("memory_mb", 0.0);
             s.raw = entry;
             out.push_back(std::move(s));
         }
