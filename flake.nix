@@ -13,6 +13,9 @@
   # branch, with protocol master still at LOGOS_PROTOCOL_VERSION_MINOR 2 —
   # the `tests` check could not compile against it. That branch has merged
   # (logos-protocol#59): master is 0.4.0 and carries all three.
+  #
+  # checks.module-impl-abi additionally consumes
+  # packages.<system>.module-impl-abi from here (logos-protocol#66).
   inputs.logos-protocol.url = "github:logos-co/logos-protocol";
   inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
   # The canonical, language-neutral LIDL frontend (lexer/parser/AST/serializer/
@@ -88,6 +91,14 @@
           # never executes it, so a retired CLI flag can only be asserted here.
           generator-cli = import ./nix/tests-generator-cli.nix {
             inherit pkgs common generator;
+          };
+          # Diffs what the cdylib backend DEFINES against the module-impl C
+          # ABI logos-protocol DECLARES. Nothing else here can catch that gap:
+          # a module with a missing export links clean and only dies at
+          # dlopen(), on Linux. See nix/tests-module-impl-abi.nix.
+          module-impl-abi = import ./nix/tests-module-impl-abi.nix {
+            inherit pkgs common src generator;
+            module-impl-abi = logos-protocol.packages.${pkgs.system}.module-impl-abi;
           };
         }
       );
