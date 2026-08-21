@@ -7,13 +7,15 @@
   # logos-nix so both repos resolve the identical nixpkgs/Qt pin — the QRO
   # wire is Qt-version-sensitive.
   #
-  # Master-tracking. This was rev-pinned to feat/per-client-token-store while
-  # logos_host_services.h's trust-root surface (lp_token_keys,
-  # lp_inform_module_token_to, lp_grant_host_services) lived only on that
-  # branch, with protocol master still at LOGOS_PROTOCOL_VERSION_MINOR 2 —
-  # the `tests` check could not compile against it. That branch has merged
-  # (logos-protocol#59): master is 0.4.0 and carries all three.
-  inputs.logos-protocol.url = "github:logos-co/logos-protocol";
+  # TEMPORARILY REV-PINNED to logos-protocol#66 (feat/module-impl-abi-manifest).
+  # That branch publishes packages.<system>.module-impl-abi: the module-impl C
+  # ABI export list, the protocol version the list belongs to, and the diff
+  # helper. nix/tests-module-impl-abi.nix reads all three, and master does not
+  # carry them yet, so unpinned this repo cannot even evaluate that check.
+  # TODO: drop the rev, back to plain "github:logos-co/logos-protocol", once
+  # logos-protocol#66 merges. Nothing else here depends on the rev — the
+  # earlier pin to feat/per-client-token-store was dropped when #59 merged.
+  inputs.logos-protocol.url = "github:logos-co/logos-protocol/986813cc661682878c3ecabff2078a6d36cd5c1d";
   inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
   # The canonical, language-neutral LIDL frontend (lexer/parser/AST/serializer/
   # validator) the code generator links. Follows our logos-nix so it resolves
@@ -88,6 +90,14 @@
           # never executes it, so a retired CLI flag can only be asserted here.
           generator-cli = import ./nix/tests-generator-cli.nix {
             inherit pkgs common generator;
+          };
+          # Diffs what the cdylib backend DEFINES against the module-impl C
+          # ABI logos-protocol DECLARES. Nothing else here can catch that gap:
+          # a module with a missing export links clean and only dies at
+          # dlopen(), on Linux. See nix/tests-module-impl-abi.nix.
+          module-impl-abi = import ./nix/tests-module-impl-abi.nix {
+            inherit pkgs common src generator;
+            module-impl-abi = logos-protocol.packages.${pkgs.system}.module-impl-abi;
           };
         }
       );
