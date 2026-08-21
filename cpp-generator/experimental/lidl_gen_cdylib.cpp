@@ -663,7 +663,10 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     // against 0.4 simply has no teardown entry point, which is the same state
     // as a module that never overrode the hook. Without this an older protocol
     // is a hard compile error in generated code the author never sees.
-    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && LOGOS_PROTOCOL_VERSION_MINOR >= 5\n";
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && "
+         "LOGOS_PROTOCOL_VERSION_MINOR >= 5))\n";
     s << "logos_module_unload_done_cb g_unloadCb = nullptr;\n";
     s << "void* g_unloadUd = nullptr;\n";
     s << "std::mutex g_unloadMutex;\n";
@@ -896,7 +899,10 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     // no grant entry point, which is the same fail-closed state as never being
     // granted. Without this an older protocol is a hard compile error in
     // generated code the author never sees.
-    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && LOGOS_PROTOCOL_VERSION_MINOR >= 3\n";
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && "
+         "LOGOS_PROTOCOL_VERSION_MINOR >= 3))\n";
     s << "int logos_module_grant_host_services(const char* services_json)\n{\n";
     s << "    // Route the host's grant into THIS image's gate state.\n";
     s << "    //\n";
@@ -930,7 +936,10 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     // the emit one: it is installed on the host's thread and fired from
     // whichever thread the module finishes its work on, and those are the same
     // two threads the emit path already keeps apart.
-    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && LOGOS_PROTOCOL_VERSION_MINOR >= 5\n";
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && "
+         "LOGOS_PROTOCOL_VERSION_MINOR >= 5))\n";
     s << "void logos_module_set_unload_done_callback(logos_module_unload_done_cb cb,\n";
     s << "                                          void* user_data)\n{\n";
     s << "    std::lock_guard<std::mutex> lock(g_unloadMutex);\n";
