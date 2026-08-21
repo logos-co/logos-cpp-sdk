@@ -46,8 +46,12 @@ pkgs.runCommand "${common.pname}-module-impl-abi-tests"
     # value, every guard would evaluate false, and the check would then measure
     # a protocol nobody pinned.
     minor=$(cut -d. -f2 < ${module-impl-abi}/version)
+    major=$(cut -d. -f1 < ${module-impl-abi}/version)
     case "x$minor" in
       x|x*[!0-9]*) fail "protocol version '$(cat ${module-impl-abi}/version)' has no numeric MINOR" ;;
+    esac
+    case "x$major" in
+      x|x*[!0-9]*) fail "protocol version '$(cat ${module-impl-abi}/version)' has no numeric MAJOR" ;;
     esac
     echo "logos-protocol $(cat ${module-impl-abi}/version) declares $(wc -l < "$declared" | tr -d ' ') module-impl exports;" \
          "resolving generated code at LOGOS_PROTOCOL_VERSION_MINOR=$minor"
@@ -68,12 +72,13 @@ pkgs.runCommand "${common.pname}-module-impl-abi-tests"
     # file called universal_mod_module_impl.cpp, so naming the file alone leaves
     # the reader unable to tell which configuration failed.
     cfg_label="(no configuration)"
-    resolved_symbols() {   # <out-dir> <minor> <src.cpp>...
-      outdir="$1"; m="$2"; shift 2
+    resolved_symbols() {   # <out-dir> <major> <minor> <src.cpp>...
+      outdir="$1"; M="$2"; m="$3"; shift 3
       rm -rf "$outdir"; mkdir -p "$outdir"
       for f in "$@"; do
         set +e
-        unifdef -DLOGOS_PROTOCOL_VERSION_MINOR="$m" "$f" > "$outdir/$(basename "$f")"
+        unifdef -DLOGOS_PROTOCOL_VERSION_MAJOR="$M" \
+                -DLOGOS_PROTOCOL_VERSION_MINOR="$m" "$f" > "$outdir/$(basename "$f")"
         rc=$?
         set -e
         [ "$rc" -le 1 ] || fail "[$cfg_label] unifdef exited $rc on $f"
@@ -116,8 +121,12 @@ pkgs.runCommand "${common.pname}-module-impl-abi-tests"
       [ "$#" -gt 0 ] || fail "[$label] the generator emitted no .cpp at all"
 
       # Every .cpp the generator wrote, because that is what a module compiles.
-      resolved_symbols "$dir/at-$minor" "$minor" "$dir"/*.cpp
-      resolved_symbols "$dir/at-0"      0        "$dir"/*.cpp
+      resolved_symbols "$dir/at-$minor"  "$major" "$minor" "$dir"/*.cpp
+      resolved_symbols "$dir/at-0"       "$major" 0        "$dir"/*.cpp
+      # A hypothetical NEXT major. Nothing pins this to 1 in particular — it is
+      # simply "one past whatever we are on", which is the version where a
+      # MINOR-only guard breaks.
+      resolved_symbols "$dir/at-nextmaj" "$((major + 1))" 0 "$dir"/*.cpp
       n=$(wc -l < "$dir/at-$minor.txt" | tr -d ' ')
       n0=$(wc -l < "$dir/at-0.txt" | tr -d ' ')
 
@@ -141,6 +150,42 @@ pkgs.runCommand "${common.pname}-module-impl-abi-tests"
           || fail "[$label] protocol 0.$minor gates no export, yet the two resolutions differ"
       fi
       echo "  [$label] version probe: $n0 exports at MINOR=0, $n at MINOR=$minor"
+
+      # THE MAJOR PROBE. Every conditional surface here appeared at a MINOR, so
+      # the natural guard is `LOGOS_PROTOCOL_VERSION_MINOR >= N` — and that is
+      # wrong, because at the next MAJOR the MINOR resets to 0 and every such
+      # guard silently goes false.
+      #
+      # It is worth being precise about why that is worse than it sounds. It is
+      # not a link error and not a dlopen failure: the definitions and the calls
+      # that reach them are guarded the same way, so they vanish TOGETHER and
+      # everything still builds and loads. The only symptom is modules quietly
+      # losing teardown and grantability, with no diagnostic anywhere. Nothing
+      # else in this file would notice, because every other probe resolves at
+      # the CURRENT major.
+      #
+      # So: at one major up, the export set must be complete. This assertion
+      # fails against a MINOR-only guard and passes against a MAJOR-aware one,
+      # which is the whole reason it exists.
+      if ! cmp -s "$dir/at-nextmaj.txt" <(sort -u "$declared"); then
+        {
+          echo "FAIL: [$label] the export set is not complete at protocol $((major + 1)).0."
+          echo
+          echo "  DECLARED but NOT emitted once the MAJOR advances:"
+          comm -13 "$dir/at-nextmaj.txt" <(sort -u "$declared") | sed 's/^/      - /'
+          echo
+          echo "  This is a version guard testing LOGOS_PROTOCOL_VERSION_MINOR without"
+          echo "  LOGOS_PROTOCOL_VERSION_MAJOR. At $((major + 1)).0 the MINOR is 0, so the"
+          echo "  guard goes false and the surface disappears — silently, because the"
+          echo "  matching calls are guarded the same way and disappear with it."
+          echo
+          echo "  Emit the arithmetic expanded, not behind a macro (unifdef must be"
+          echo "  able to evaluate it):"
+          echo "    #if defined(LOGOS_PROTOCOL_VERSION_MINOR) && (LOGOS_PROTOCOL_VERSION_MAJOR > 0 || (LOGOS_PROTOCOL_VERSION_MAJOR == 0 && LOGOS_PROTOCOL_VERSION_MINOR >= N))"
+          echo "  In: $hint"
+        } >&2
+        exit 1
+      fi
 
       # The events sidecar is a second TU emitted next to the exports one. It
       # must carry no module-impl symbol of its own: two TUs defining the same
