@@ -956,3 +956,86 @@ TEST(LidlGenCdylib, TheEventsSidecarDoesNotDefineTheCallCallerExport)
     const QString events = lidlMakeEventsSourceCdylib(m, "DeliveryImpl", "delivery_impl.h");
     EXPECT_FALSE(events.contains("logos_module_set_call_caller")) << events.toStdString();
 }
+
+// ---------------------------------------------------------------------------
+// getMethods() publishes the CONTRACT vocabulary
+//
+// `returnType`, `parameters[].type` and `signature` used to be Qt type names,
+// which made a Qt-free cdylib module describe itself in the types of a language
+// it does not use — and answered three different LIDL types (`[uint]`,
+// `[bstr]`, `[any]`) with one word, QVariantList, so the listing could not be
+// read back. Every consumer of these fields (`lm`, logoscore's method listing,
+// basecamp's inspector) is showing a human what the module offers; the
+// dispatch paths key on QMetaObject types and never touch this JSON.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+TypeExpr arrOf(const TypeExpr& e) { return TypeExpr{ TypeExpr::Array, "", { e } }; }
+TypeExpr mapOf(const TypeExpr& v)
+{
+    return TypeExpr{ TypeExpr::Map, "", { prim("tstr"), v } };
+}
+TypeExpr optionalOf(const TypeExpr& e) { return TypeExpr{ TypeExpr::Optional, "", { e } }; }
+
+}  // namespace
+
+TEST(LidlGenCdylib, PublishedTypesAreTheLidlSpelling)
+{
+    ModuleDecl m = moduleWithMethod(method("echo_uints", arrOf(prim("uint")),
+                                           { param("v", arrOf(prim("uint"))) }));
+    const QString src = implExportsFor(m);
+    EXPECT_TRUE(src.contains("obj[\"returnType\"] = \"[uint]\"")) << src.toStdString();
+    EXPECT_TRUE(src.contains("obj[\"signature\"] = \"echo_uints([uint])\"")) << src.toStdString();
+    EXPECT_TRUE(src.contains("{\"type\", \"[uint]\"}")) << src.toStdString();
+    // The Qt vocabulary is GONE from the published surface.
+    EXPECT_FALSE(src.contains("\"QVariantList\"")) << src.toStdString();
+}
+
+// Three LIDL types that all used to publish as QVariantList now publish as
+// themselves. That distinction is the whole point: the listing is a contract.
+TEST(LidlGenCdylib, PublishedTypesDistinguishWhatQtCollapsed)
+{
+    const QString uints = implExportsFor(
+        moduleWithMethod(method("m", arrOf(prim("uint")), {})));
+    const QString blobs = implExportsFor(
+        moduleWithMethod(method("m", arrOf(prim("bstr")), {})));
+    const QString anys = implExportsFor(
+        moduleWithMethod(method("m", arrOf(prim("any")), {})));
+    EXPECT_TRUE(uints.contains("obj[\"returnType\"] = \"[uint]\""));
+    EXPECT_TRUE(blobs.contains("obj[\"returnType\"] = \"[bstr]\""));
+    EXPECT_TRUE(anys.contains("obj[\"returnType\"] = \"[any]\""));
+}
+
+// A record publishes its DECLARED NAME — what the contract calls it — not
+// QVariantMap. The historical objection was that these strings were read as
+// metatypes; nothing in the runtime does that any more.
+TEST(LidlGenCdylib, PublishedRecordTypesUseTheDeclaredName)
+{
+    ModuleDecl m = moduleWithMethod(
+        method("bounds", TypeExpr{ TypeExpr::Named, "Blob", {} },
+               { param("points", arrOf(TypeExpr{ TypeExpr::Named, "Blob", {} })) }));
+    TypeDecl t;
+    t.name = "Blob";
+    FieldDecl f;
+    f.name = "payload";
+    f.type = prim("bstr");
+    t.fields.push_back(f);
+    m.types.push_back(t);
+
+    const QString src = implExportsFor(m);
+    EXPECT_TRUE(src.contains("obj[\"returnType\"] = \"Blob\"")) << src.toStdString();
+    EXPECT_TRUE(src.contains("obj[\"signature\"] = \"bounds([Blob])\"")) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, PublishedTypesSpellMapsAndOptionals)
+{
+    const QString maps = implExportsFor(
+        moduleWithMethod(method("m", mapOf(prim("uint")), {})));
+    EXPECT_TRUE(maps.contains("obj[\"returnType\"] = \"{tstr: uint}\"")) << maps.toStdString();
+
+    const QString opts = implExportsFor(moduleWithMethod(
+        method("m", prim("bool"), { param("id", optionalOf(prim("tstr"))) })));
+    EXPECT_TRUE(opts.contains("obj[\"signature\"] = \"m(? tstr)\"")) << opts.toStdString();
+    EXPECT_TRUE(opts.contains("{\"type\", \"? tstr\"}")) << opts.toStdString();
+}

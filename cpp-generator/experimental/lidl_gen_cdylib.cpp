@@ -409,29 +409,37 @@ void emitRecordCodecs(QTextStream& s, const ModuleDecl& module,
     s << "}}  // namespace logos::detail\n\n";
 }
 
-// The Qt spelling of what actually crosses the Qt boundary.
+// The type name a method's PUBLISHED metadata carries — getMethods()'s
+// `returnType`, `parameters[].type` and `signature`.
 //
-// NOT lidlTypeToQt: that answers the CONSUMER's question ("what type does the
-// caller hold?") and since records became real structs it answers `Blob` /
-// `QList<Blob>`. Those names are correct in a generated consumer wrapper, where
-// the struct exists — but this JSON is the module's getMethods(), read by the
-// host to marshal a QVariant across the plugin boundary, and there is no
-// metatype called `Blob`. Emitting it made the host SIGSEGV on the first call
-// to any record method.
+// It is the LIDL CONTRACT spelling: `tstr`, `uint`, `[Point]`, `{tstr: uint}`,
+// `? tstr`. That is the only vocabulary in which this question has one right
+// answer. A module's published surface is its contract, and every consumer of
+// this JSON — `lm`, `logoscore`'s method listing, basecamp's module inspector —
+// is showing a human what the module offers. Answering in Qt names made a
+// Qt-free cdylib module describe itself in the types of a language it does not
+// use, and answered three different LIDL types (`[uint]`, `[bstr]`, `[any]`)
+// with one word, QVariantList, so the listing could not be read back.
 //
-// A record IS a variant map at that boundary; the struct only exists inside the
-// cdylib.
-QString lidlTypeToQtWire(const TypeExpr& te, const std::set<std::string>& recs)
+// NOT lidlTypeToQt, and no longer a near-copy of it. That function answers the
+// CONSUMER's question — "what C++ type does the caller hold?" — and its answers
+// are now typed C++ spellings (QList<qulonglong>, std::optional<QString>) that
+// are meaningless outside a generated wrapper.
+//
+// WHY THIS IS SAFE, checked rather than assumed. The historical objection was
+// that these strings are read as METATYPES: emitting a record's struct name
+// here once made the host SIGSEGV. Nothing in the current runtime does that.
+// The dispatch paths key on QMetaObject types instead — logos-plugin-qt's
+// QtProviderObject reads `method.returnMetaType()` / `parameterMetaType(i)` and
+// never touches this JSON — and every reader of these fields that remains
+// (logos-module's `lm`, logoscore's `output.cpp`, basecamp's CoreModuleManager,
+// the plain wire's json_mapping round-trip) treats them as opaque text.
+//
+// The `recs` parameter is gone with the Qt spelling: a record publishes its
+// declared NAME, which is what the contract calls it.
+QString lidlTypeToPublishedName(const TypeExpr& te)
 {
-    if (isRecord(te, recs))
-        return "QVariantMap";
-    if (te.kind == TypeExpr::Array && te.elements.size() == 1
-        && isRecord(te.elements[0], recs))
-        return "QVariantList";
-    if (te.kind == TypeExpr::Map && te.elements.size() == 2
-        && isRecord(te.elements[1], recs))
-        return "QVariantMap";
-    return lidlTypeToQt(te);
+    return lidlTypeToLidlText(te);
 }
 
 // True when any event parameter is spelled LogosMap / LogosList, so the sidecar
@@ -468,7 +476,6 @@ bool hasJsonEventParam(const ModuleDecl& module)
 
 void emitInterfaceJson(QTextStream& s, const ModuleDecl& module)
 {
-    const std::set<std::string> recs = recordNames(module);
     s << "static nlohmann::json lidlInterfaceJson()\n{\n";
     s << "    nlohmann::json methods = nlohmann::json::array();\n";
     for (const MethodDecl& md : module.methods) {
@@ -481,17 +488,17 @@ void emitInterfaceJson(QTextStream& s, const ModuleDecl& module)
         }
         QString sig = qs(md.name) + "(";
         for (int i = 0; i < md.params.size(); ++i) {
-            sig += lidlTypeToQtWire(md.params[i].type, recs);
+            sig += lidlTypeToPublishedName(md.params[i].type);
             if (i + 1 < md.params.size()) sig += ",";
         }
         sig += ")";
         s << "        obj[\"signature\"] = \"" << sig << "\";\n";
-        s << "        obj[\"returnType\"] = \"" << lidlTypeToQtWire(md.returnType, recs) << "\";\n";
+        s << "        obj[\"returnType\"] = \"" << lidlTypeToPublishedName(md.returnType) << "\";\n";
         s << "        obj[\"isInvokable\"] = true;\n";
         if (!md.params.empty()) {
             s << "        nlohmann::json params = nlohmann::json::array();\n";
             for (const ParamDecl& pd : md.params) {
-                s << "        params.push_back({{\"type\", \"" << lidlTypeToQtWire(pd.type, recs)
+                s << "        params.push_back({{\"type\", \"" << lidlTypeToPublishedName(pd.type)
                   << "\"}, {\"name\", \"" << pd.name << "\"}});\n";
             }
             s << "        obj[\"parameters\"] = params;\n";
@@ -509,7 +516,7 @@ void emitInterfaceJson(QTextStream& s, const ModuleDecl& module)
         }
         QString sig = qs(ed.name) + "(";
         for (int i = 0; i < ed.params.size(); ++i) {
-            sig += lidlTypeToQtWire(ed.params[i].type, recs);
+            sig += lidlTypeToPublishedName(ed.params[i].type);
             if (i + 1 < ed.params.size()) sig += ",";
         }
         sig += ")";
@@ -517,7 +524,7 @@ void emitInterfaceJson(QTextStream& s, const ModuleDecl& module)
         if (!ed.params.empty()) {
             s << "        nlohmann::json params = nlohmann::json::array();\n";
             for (const ParamDecl& pd : ed.params) {
-                s << "        params.push_back({{\"type\", \"" << lidlTypeToQtWire(pd.type, recs)
+                s << "        params.push_back({{\"type\", \"" << lidlTypeToPublishedName(pd.type)
                   << "\"}, {\"name\", \"" << pd.name << "\"}});\n";
             }
             s << "        obj[\"parameters\"] = params;\n";
