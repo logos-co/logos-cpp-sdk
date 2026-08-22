@@ -318,9 +318,15 @@ honest.
 
 Both `foo(…, &err)` and `fooAsyncResult` on this surface also fold a provider
 **rejection** into the error, matching the Qt path: a provider that ran and
-refused answers `{"code": "dispatch_failed", …}` as its *result*, which the
-return decode would otherwise erase into a default value. `fooAsync` still
+refused answers `{"code": …, "message": …, "origin": …}` as its *result*, which
+the return decode would otherwise erase into a default value. `fooAsync` still
 cannot report it — its callback has nowhere to put it.
+
+`code` is matched against a closed set — `dispatch_failed`, `invalid_args`,
+`unknown_method` — held in one place (`kRejectionCodes`, `generator_lib.cpp`)
+so the Qt and Qt-free emitters cannot drift. Anything else stays a value: a
+method may legitimately return a three-string map, and matching the shape alone
+would let user data impersonate a refusal.
 
 ### Universal modules: LogosModuleContext
 

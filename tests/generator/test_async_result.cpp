@@ -271,6 +271,46 @@ TEST(AsyncResult, LpDispatchRejectionDetectorIsEmittedOnceAndGuarded)
     EXPECT_TRUE(src.contains("#define LOGOS_GENERATED_DISPATCH_REJECTION_JSON"));
 }
 
+// The two emitters in this repo (this nlohmann one and the QVariant one in
+// test_make_source.cpp) are driven by ONE kRejectionCodes array in
+// generator_lib.cpp, so they cannot drift. These assert the array reached the
+// emitted text on this side too.
+TEST(AsyncResult, LpDispatchRejectionDetectorMatchesTheClosedCodeSet)
+{
+    const QString src = lpSource();
+    EXPECT_TRUE(src.contains(
+        "    if (_code != \"dispatch_failed\"\n"
+        "        && _code != \"invalid_args\"\n"
+        "        && _code != \"unknown_method\") return false;\n"))
+        << src.toStdString();
+    // "invalid_args" is the code that was LIVE and undetected: the cdylib
+    // dispatch (experimental/lidl_gen_cdylib.cpp) and logos-rust-sdk's
+    // args::invalid_args both answer an arity error with it, and a consumer
+    // decoded it as a three-key map. "unknown_method" is inert until providers
+    // emit it; it is here so the detector is ready before they do.
+}
+
+TEST(AsyncResult, LpDispatchRejectionDetectorMatchesNoOtherCode)
+{
+    // The negatives, at the only level this text-emitting generator can pin
+    // them: the guards that make an unrecognised code, a 2- or 4-key object and
+    // a non-string value all stay DATA must still be there. Widening the code
+    // literal into a set must not have loosened the SHAPE.
+    const QString src = lpSource();
+    const int begin = src.indexOf("bool logosDispatchRejectionJson(");
+    ASSERT_NE(begin, -1);
+    const QString body = src.mid(begin, src.indexOf("} // namespace", begin) - begin);
+    EXPECT_TRUE(body.contains("if (!v.is_object() || v.size() != 3) return false;"));
+    EXPECT_TRUE(body.contains(
+        "if (code == v.end() || message == v.end() || origin == v.end()) return false;"));
+    EXPECT_TRUE(body.contains(
+        "if (!code->is_string() || !message->is_string() || !origin->is_string()) return false;"));
+    // Exactly three comparisons, one per code — not a prefix test, not a
+    // "has a code key" shortcut.
+    EXPECT_EQ(body.count("_code != \""), 3) << body.toStdString();
+    EXPECT_LT(body.indexOf("_code != \"unknown_method\""), body.indexOf("return true;"));
+}
+
 TEST(AsyncResult, LpContractWithNoInvokableMethodEmitsNoDetector)
 {
     // The detector is only reachable from a method body; emitting it anyway is
