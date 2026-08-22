@@ -632,6 +632,10 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "#include \"logos_protocol.h\"\n";
     s << "#include \"logos_module_context.h\"\n";
     s << "#include \"logos_result.h\"\n";
+    // The caller-of-a-dispatch reader. Unconditional: it is a logos-cpp-sdk
+    // header with no protocol dependency of its own, so it costs nothing on an
+    // older protocol where the export below is not emitted.
+    s << "#include \"logos_caller.h\"\n";
     s << "#include <nlohmann/json.hpp>\n";
     s << "#include <cstdlib>\n";
     s << "#include <cstring>\n";
@@ -963,6 +967,41 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    });\n";
     s << "    return _logos_codegen_::maybeAboutToUnload(lidlImpl())\n";
     s << "               == LogosShutdown::Asynchronous ? 1 : 0;\n";
+    s << "}\n";
+    s << "#endif\n\n";
+
+    // THE CALLER OF A DISPATCH (protocol 0.6). The glue wraps one
+    // logos_module_dispatch in one push/pop pair on the dispatching thread; a
+    // non-NULL argument pushes, NULL pops the innermost.
+    //
+    // WHY THIS CROSSES THE C ABI AT ALL, since a thread_local the host set
+    // would be so much simpler. It would not be the same object. Measured with
+    // nm on built binaries rather than assumed, on both object formats: the
+    // host image and the module plugin EACH define
+    // ModuleProxy::callRemoteMethod and TokenManager::instance; the
+    // function-local static behind the latter is a LOCAL bss symbol in each,
+    // at a different address; and neither image holds an undefined reference
+    // to the other's copy. The Mach-O plugin is MH_NOUNDEFS | MH_TWOLEVEL. So
+    // the identity has to be handed over explicitly, exactly as the trust-root
+    // grant above is. cpp/logos_caller.h carries the full measurement.
+    //
+    // Guarded MAJOR-aware, not on the MINOR alone. At 1.0 the MINOR resets to
+    // 0 and a `MINOR >= 6` guard would go false, taking the definition and the
+    // generated call away TOGETHER — everything would still build and load,
+    // and modules would just silently stop being able to name their caller.
+    // checks.module-impl-abi resolves this text at one MAJOR up for that
+    // reason. Written expanded rather than behind a function-like macro
+    // because unifdef has to be able to evaluate it.
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && "
+         "LOGOS_PROTOCOL_VERSION_MINOR >= 6))\n";
+    s << "void logos_module_set_call_caller(const char* caller_json)\n{\n";
+    // One line, deliberately. Parsing the document, the per-thread stack and
+    // the nesting rule all live in cpp/logos_caller.h where a unit test can
+    // reach them BY VALUE; logic that lives in emitted text is logic no test
+    // ever executes, only greps.
+    s << "    logos::detail::setCallCaller(caller_json);\n";
     s << "}\n";
     s << "#endif\n\n";
 

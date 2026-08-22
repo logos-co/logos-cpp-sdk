@@ -849,3 +849,110 @@ TEST(LidlGenCdylib, TeardownGoesThroughTheSfinaeHelpersNotTheImplDirectly)
         << src.toStdString();
     EXPECT_FALSE(src.contains("lidlImpl().aboutToUnload(")) << src.toStdString();
 }
+
+// ── The caller of a dispatch (protocol 0.6) ────────────────────────────────
+//
+// logos_module_set_call_caller() carries WHO is calling into the module image
+// for the duration of one dispatch. It has to cross the C ABI rather than being
+// a thread_local the host sets, for the same measured reason the grant does:
+// the host binary and the module plugin each link their own logos-protocol, so
+// each has its own copy of the object a naive implementation would write.
+//
+// These land BEFORE the protocol bump that declares the symbol. At the current
+// pin the guard below is false and nothing is emitted — the assertions here are
+// on the emitter's TEXT, which is exactly the thing that is version-independent.
+
+TEST(LidlGenCdylib, EmitsTheCallCallerExport)
+{
+    ModuleDecl m;
+    m.name = "weather_module";
+    m.version = "1.0.0";
+    const QString src = lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+
+    EXPECT_TRUE(src.contains("void logos_module_set_call_caller(const char* caller_json)"))
+        << src.toStdString();
+}
+
+TEST(LidlGenCdylib, CallCallerEmissionIsGuardedOnTheProtocolThatCarriesIt)
+{
+    // 0.6. Unguarded emission is a hard compile error against an older
+    // logos-protocol, in generated code the author never wrote — which is what
+    // happened at 0.3 and again at 0.5 before those guards existed.
+    ModuleDecl m;
+    m.name = "weather_module";
+    const QString src = lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+
+    EXPECT_TRUE(src.contains("LOGOS_PROTOCOL_VERSION_MINOR >= 6")) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, TheCallCallerGuardIsMajorAwareNotMinorOnly)
+{
+    // A MINOR-only guard goes FALSE at 1.0, because the MINOR resets to 0 —
+    // and does so silently, since the generated call is guarded the same way
+    // and vanishes with the definition. Nothing links wrong and nothing fails
+    // to load; modules just quietly stop being able to name their caller.
+    //
+    // checks.module-impl-abi's next-MAJOR probe is the other half of this;
+    // this test is the one that names the surface.
+    ModuleDecl m;
+    m.name = "weather_module";
+    const QString src = lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+
+    const int guard = src.indexOf("LOGOS_PROTOCOL_VERSION_MINOR >= 6");
+    ASSERT_GE(guard, 0) << src.toStdString();
+
+    // The whole conditional, spelled with the arithmetic expanded. Expanded and
+    // not behind a function-like macro because unifdef has to evaluate it: the
+    // ABI check resolves this text with -D flags and treats an expression it
+    // cannot evaluate as "not conditional at all".
+    EXPECT_TRUE(src.contains(
+        "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && "
+        "(LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+        "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && "
+        "LOGOS_PROTOCOL_VERSION_MINOR >= 6))\n")) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, TheCallCallerExportDelegatesToTheSdkHeaderNotInlineLogic)
+{
+    // The body is one call into cpp/logos_caller.h. Parsing, the per-thread
+    // stack and the nesting rule live there, where tests/sdk/test_logos_caller
+    // .cpp can reach them by VALUE — generated text can only ever be asserted
+    // on as strings, so any logic that lives here is logic nothing executes.
+    ModuleDecl m;
+    m.name = "weather_module";
+    const QString src = lidlMakeModuleImplExports(m, "SomeImpl", "some_impl.h");
+
+    EXPECT_TRUE(src.contains("logos::detail::setCallCaller(caller_json)")) << src.toStdString();
+    EXPECT_TRUE(src.contains("#include \"logos_caller.h\"")) << src.toStdString();
+    // No hand-rolled parse in emitted text.
+    EXPECT_FALSE(src.contains("\"kind\"")) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, TheCallCallerExportIsEmittedForEveryModuleNotJustOnesWithMethods)
+{
+    // The module-impl exports are a FIXED surface, not something accumulated
+    // per method — the shape most likely to lose a symbol to an emitter that
+    // writes only what it thinks it needs. checks.module-impl-abi asserts the
+    // same thing on the zero-method fixture; this says it at the unit level.
+    ModuleDecl empty;
+    empty.name = "empty_module";
+    const QString src = lidlMakeModuleImplExports(empty, "EmptyImpl", "empty_impl.h");
+
+    EXPECT_TRUE(src.contains("void logos_module_set_call_caller(")) << src.toStdString();
+}
+
+TEST(LidlGenCdylib, TheEventsSidecarDoesNotDefineTheCallCallerExport)
+{
+    // Two TUs defining one export is a duplicate-symbol link error, and the
+    // ABI check's own sidecar probe is currently vacuous (it passes its file
+    // in the argument slot that resolved_symbols shifts away), so this is the
+    // live assertion that the symbol lives in the exports TU alone.
+    ModuleDecl m;
+    m.name = "delivery_module";
+    EventDecl e;
+    e.name = "blobStored";
+    m.events.push_back(e);
+
+    const QString events = lidlMakeEventsSourceCdylib(m, "DeliveryImpl", "delivery_impl.h");
+    EXPECT_FALSE(events.contains("logos_module_set_call_caller")) << events.toStdString();
+}
