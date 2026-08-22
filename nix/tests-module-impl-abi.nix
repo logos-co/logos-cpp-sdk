@@ -201,7 +201,15 @@ pkgs.runCommand "${common.pname}-module-impl-abi-tests"
       # would still be found by the diff above, so only this says where it lives.
       for ev in "$dir"/*_events_cdylib.cpp; do
         [ -e "$ev" ] || continue
-        resolved_symbols "$dir/events" "$minor" "$ev"
+        # Both the MAJOR and the MINOR, and the file AFTER them. When
+        # resolved_symbols gained its `major` parameter this call site kept the
+        # old two-argument shape, so "$ev" was consumed as the MINOR and
+        # `shift 3` left NO file to scan: the loop below ran over nothing,
+        # events.txt came out empty, and the probe reported success without
+        # having looked at the sidecar at all. Verified by planting a
+        # logos_module_* definition in the events emitter — the check stayed
+        # green.
+        resolved_symbols "$dir/events" "$major" "$minor" "$ev"
         [ ! -s "$dir/events.txt" ] \
           || { cat "$dir/events.txt" >&2
                fail "[$label] the events sidecar defines module-impl exports (above)"; }
