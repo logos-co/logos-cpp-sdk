@@ -167,7 +167,15 @@ pkgs.runCommand "${common.pname}-module-impl-abi-tests"
       # So: at one major up, the export set must be complete. This assertion
       # fails against a MINOR-only guard and passes against a MAJOR-aware one,
       # which is the whole reason it exists.
-      if ! cmp -s "$dir/at-nextmaj.txt" <(sort -u "$declared"); then
+      # SUBSET, not equality. The property is "everything DECLARED is still
+      # emitted once the major advances" — an emitter that defines MORE than the
+      # protocol currently declares is not a failure, it is how a backend lands
+      # a new export BEFORE the protocol bump that declares it reaches this
+      # repo's lock. Requiring equality forbids that ordering, and forbids it
+      # with an empty diff under a heading blaming MAJOR-awareness, because the
+      # message below already computes the subset direction. Guard and
+      # diagnostic have to agree or the failure teaches the wrong lesson.
+      if [ -n "$(comm -13 "$dir/at-nextmaj.txt" <(sort -u "$declared"))" ]; then
         {
           echo "FAIL: [$label] the export set is not complete at protocol $((major + 1)).0."
           echo
