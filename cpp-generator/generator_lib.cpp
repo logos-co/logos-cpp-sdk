@@ -101,9 +101,47 @@ QString normalizeType(QString t)
     return t;
 }
 
+// ─── The widened-Qt-spelling fold ────────────────────────────────────────
+//
+// `lidlTypeToQt` now answers `[uint]` with QList<qulonglong>, `{tstr: uint}`
+// with QMap<QString, qulonglong> and `?tstr` with std::optional<QString> — the
+// lossless spellings a Qt CONSUMER wants. This emitter cannot use them, and the
+// reason is structural rather than a matter of taste:
+//
+//   * It is keyed on a FLAT TYPE NAME, not a TypeExpr. `lidl_to_json` flattens
+//     the contract to strings before it gets here, because the same emitter
+//     also serves the metaobject-introspection path, which has only names to
+//     offer. Encoding `QList<QMap<QString, qulonglong>>` correctly needs an
+//     element loop per level, and deriving those levels here means parsing C++
+//     type names back into a tree — a second, worse frontend.
+//   * Its Qt flavour marshals whole QVariants through LogosAPIClient, and its
+//     lp flavour is derived from the same table by mapParamTypeStd below. A
+//     widened name reaching either without a loop is silent data loss:
+//     qvariantToNlohmann matches a CLOSED userType() set, so a
+//     QList<qulonglong> serialises to null, and qvariant_cast back yields an
+//     EMPTY list. Neither direction warns.
+//
+// So every widened spelling is folded back to the name this emitter already
+// produced for that contract, and BOTH surfaces it feeds — the legacy Qt
+// consumer and the Qt-free lp one — stay byte-for-byte what they were. This is
+// deliberately a freeze, not a fix: the TypeExpr-driven Qt emitters
+// (lidl_gen_client.cpp here, lidl_gen_qt_consumer.cpp in logos-qt-sdk) are
+// where the widened types are actually spent.
+//
+// Record-bearing names never reach this: paramTypeFor / returnTypeFor consult
+// recordCppType FIRST, and `QList<Point>` / `QMap<QString, Point>` are matched
+// there. What arrives here is only what recordShape declined.
+static QString legacyQtBase(const QString& t)
+{
+    if (t.startsWith("QList<"))          return QStringLiteral("QVariantList");
+    if (t.startsWith("QMap<QString,"))   return QStringLiteral("QVariantMap");
+    if (t.startsWith("std::optional<"))  return QStringLiteral("QVariant");
+    return t;
+}
+
 QString mapParamType(const QString& qtType)
 {
-    const QString base = normalizeType(qtType);
+    const QString base = legacyQtBase(normalizeType(qtType));
     static const QSet<QString> known = {
         "void","bool","int","qlonglong","qulonglong","double","float","QString","QStringList","QByteArray","QJsonArray","QVariantList","QVariantMap","QVariant"
     };
@@ -114,7 +152,7 @@ QString mapParamType(const QString& qtType)
 
 QString mapReturnType(const QString& qtType)
 {
-    const QString base = normalizeType(qtType);
+    const QString base = legacyQtBase(normalizeType(qtType));
     if (base.isEmpty() || base == "void") return QString("void");
     static const QSet<QString> known = {
         "bool","int","qlonglong","qulonglong","double","float","QString","QStringList","QByteArray","QJsonArray","QVariantList","QVariantMap","QVariant","LogosResult"

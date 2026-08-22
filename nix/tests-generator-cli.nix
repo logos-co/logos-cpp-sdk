@@ -148,6 +148,43 @@ pkgs.runCommand "${common.pname}-generator-cli-tests"
     grep -q "asserted" anon.err       || { cat anon.err >&2; fail "the anonymous-origin refusal does not explain itself"; }
     echo "OK: --binding origin refuses a module that cannot name itself"
 
+    # ── --events-from names the CONTRACT, and a missing one is refused ────
+    #
+    # On the plugin path the wrapper's typed methods, records and event
+    # accessors all come out of the file this flag names. Shrugging off a
+    # missing one and introspecting instead would emit a wrapper that compiles
+    # and has lost every type — the same silently-empty shape
+    # generate-module-headers.sh exists to refuse, one layer down.
+    #
+    # No plugin is needed to assert it: the contract is loaded BEFORE the
+    # plugin is opened, so a missing sidecar is reported even for a plugin path
+    # that does not exist. The control below is what makes that meaningful —
+    # with a readable contract the SAME command gets as far as the plugin and
+    # fails on the plugin instead.
+    printf 'module cli_probe_module {\n  version "1.0.0"\n  method ping() -> tstr\n}\n' > probe.lidl
+
+    set +e
+    logos-cpp-generator ./nonexistent_plugin.dylib --module-only --api-style lp \
+      --events-from ./nonexistent.lidl --output-dir ./gen-nosidecar \
+      >nosidecar.out 2>nosidecar.err
+    status=$?
+    set -e
+    [ "$status" -ne 0 ] || fail "--events-from accepted a contract that does not exist"
+    grep -q -- '--events-from names a contract that does not exist' nosidecar.err \
+      || { cat nosidecar.err >&2; fail "a missing contract failed without saying why"; }
+    echo "OK: --events-from refuses a contract that does not exist"
+
+    set +e
+    logos-cpp-generator ./nonexistent_plugin.dylib --module-only --api-style lp \
+      --events-from ./probe.lidl --output-dir ./gen-sidecar \
+      >sidecar.out 2>sidecar.err
+    status=$?
+    set -e
+    [ "$status" -ne 0 ] || fail "control: a nonexistent plugin exited 0"
+    grep -q 'Plugin file does not exist' sidecar.err \
+      || { cat sidecar.err >&2; fail "control: a READABLE contract did not get as far as the plugin"; }
+    echo "OK: control — a readable contract is accepted and the run reaches the plugin"
+
     mkdir -p "$out"
     echo "logos-cpp-generator CLI argument-surface tests passed" > "$out/result.txt"
   ''

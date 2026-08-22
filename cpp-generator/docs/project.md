@@ -169,7 +169,7 @@ Read the array through `dependencyNames()` (`metadata_dependencies.h`) rather th
 
 - `enum class ApiStyle { Qt, Lp }` — passed to every wrapper-emitting function.
 - File-local `mapParamTypeStd` / `mapReturnTypeStd` — the std-side type-mapping table the `lp` surface exposes. Hidden from `generator_lib.h` (not part of the public surface).
-- `makeHeader(moduleName, className, methods, apiStyle, events)` / `makeSource(moduleName, className, headerBaseName, methods, apiStyle, events)` — single entry points that branch on `apiStyle` internally to emit the right include block, signature shape, and conversion bridges. `events` is loaded from a `<name>.lidl` sidecar via `--events-from`; when non-empty, the wrapper also gets one typed `on<EventName>(callback)` adapter per declared event (callback arg types follow `apiStyle`).
+- `makeHeader(moduleName, className, methods, apiStyle, events)` / `makeSource(moduleName, className, headerBaseName, methods, apiStyle, events)` — single entry points that branch on `apiStyle` internally to emit the right include block, signature shape, and conversion bridges. `methods`, `events` and `records` all come from the same `<name>.lidl` contract when the module ships one (loaded via `--events-from`); only a module with no contract is described by its plugin's `QMetaObject`. A non-empty `events` also gives the wrapper one typed `on<EventName>(callback)` adapter per declared event (callback arg types follow `apiStyle`).
 - `makeUmbrellaHeaderFromDeps(deps, interfaceNames, apiStyle, originName, binding)` / `makeUmbrellaSourceFromDeps(deps, interfaceNames)` — the `logos_sdk.{h,cpp}` aggregate above. `binding` is the `UmbrellaBinding` from `--binding api|origin`: `FromApi` emits the `LogosModules(LogosAPI*)` constructor, `ExplicitOrigin` emits a default-constructible umbrella that names `originName` as the call origin and mentions no `LogosAPI` at all. They return the text; `main.cpp`'s `runUmbrellaMode` writes it. That split is what lets the aggregate be asserted on directly, without a filesystem.
 
 Flag plumbing:
@@ -255,9 +255,9 @@ module build. `--general-only` is an exact alias for `--umbrella` (it is what
 `LogosModule.cmake`, `buildPlugin.nix` and `buildHeaders.nix` pass today), and
 both route to the one implementation in `main.cpp`.
 
-### Consumer wrapper with typed event accessors
+### Consumer wrapper from the module's contract
 
-The `--events-from <path>` flag points the `<plugin>.dylib` plugin-introspection codegen at a LIDL sidecar shipped alongside the dep's pre-built headers. When set, the generated `<name>_api.{h,cpp}` gains one typed `on<EventName>(callback)` accessor per declared event (callback arg types match `--api-style`):
+The `--events-from <path>` flag points the `<plugin>.dylib` plugin-introspection codegen at the LIDL sidecar shipped alongside the dep's pre-built headers. The flag keeps its historical name, but the file it names is the module's whole **contract**, and everything the wrapper is generated from comes out of it: the typed methods, the typed `on<EventName>(callback)` accessors, and the record structs. Callback and signature types match `--api-style`.
 
 ```bash
 logos-cpp-generator /path/to/plugin.dylib \
@@ -265,6 +265,16 @@ logos-cpp-generator /path/to/plugin.dylib \
     --events-from /path/to/dep/share/logos/my_module.lidl \
     --output-dir ./generated
 ```
+
+**Contract-first, exactly like the Qt surface.** A module that ships a contract is described by it; only a module that ships none (a handcrafted Qt plugin) is described by its compiled plugin's `QMetaObject`. Both paths end in the same `makeHeader` / `makeSource`, and with a contract this path emits the same wrapper as `--general-only --dep <name>=<name>.lidl` — the path `buildHeaders.nix` already takes under cross-compilation.
+
+The methods used to come from the plugin's published `getMethods()`, and that was a defect rather than a simplification. `generator_lib` is keyed on flat type NAMES with a QVariant fallback (`mapParamType` / `mapReturnType`), so a module whose metadata is spelled in a vocabulary this emitter does not recognise silently produced a wrapper of `QVariant` / `LogosMap` with no diagnostic anywhere. It was measured: when the cdylib backend began publishing the LIDL contract vocabulary (`tstr`, `[uint]`, `? tstr`) instead of Qt type names, every `interface: "universal"` module's lp wrapper collapsed to `LogosMap`. Teaching the reader a second vocabulary is not a fix — `int` is a 32-bit Qt int in one table and a 64-bit LIDL integer in the other, so a merged table mistypes every integer and the reader cannot tell from the string which one it is holding.
+
+Two consequences worth knowing:
+
+- **A named-but-missing sidecar is refused** (exit 2), as is an unreadable or malformed one (exit 4). Falling back to introspection would emit a wrapper that compiles and is wrong in a way nothing downstream can see.
+- **A LIDL-spelled listing with no contract is refused** (exit 7). Only a hand-run invocation can reach that combination — `buildHeaders.nix` always passes the flag when the sidecar exists — and it is the shape this section used to suggest. The check keys on the LIDL primitives Qt has no word for (`tstr`, `bstr`, `uint`, `float64`, `result`, `any`) plus anything starting `[`, `{` or `?`, so it cannot false-fire on a Qt name; the words the two vocabularies share (`int`, `bool`) are in the known table and never reach the fallback.
+- **The plugin is still loaded**, so the dlopen check (exit 3 on an SDK/ABI skew) is unchanged, and the two method NAME sets are compared. A divergence — a stale sidecar — is reported on stderr as a `Note:`; the wrapper follows the contract. Only `isInvokable` entries are compared, because a cdylib publishes its events into the same array.
 
 In Nix builds this is wired automatically: `buildHeaders.nix` looks for `<pluginLib>/share/logos/<name>.lidl` (which `buildPlugin.nix`'s installPhase placed there) and threads it through.
 

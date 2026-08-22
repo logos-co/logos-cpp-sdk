@@ -436,21 +436,26 @@ TEST(LidlGenClient, BothOptionalSpellingsEmitIdenticalCode)
     EXPECT_EQ(flagged, typed) << flagged.toStdString() << "\n---\n" << typed.toStdString();
 }
 
-TEST(LidlGenClient, OptionalRecordFieldIsTwoStateQVariant)
+TEST(LidlGenClient, OptionalRecordFieldKeepsItsValueType)
 {
     const QString h = lidlMakeHeader(makeOptionalRecordModule(true), BindMode::Bound);
 
-    // QVariant, because Qt has no optional and an invalid QVariant is its one
-    // empty inhabitant.
-    EXPECT_TRUE(h.contains("QVariant nickname{};")) << h.toStdString();
+    // std::optional<QString>, not a bare QVariant. The field is still TWO-state
+    // — std::nullopt is C++'s single empty inhabitant — but the consumer can
+    // now see that the value is a string, which is what the std surface next
+    // door has always told it.
+    EXPECT_TRUE(h.contains("std::optional<QString> nickname{};")) << h.toStdString();
     EXPECT_TRUE(h.contains("QString required{};")) << h.toStdString();
+    EXPECT_TRUE(h.contains("#include <optional>")) << h.toStdString();
     // A record field is a NAMED slot: empty omits the key rather than writing an
-    // invalid QVariant into the map.
-    EXPECT_TRUE(h.contains("if (v.nickname.isValid())")) << h.toStdString();
-    // Absent and null both arrive as an invalid QVariant. Converting (the
+    // empty value into the map.
+    EXPECT_TRUE(h.contains("if (v.nickname.has_value())")) << h.toStdString();
+    // Absent and null both arrive as an invalid QVariant, and the optional
+    // decode turns exactly that into nullopt. A bare conversion (the
     // `.toString()` a required tstr field gets) would have turned "empty" into
     // "", which is a VALUE.
-    EXPECT_TRUE(h.contains("__out.nickname = __m.value(\"nickname\");")) << h.toStdString();
+    EXPECT_TRUE(h.contains("if (!__s.isValid() || __s.isNull()) return std::optional<QString>();"))
+        << h.toStdString();
     EXPECT_FALSE(h.contains("__out.nickname = __m.value(\"nickname\").toString();"))
         << h.toStdString();
 }
