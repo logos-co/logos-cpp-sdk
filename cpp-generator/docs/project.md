@@ -347,7 +347,7 @@ Fixture files in `tests/experimental/fixtures/`:
   two answers. `?bstr` is unaffected either way: the tag lives in the value, not the slot.
 - **A provider REJECTION reaches `…Async`'s callback only as a log line** (but
   `…AsyncResult`'s callback gets it properly). A provider that refuses a call answers the
-  canonical `{"code":"dispatch_failed", "message":…, "origin":…}` object as its RESULT, not
+  canonical `{"code":…, "message":…, "origin":…}` object as its RESULT, not
   as a transport error, and the Qt return table would convert it like any other value —
   erasing it (`_result.toList()` on that map is `[]`). The Qt consumer emitter therefore
   detects it (`logosDispatchRejection`, emitted once per wrapper) and folds it into the
@@ -355,7 +355,20 @@ Fixture files in `tests/experimental/fixtures/`:
   - **sync** — the `logos::CallError*` out-parameter, so `mod.echoUintList(v, &err)` can
     tell a rejection from an empty return;
   - **`…AsyncResult`** — `logos::AsyncResult<T>::error`, so `r.ok()` is false and
-    `r.error.code == "dispatch_failed"` exactly as on the sync path.
+    `r.error.code` carries the provider's code exactly as on the sync path.
+
+  `code` is matched against a **closed set** — `kRejectionCodes` in `generator_lib.cpp`,
+  the single source of truth both emitters build their condition from:
+  `dispatch_failed` (the provider refused the argument VALUES), `invalid_args` (wrong
+  argument COUNT) and `unknown_method`. It was the single literal `dispatch_failed` until
+  the arity code was found to be live and undetected — `experimental/lidl_gen_cdylib.cpp`
+  and logos-rust-sdk's `args::invalid_args` have both emitted `invalid_args` all along,
+  so a missing argument reached a typed consumer as a *successful* call returning a
+  three-key map. `unknown_method` is in the set before any provider emits it: widening a
+  detector is backwards-compatible on its own, whereas a new provider code shipped against
+  narrow detectors would arrive as data. The set stays CLOSED — a method may legitimately
+  return a three-string map, so matching the shape alone would let user data impersonate a
+  refusal.
 
   The historical **`…Async`** overload is the one exception: its callback is
   `std::function<void(T)>`, and adding an error parameter would change a generated public
