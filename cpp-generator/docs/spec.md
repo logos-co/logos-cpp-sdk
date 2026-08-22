@@ -288,7 +288,7 @@ logos_events:                                     // expands to `public:`; recog
    }
    ```
 
-   `buildPlugin.nix` ships this at `$out/share/logos/<name>.lidl`. `buildHeaders.nix` passes it to the consumer-side codegen via `--events-from`, which adds typed `on<EventName>(callback)` accessors to the generated `<Module>` wrapper (one per declared event, callback-arg types respect `--api-style`).
+   `buildPlugin.nix` ships this at `$out/share/logos/<name>.lidl`. `buildHeaders.nix` passes it to the consumer-side codegen via `--events-from`, and it is the whole CONTRACT, not only the events: the generated `<Module>` wrapper takes its typed methods, its record structs and its typed `on<EventName>(callback)` accessors from this one file (callback-arg and signature types respect `--api-style`). Only a module that ships no contract is described instead by its compiled plugin's `QMetaObject`.
 
 Module metadata (name, version, description, dependencies) still comes from `metadata.json`, not from the header.
 

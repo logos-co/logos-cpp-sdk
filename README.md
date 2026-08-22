@@ -227,6 +227,22 @@ so the two run the same single implementation.
 **Plugin path (`logos-cpp-generator /path/to/plugin.dylib`), with or without `--module-only`:**
 - `<module>_api.h` and `<module>_api.cpp` — the wrapper for that one plugin, and
   nothing else
+- **`--events-from <path/to/<name>.lidl>`** names the module's CONTRACT (the
+  sidecar `buildPlugin.nix` installs at `$out/share/logos/<name>.lidl`). The
+  flag keeps its historical name, but the wrapper's typed methods, record
+  structs and typed `on<EventName>(callback)` accessors all come out of that
+  one file. The plugin is still loaded — that is the dlopen check — but its
+  published `getMethods()` is a human-facing DESCRIPTION, not a type source:
+  this emitter is keyed on flat type names with a `QVariant` fallback, so a
+  metadata vocabulary it does not recognise silently produced an untyped
+  wrapper. A named-but-missing sidecar is refused rather than fallen back from
+- Without `--events-from`, the wrapper comes from the plugin's `QMetaObject`.
+  That is the handcrafted-Qt-module path, where no contract exists — but if the
+  plugin's listing is spelled in the **LIDL** vocabulary (`tstr`, `[uint]`,
+  `? tstr`, a record's declared name), the generator **refuses** (exit 7) and
+  names the contract to pass, rather than emitting a wrapper of `QVariant` /
+  `LogosMap`. Nix builds pass the flag for you; a hand-run invocation has to
+  say it
 
 **With `--umbrella` / `--general-only`:**
 - `logos_sdk.h` and `logos_sdk.cpp` — the umbrella that aggregates the wrappers
