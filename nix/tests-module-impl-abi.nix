@@ -111,6 +111,30 @@ pkgs.runCommand "${common.pname}-module-impl-abi-tests"
       set -o pipefail
     }
 
+    # ── WHICH DECLARED EXPORTS ARE LOST WHEN THE MAJOR ADVANCES ──────────────
+    #
+    # Declared, ABSENT at one major up, and PRESENT at the current protocol.
+    # All three conjuncts matter; the third is the one that was missing.
+    #
+    # "Declared minus at-nextmaj" alone also contains every export the backend
+    # does not define AT ALL, and for those the MAJOR message below is simply
+    # false — there is no MINOR-only guard to make MAJOR-aware, and it sends the
+    # reader to expand arithmetic in code that does not exist. That failure has
+    # its own check, logos-module-impl-diff, which names it correctly; it just
+    # never got to run, because this probe fired first and exited.
+    #
+    # Intersecting with at-$minor is what splits the two: a symbol defined now
+    # and gone at the next major is a version-guard bug and lands here; a symbol
+    # defined at neither is not this probe's business and falls through to the
+    # diff. Both faults are still caught in one run — see the self-test after
+    # `cd work`, which exercises this routing on synthetic sets.
+    #
+    # Pure: reads three sorted files, prints a set, decides nothing. Factored
+    # out of assert_config so it can be self-tested at all.
+    major_only_losses() {   # <at-nextmaj.txt> <at-minor.txt> <declared.txt>
+      comm -12 <(comm -13 "$1" <(sort -u "$3")) <(sort -u "$2")
+    }
+
     assert_config() {   # <label> <generated-dir>
       label="$1"; dir="$2"; cfg_label="$label"
       # nixpkgs builders run with `shopt -s nullglob`, so a non-matching
@@ -175,12 +199,18 @@ pkgs.runCommand "${common.pname}-module-impl-abi-tests"
       # with an empty diff under a heading blaming MAJOR-awareness, because the
       # message below already computes the subset direction. Guard and
       # diagnostic have to agree or the failure teaches the wrong lesson.
-      if [ -n "$(comm -13 "$dir/at-nextmaj.txt" <(sort -u "$declared"))" ]; then
+      #
+      # AND NOT EVERY MISSING EXPORT IS THIS FAULT. One defined at NO version is
+      # not a version guard at all; major_only_losses leaves it out, and
+      # logos-module-impl-diff at the end of this function names it correctly.
+      # Same run, right lesson each — see the selector's own note.
+      lost=$(major_only_losses "$dir/at-nextmaj.txt" "$dir/at-$minor.txt" "$declared")
+      if [ -n "$lost" ]; then
         {
           echo "FAIL: [$label] the export set is not complete at protocol $((major + 1)).0."
           echo
           echo "  DECLARED but NOT emitted once the MAJOR advances:"
-          comm -13 "$dir/at-nextmaj.txt" <(sort -u "$declared") | sed 's/^/      - /'
+          printf '%s\n' "$lost" | sed 's/^/      - /'
           echo
           echo "  This is a version guard testing LOGOS_PROTOCOL_VERSION_MINOR without"
           echo "  LOGOS_PROTOCOL_VERSION_MAJOR. At $((major + 1)).0 the MINOR is 0, so the"
@@ -222,6 +252,63 @@ pkgs.runCommand "${common.pname}-module-impl-abi-tests"
     }
 
     mkdir -p work && cd work
+
+    # ── SELF-TEST OF THE TWO DIAGNOSTICS ─────────────────────────────────────
+    #
+    # There are two ways an export can be missing from the at-nextmaj set and
+    # they are DIFFERENT FAULTS with different fixes:
+    #
+    #   * guarded on MINOR without MAJOR — defined at the current protocol,
+    #     gone at the next major. The message above is right, and the fix is to
+    #     expand the arithmetic in the emitter.
+    #   * not defined AT ALL — absent at every version. The message above is
+    #     WRONG: there is no guard to make MAJOR-aware, and a reader sent to
+    #     "expand the arithmetic" is sent to code that does not exist.
+    #     logos-module-impl-diff is the check that owns this failure and it says
+    #     so in those words.
+    #
+    # The MAJOR probe used to run FIRST and to select on "declared minus
+    # at-nextmaj", which contains both. An entirely absent definition was
+    # therefore reported as a version-guard bug and the diff that would have
+    # named it correctly never ran. Gating the selector on presence at
+    # at-$minor is what routes each fault to its own diagnostic — and since
+    # both are inline shell, this exercises the routing on synthetic sets
+    # rather than on whatever the generator happens to emit today.
+    mkdir -p st
+    printf 'logos_module_a\nlogos_module_b\n'                  > st/declared
+    printf 'logos_module_a\n'                                   > st/absent-minor
+    printf 'logos_module_a\n'                                   > st/absent-nextmaj
+    printf 'logos_module_a\nlogos_module_b\n'                  > st/guarded-minor
+    printf 'logos_module_a\n'                                   > st/guarded-nextmaj
+    printf 'logos_module_a\nlogos_module_b\nlogos_module_c\n' > st/healthy-minor
+    printf 'logos_module_a\nlogos_module_b\nlogos_module_c\n' > st/healthy-nextmaj
+
+    st_expect() {   # <case> <expected-set-or-empty> <nextmaj> <minor>
+      got=$(major_only_losses "$3" "$4" st/declared)
+      [ "$got" = "$2" ] || fail \
+        "self-test [$1]: the MAJOR probe selected '$got', expected '$2'"
+    }
+
+    # (a) b is declared and defined NOWHERE. The MAJOR probe must stay silent
+    #     and leave the failure to logos-module-impl-diff.
+    st_expect absent "" st/absent-nextmaj st/absent-minor
+    if logos-module-impl-diff st/declared st/absent-minor "self-test" >/dev/null 2>&1; then
+      fail "self-test [absent]: logos-module-impl-diff accepted a missing export"
+    fi
+
+    # (b) b IS defined now and vanishes at the next major: a MINOR-only guard,
+    #     which is exactly what the MAJOR probe exists to name.
+    st_expect guarded "logos_module_b" st/guarded-nextmaj st/guarded-minor
+    logos-module-impl-diff st/declared st/guarded-minor "self-test" >/dev/null \
+      || fail "self-test [guarded]: the current-protocol diff should have been happy"
+
+    # (c) nothing wrong, and the emitter defines MORE than the protocol
+    #     declares — the ordering that lands a new export before the bump that
+    #     declares it. Neither diagnostic may fire.
+    st_expect healthy "" st/healthy-nextmaj st/healthy-minor
+    logos-module-impl-diff st/declared st/healthy-minor "self-test" >/dev/null \
+      || fail "self-test [healthy]: a superset of the declared list must pass"
+    echo "  [self-test] the two diagnostics route their own faults"
 
     # ── A. Header-first ──────────────────────────────────────────────────────
     logos-cpp-generator --from-header "$fixtures/universal_impl.h" \

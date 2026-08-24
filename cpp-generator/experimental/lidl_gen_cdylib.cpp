@@ -895,13 +895,57 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
 
     s << "int logos_module_accept_token(const char* module_name, const char* token)\n{\n";
     s << "    if (!module_name || !token) return -1;\n";
-    s << "    // Seed the protocol's shared TokenManager so this module's OUTBOUND\n";
-    s << "    // lp_client (modules().<dep>...) can authenticate calls. In\n";
-    s << "    // particular the capability_module bootstrap token the host\n";
-    s << "    // delivers at load lets the automatic requestModule flow fetch a\n";
-    s << "    // per-target token on the first cross-module call. lp_token_save\n";
+    s << "    // THE OUTBOUND DOOR. Seed the protocol's shared TokenManager so this\n";
+    s << "    // module's OUTBOUND lp_client (modules().<dep>...) can authenticate\n";
+    s << "    // calls. In particular the capability_module bootstrap token the\n";
+    s << "    // host delivers at load lets the automatic requestModule flow fetch\n";
+    s << "    // a per-target token on the first cross-module call. lp_token_save\n";
     s << "    // writes the same TokenManager::instance() the lp_client reads.\n";
+    s << "    //\n";
+    s << "    // ONE MEANING ONLY, as of protocol 0.8. The Qt glue used to call\n";
+    s << "    // this from onInit (the module's own anchor -- outbound, correct)\n";
+    s << "    // AND from informModuleToken (a CALLER's token -- inbound, filed\n";
+    s << "    // here as an outbound credential). The caller path now goes through\n";
+    s << "    // logos_module_accept_inbound_token below. Do not merge them.\n";
     s << "    return lp_token_save(module_name, token);\n}\n\n";
+
+    // THE INBOUND DOOR (protocol 0.8). logos-protocol only DECLARES it; this
+    // backend owes the definition, and so does logos-rust-sdk, IN THE SAME
+    // WAVE. A module generated for >= 0.8 whose backend omits this links
+    // cleanly and then fails at dlopen() on ELF with "undefined symbol" --
+    // invisible on macOS, which links plugins -undefined dynamic_lookup. That
+    // has now shipped three times (grant_host_services at 0.3, the teardown
+    // pair at 0.5, set_call_caller at 0.6), every time at perfect version
+    // agreement, because agreeing on the VERSION says nothing about which
+    // SYMBOLS a backend's emitter writes. checks.module-impl-abi is what makes
+    // it fail here instead of at a user's dlopen.
+    //
+    // Guarded MAJOR-aware, not on the MINOR alone, for the reason spelled out
+    // at set_call_caller below: at 1.0 the MINOR resets to 0, a `MINOR >= 8`
+    // guard goes false, and the definition disappears together with the glue's
+    // call -- so nothing fails to build, nothing fails to load, and every
+    // module silently goes back to filing its callers as outbound credentials.
+    // Written expanded because unifdef must be able to evaluate it.
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && "
+         "LOGOS_PROTOCOL_VERSION_MINOR >= 8))\n";
+    s << "int logos_module_accept_inbound_token(const char* caller, const char* token)\n{\n";
+    s << "    if (!caller || !token) return -1;\n";
+    s << "    // THE INBOUND DOOR: `caller` is the module that will CALL US and\n";
+    s << "    // `token` is what it will present. This is NOT a credential this\n";
+    s << "    // module may present to anyone, and lp_token_save_inbound writes a\n";
+    s << "    // key namespace lp_token_get and lp_token_keys cannot read -- which\n";
+    s << "    // is what stops a grant one way from being a grant the other way.\n";
+    s << "    //\n";
+    s << "    // One line, deliberately: the token-registry carve-out (a granted\n";
+    s << "    // registry ALSO gets the outbound entry, because for it the same\n";
+    s << "    // wire message means \"here is X's token, present it when you call\n";
+    s << "    // X\") lives in logos-protocol, where a unit test reaches it by\n";
+    s << "    // value. Logic that lives in emitted text is logic no test ever\n";
+    s << "    // executes, only greps.\n";
+    s << "    return lp_token_save_inbound(caller, token);\n}\n";
+    s << "#endif\n\n";
 
     // Guarded on the protocol MINOR that introduced the trust-root surface
     // (0.3). The emitted module must still COMPILE against an older
