@@ -820,6 +820,31 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
             s << "                return lidlStrdup(err.dump());\n";
             s << "            }\n";
         }
+        // ...and so is a wrong count in the OTHER direction, which nothing
+        // checked until now: an EXTRA argument was silently dropped and the
+        // call succeeded. `args.size() < minArgs` bounds one side only.
+        //
+        // Arity is the one part of a contract a caller cannot verify for
+        // itself. A method that gains or loses a parameter upstream answered a
+        // stale caller with a plausible value instead of a refusal, and the
+        // caller had no way to tell which contract it had just talked to.
+        //
+        // Emitted UNCONDITIONALLY, including for a zero-parameter method
+        // (`args.size() > 0`). That case is not the lower bound with maxArgs=0
+        // — it is the arm that had no gate at all, and it is the arm the
+        // derived identity methods take: `version("junk")` answered "1.0.0"
+        // with status ok, a correct-looking answer to a call that should have
+        // been refused. This sits ABOVE the `md.derived` branch below so the
+        // generated identity dispatch inherits it rather than needing its own.
+        const size_t maxArgs = md.params.size();
+        s << "            if (args.size() > " << maxArgs << ") {\n";
+        s << "                nlohmann::json err{{\"code\", \"invalid_args\"},\n";
+        s << "                                   {\"message\", \"expected "
+          << (minArgs == maxArgs ? "" : "at most ") << maxArgs
+          << " arguments, got \" + std::to_string(args.size())},\n";
+        s << "                                   {\"origin\", \"" << module.name << "\"}};\n";
+        s << "                return lidlStrdup(err.dump());\n";
+        s << "            }\n";
         // A derived method (lidl/identity.hpp) has no member on the impl class
         // to call — the generator owns its body. name()/version() answer from
         // the module declaration, which the builder derives from metadata.json,

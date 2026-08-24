@@ -531,12 +531,37 @@ TEST(LidlGenCdylib, WrongArgumentCountReportsInvalidArgs)
     EXPECT_TRUE(src.contains("return lidlStrdup(err.dump());")) << src.toStdString();
     // The silent reply is gone from the arity path.
     EXPECT_FALSE(src.contains("if (args.size() < 2) return nullptr;")) << src.toStdString();
-    EXPECT_FALSE(src.contains("args.size() > ")) << src.toStdString();
+    // ...and the count is bounded on BOTH sides. An extra argument used to be
+    // dropped and the call to succeed. With no optional parameters the two
+    // bounds coincide, so the message stays the plain "expected 2".
+    EXPECT_TRUE(src.contains("if (args.size() > 2) {")) << src.toStdString();
+    EXPECT_FALSE(src.contains("expected at most 2 arguments")) << src.toStdString();
+}
+
+// A trailing optional makes the accepted arity a RANGE, and the upper bound is
+// the declared parameter count, not the required one — otherwise supplying the
+// optional would be rejected as an overflow.
+TEST(LidlGenCdylib, OptionalArgumentWidensTheUpperBound)
+{
+    ModuleDecl m;
+    m.name = "o_module";
+    m.methods.push_back(method("f", prim("tstr"),
+                               {param("required", prim("tstr")),
+                                param("maybe", opt(prim("tstr")))}));
+
+    const QString src = lidlMakeModuleImplExports(m, "OImpl", "o_impl.h");
+    EXPECT_TRUE(src.contains("if (args.size() < 1) {")) << src.toStdString();
+    EXPECT_TRUE(src.contains("if (args.size() > 2) {")) << src.toStdString();
+    // The two bounds differ, so the message says so rather than claiming an
+    // exact count the method does not require.
+    EXPECT_TRUE(src.contains("\"expected at most 2 arguments, got \"")) << src.toStdString();
 }
 
 // `args.size()` is unsigned, so `< 0` never fires: a zero-argument method
-// carried a dead branch. The Rust generator has always skipped it; now both do.
-TEST(LidlGenCdylib, ZeroArgumentMethodEmitsNoArityGate)
+// carries no LOWER gate. It does carry an upper one. This test used to assert
+// the arm emitted no `invalid_args` at all, which is precisely the defect --
+// `ping("junk")` dropped the argument and answered normally.
+TEST(LidlGenCdylib, ZeroArgumentMethodStillRejectsExtraArguments)
 {
     ModuleDecl m;
     m.name = "o_module";
@@ -544,8 +569,29 @@ TEST(LidlGenCdylib, ZeroArgumentMethodEmitsNoArityGate)
 
     const QString src = lidlMakeModuleImplExports(m, "OImpl", "o_impl.h");
     EXPECT_FALSE(src.contains("args.size() < 0")) << src.toStdString();
-    EXPECT_FALSE(src.contains("invalid_args")) << src.toStdString();
+    EXPECT_TRUE(src.contains("if (args.size() > 0) {")) << src.toStdString();
+    EXPECT_TRUE(src.contains("{\"code\", \"invalid_args\"}")) << src.toStdString();
     EXPECT_TRUE(src.contains("lidlImpl().ping()")) << src.toStdString();
+}
+
+// The generated identity dispatch (name/version) is answered by the generator
+// itself and returns BEFORE any impl call, so it needs the bound to sit above
+// the `derived` branch. `version("junk")` answering "1.0.0" with status ok was
+// worse than answering nothing: a correct-looking reply to a refused call.
+TEST(LidlGenCdylib, DerivedIdentityMethodRejectsExtraArguments)
+{
+    ModuleDecl m;
+    m.name = "o_module";
+    m.version = "2.3.4";
+    MethodDecl v = method("version", prim("tstr"), {});
+    v.derived = true;
+    m.methods.push_back(v);
+
+    const QString src = lidlMakeModuleImplExports(m, "OImpl", "o_impl.h");
+    EXPECT_TRUE(src.contains("if (args.size() > 0) {")) << src.toStdString();
+    EXPECT_TRUE(src.contains("{\"code\", \"invalid_args\"}")) << src.toStdString();
+    // The literal is still answered for a well-formed call.
+    EXPECT_TRUE(src.contains("std::string(\"2.3.4\")")) << src.toStdString();
 }
 
 // R4. Optional widens the accepted domain by exactly ONE inhabitant (empty); a

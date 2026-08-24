@@ -57,13 +57,33 @@ inline std::vector<uint8_t> jsonToBytes(const nlohmann::json& j) {
     return b64UrlDecode(j["_bytes"].get<std::string>());
 }
 
+// A reply that is NOT a result object is a decode failure, and must not be
+// spelled as a default-constructed StdLogosResult.
+//
+// Every other lenient decode in this file bottoms out at a value no provider
+// means as an answer -- "" for a string, 0 for a number, {} for a map. This one
+// does not: `success = false` with an empty error is exactly what a provider
+// sends when it REFUSES a call, so returning the default made "I could not read
+// this reply" indistinguishable from "you were rejected". Measured on the Qt
+// twin of this function (logos::jsonToLogosResult, same shape, same opening
+// `if (!is_object)`), where a wrapper bound to a provider with a different
+// return shape answered a refusal to every input including the well-formed
+// ones.
+//
+// The leniency of the BARE SCALARS above is untouched and deliberate --
+// logos-qt-sdk's tests/qt-generator bare_scalar_slots_stay_lenient pins it on
+// the other surface, and tightening that is a decision about every scalar
+// return of every module. This is the one type whose default is a message.
 inline StdLogosResult jsonToStdResult(const nlohmann::json& j) {
     StdLogosResult r;
-    if (j.is_object()) {
-        if (j.contains("success") && j["success"].is_boolean()) r.success = j["success"].get<bool>();
-        if (j.contains("value"))                                r.value = j["value"];
-        if (j.contains("error") && j["error"].is_string())      r.error = j["error"].get<std::string>();
+    if (!j.is_object()) {
+        r.success = false;
+        r.error = std::string("expected a result object, got ") + j.type_name();
+        return r;
     }
+    if (j.contains("success") && j["success"].is_boolean()) r.success = j["success"].get<bool>();
+    if (j.contains("value"))                                r.value = j["value"];
+    if (j.contains("error") && j["error"].is_string())      r.error = j["error"].get<std::string>();
     return r;
 }
 
