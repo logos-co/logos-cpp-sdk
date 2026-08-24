@@ -286,4 +286,38 @@ LOGOS_CALLER_LOCAL inline const LogosCaller& currentCaller()
     return stack.back();
 }
 
+// RAII stand-in for the generated logos_module_set_call_caller() push.
+//
+// Production glue (plugin-qt qt-host-generator) pulls the host's
+// CallerScope document and pushes it onto THIS stack for the duration of
+// the handler. Unit tests that construct an impl directly skip that glue,
+// so they open the same stack with CallCaller. That is the supported way
+// to simulate a dispatch for ANY C++ module — not a per-module helper and
+// not a second identity path inside the handler.
+class CallCaller {
+public:
+    static CallCaller module(const std::string& name)
+    {
+        return CallCaller(std::string(R"({"kind":"module","name":")") + name + "\"}");
+    }
+    static CallCaller host() { return CallCaller(std::string(R"({"kind":"host"})")); }
+
+    explicit CallCaller(const char* json)
+        : CallCaller(std::string(json ? json : "")) {}
+
+    ~CallCaller() { detail::setCallCaller(nullptr); }
+
+    CallCaller(const CallCaller&) = delete;
+    CallCaller& operator=(const CallCaller&) = delete;
+    CallCaller(CallCaller&&) = delete;
+    CallCaller& operator=(CallCaller&&) = delete;
+
+private:
+    explicit CallCaller(std::string json) : m_json(std::move(json))
+    {
+        detail::setCallCaller(m_json.c_str());
+    }
+    std::string m_json;
+};
+
 } // namespace logos

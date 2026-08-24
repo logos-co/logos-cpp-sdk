@@ -376,3 +376,18 @@ TEST_F(CallerScope, ACopyOutlivesTheDispatchThatProducedIt)
     EXPECT_TRUE(copied.isModule("chat_module"));
     EXPECT_TRUE(logos::currentCaller().isUnknown());
 }
+
+TEST_F(CallerScope, CallCallerRaiiIsTheDispatchStandIn)
+{
+    EXPECT_TRUE(logos::currentCaller().isUnknown());
+    {
+        const logos::CallCaller caller = logos::CallCaller::module("chat_module");
+        EXPECT_TRUE(logos::currentCaller().isModule("chat_module"));
+        {
+            const logos::CallCaller inner = logos::CallCaller::host();
+            EXPECT_TRUE(logos::currentCaller().isHost());
+        }
+        EXPECT_TRUE(logos::currentCaller().isModule("chat_module"));
+    }
+    EXPECT_TRUE(logos::currentCaller().isUnknown());
+}
