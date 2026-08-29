@@ -262,6 +262,35 @@ public:
         return LpSubscription(sub, box, &LpClient::deleteBox);
     }
 
+#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && \
+    (LOGOS_PROTOCOL_VERSION_MAJOR > 0 ||     \
+     (LOGOS_PROTOCOL_VERSION_MAJOR == 0 && LOGOS_PROTOCOL_VERSION_MINOR >= 9))
+    // subscribe(), plus the subscription's own transitions.
+    //
+    // `onStatus(state, generation)` reports LP_SUB_ARMED / LP_SUB_LOST /
+    // LP_SUB_ABANDONED. The pair that matters is LOST followed by ARMED with a
+    // higher generation: the provider restarted, so this is a NEW subscription
+    // and everything it emitted in between is unrecoverable. subscribe() above
+    // cannot report that — the stream simply resumes with a hole in it — which
+    // is why a consumer that must not silently lose events uses this instead.
+    //
+    // Guarded on 0.9 in the arithmetic-expanded form logos_protocol.h documents:
+    // the obvious `MINOR >= 9` spelling silently goes false at 1.0.0, taking the
+    // declaration and its call sites out together with no diagnostic.
+    LpSubscription subscribeEx(const std::string& event,
+                               std::function<void(nlohmann::json)> cb,
+                               std::function<void(int, std::uint64_t)> onStatus) {
+        lp_client* c = ensure();
+        if (!c) return {};
+        auto* box = new StatusBox{std::move(cb), std::move(onStatus)};
+        lp_subscription* sub = lp_subscribe_ex(c, event.c_str(),
+                                               &LpClient::eventTrampolineEx,
+                                               &LpClient::statusTrampoline, box);
+        if (!sub) { delete box; return {}; }
+        return LpSubscription(sub, box, &LpClient::deleteStatusBox);
+    }
+#endif
+
 private:
     using Box = std::function<void(nlohmann::json)>;
     using ResultErrBox = std::function<void(nlohmann::json, const CallError&)>;
@@ -360,6 +389,31 @@ private:
     }
 
     static void deleteBox(void* p) { delete static_cast<Box*>(p); }
+
+    // The event + status pair for subscribeEx, boxed together so one deleter
+    // owns both and LpSubscription's existing single-pointer shape still fits.
+    struct StatusBox {
+        std::function<void(nlohmann::json)> onEvent;
+        std::function<void(int, std::uint64_t)> onStatus;
+    };
+
+    static void eventTrampolineEx(const char* /*eventName*/, const char* dataJson, void* ud) {
+        auto* box = static_cast<StatusBox*>(ud);
+        nlohmann::json r = nlohmann::json::array();
+        if (dataJson) {
+            auto parsed = nlohmann::json::parse(dataJson, nullptr, false);
+            if (!parsed.is_discarded()) r = std::move(parsed);
+        }
+        if (box->onEvent) box->onEvent(std::move(r));
+    }
+
+    static void statusTrampoline(int state, unsigned long long generation,
+                                 const char* /*reason*/, void* ud) {
+        auto* box = static_cast<StatusBox*>(ud);
+        if (box->onStatus) box->onStatus(state, static_cast<std::uint64_t>(generation));
+    }
+
+    static void deleteStatusBox(void* p) { delete static_cast<StatusBox*>(p); }
 
     static void fillErr(CallError* err, const char* errJson, int rc) {
         if (!err) return;
