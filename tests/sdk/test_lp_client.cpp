@@ -30,6 +30,7 @@
 #include <cstring>
 #include <mutex>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include "logos_lp_client.h"
@@ -49,6 +50,7 @@ std::atomic<bool> g_slowCreate{false};
 std::mutex g_seenMutex;
 std::vector<lp_client*> g_seen;   // the client each getMethods() call observed
 std::atomic<int> g_stringsFreed{0};
+std::atomic<int> g_unsubscribed{0};
 
 // How the next lp_invoke_async should behave. Named for the C ABI outcome each
 // one models, not for the test that uses it.
@@ -67,6 +69,7 @@ void resetStubs() {
     g_slowCreate = false;
     g_asyncStub = AsyncStub::Success;
     g_stringsFreed = 0;
+    g_unsubscribed = 0;
     std::lock_guard<std::mutex> lock(g_seenMutex);
     g_seen.clear();
 }
@@ -130,6 +133,8 @@ int lp_invoke_async(lp_client*, const char*, const char*, int, lp_result_cb cb, 
     }
     return LP_OK;
 }
+
+void lp_unsubscribe(lp_subscription*) { g_unsubscribed.fetch_add(1); }
 
 }  // extern "C"
 
@@ -323,4 +328,35 @@ TEST_F(LpClientAsyncResultTest, ANullCallbackIsANoOpRatherThanACall) {
     logos::LpClient client("target", "origin");
     client.invokeAsyncResult("m", nlohmann::json::array(), nullptr);
     EXPECT_EQ(g_created.load(), 0) << "a callback-less call must not even build a client";
+}
+
+// ── SubHandle's conversion ──────────────────────────────────────────────────
+
+namespace {
+template <typename T, typename = void>
+struct IsEqualityComparable : std::false_type {};
+template <typename T>
+struct IsEqualityComparable<
+    T, decltype(void(std::declval<const T&>() == std::declval<const T&>()))>
+    : std::true_type {};
+}  // namespace
+
+// The generated `on<Event>()` returns a SubHandle where it used to return bool,
+// so the conversion has to be IMPLICIT or every `bool ok = dep.onFoo(cb);`
+// written against the old signature stops compiling. Deleting the comparison is
+// the price of that: without it `a == b` would compare the two conversions
+// rather than the handles, silently and with no diagnostic.
+TEST(SubHandleTest, ConvertsToBoolImplicitlyButIsNotComparable) {
+    static_assert(std::is_convertible<logos::SubHandle, bool>::value,
+                  "on<Event>()'s return must convert to bool implicitly");
+    static_assert(!IsEqualityComparable<logos::SubHandle>::value,
+                  "SubHandle must not be comparable: == would compare two bools");
+
+    g_unsubscribed = 0;
+    logos::SubHandle empty;
+    EXPECT_FALSE(empty);
+    EXPECT_TRUE(empty.expired());
+    EXPECT_FALSE(empty.cancel());
+    EXPECT_EQ(g_unsubscribed.load(), 0)
+        << "cancelling a handle that owns nothing still reached the C ABI";
 }
