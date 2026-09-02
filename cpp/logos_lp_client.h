@@ -34,6 +34,25 @@
 #include "logos_codec.h"        // logos::bytesToJson, b64UrlDecode, isTaggedBytes
 #include "logos_result.h"       // StdLogosResult
 
+// DOES THIS PROTOCOL HAVE THE PER-TARGET SUBSCRIPTION SURFACE?
+//
+// Not a version question, which is why this is not a version guard. MINOR 0.9
+// was revised in place: the first cut (48afc01) and the revision (47d287c) BOTH
+// report MINOR 9 and export disjoint sets, so `MINOR >= 9` is true of a
+// protocol that has none of these symbols. That guard shipped once and the
+// doctests caught it, because they build downstream modules from those modules'
+// own older locks.
+//
+// Two spellings because the transition needs both. LP_SUB_HELD is what
+// discriminates TODAY — it arrived with the client-scoped surface and is absent
+// from every protocol without it, including the first cut of 0.9.
+// LOGOS_PROTOCOL_HAS_CLIENT_SUBSCRIPTION_STATE is the named macro protocol
+// defines going forward, which keeps this working if the LP_SUB_* codes are
+// ever reorganised.
+#if defined(LOGOS_PROTOCOL_HAS_CLIENT_SUBSCRIPTION_STATE) || defined(LP_SUB_HELD)
+#  define LOGOS_LP_HAS_CLIENT_SUBSCRIPTION_STATE 1
+#endif
+
 namespace logos {
 
 // JSON -> std helpers used by the generated ApiStyle::Lp wrappers to decode
@@ -396,9 +415,7 @@ public:
     void onSubscriptionStatus(std::function<void(SubStatus, std::uint64_t generation)> cb) {
         lp_client* c = ensure();
         if (!c) return;
-#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && \
-    (LOGOS_PROTOCOL_VERSION_MAJOR > 0 ||     \
-     (LOGOS_PROTOCOL_VERSION_MAJOR == 0 && LOGOS_PROTOCOL_VERSION_MINOR >= 9))
+#if defined(LOGOS_LP_HAS_CLIENT_SUBSCRIPTION_STATE)
         {
             std::lock_guard<std::mutex> lk(m_statusMu);
             m_status = std::move(cb);
@@ -415,9 +432,7 @@ public:
     std::uint64_t subscriptionGeneration() {
         lp_client* c = ensure();
         if (!c) return 0;
-#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && \
-    (LOGOS_PROTOCOL_VERSION_MAJOR > 0 ||     \
-     (LOGOS_PROTOCOL_VERSION_MAJOR == 0 && LOGOS_PROTOCOL_VERSION_MINOR >= 9))
+#if defined(LOGOS_LP_HAS_CLIENT_SUBSCRIPTION_STATE)
         return lp_client_subscription_generation(c);
 #else
         return 0;
@@ -431,9 +446,7 @@ public:
     void setRestartPolicy(RestartPolicy policy) {
         lp_client* c = ensure();
         if (!c) return;
-#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && \
-    (LOGOS_PROTOCOL_VERSION_MAJOR > 0 ||     \
-     (LOGOS_PROTOCOL_VERSION_MAJOR == 0 && LOGOS_PROTOCOL_VERSION_MINOR >= 9))
+#if defined(LOGOS_LP_HAS_CLIENT_SUBSCRIPTION_STATE)
         lp_client_set_subscription_options(
             c, policy == RestartPolicy::Manual ? "{\"restart\":\"manual\"}"
                                                : "{\"restart\":\"automatic\"}");
@@ -449,9 +462,7 @@ public:
     bool rearmSubscriptions() {
         lp_client* c = ensure();
         if (!c) return false;
-#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && \
-    (LOGOS_PROTOCOL_VERSION_MAJOR > 0 ||     \
-     (LOGOS_PROTOCOL_VERSION_MAJOR == 0 && LOGOS_PROTOCOL_VERSION_MINOR >= 9))
+#if defined(LOGOS_LP_HAS_CLIENT_SUBSCRIPTION_STATE)
         return lp_client_rearm_subscriptions(c) != 0;
 #else
         return false;
@@ -573,6 +584,14 @@ private:
             cb = self->m_status;
         }
         if (!cb) return;
+#if defined(LOGOS_LP_HAS_CLIENT_SUBSCRIPTION_STATE)
+        // The WHOLE switch is guarded, not just the Held case: none of the
+        // LP_SUB_* codes exist below the revision — 0.8 has no LP_SUB_ARMED
+        // either. LpClient is a plain class, so these bodies are checked at
+        // class close whether or not anything calls them; leaving three of the
+        // four labels outside the guard broke the 0.8 build with the other two
+        // compiling out perfectly around them.
+        //
         // An UNKNOWN code is dropped rather than coerced. A newer protocol can
         // introduce a status this build has no name for, and reporting it as
         // Armed -- the numerically-first value -- would tell a subscriber its
@@ -584,6 +603,9 @@ private:
             case LP_SUB_HELD:      cb(SubStatus::Held,      generation); break;
             default: break;
         }
+#else
+        (void)state; (void)generation; (void)cb;
+#endif
     }
 
     // One line per missing capability per process, not per call: a module that
