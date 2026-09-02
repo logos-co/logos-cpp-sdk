@@ -1492,10 +1492,29 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
         const QJsonObject eo = ev.toObject();
         const QString evName = eo.value("name").toString();
         if (evName.isEmpty()) continue;
-        s << "    bool " << lpEventAccessorName(evName)
-          << "(std::function<void(" << lpEventCbParams(eo.value("params").toArray(), rs) << ")> callback);\n";
+        s << "    logos::SubHandle " << lpEventAccessorName(evName)
+          << "(std::function<void(" << lpEventCbParams(eo.value("params").toArray(), rs)
+          << ")> callback);\n";
     }
-    if (!events.isEmpty()) s << "\n";
+    // The target's subscription state, forwarded from the LpClient. Per MODULE
+    // rather than per event, because that is the granularity the runtime has:
+    // every subscription here shares one handle on the provider, so they arm
+    // and are lost together. Emitted only when the dep HAS events -- a module
+    // with none has no subscriptions whose state could be asked about.
+    if (!events.isEmpty()) {
+        s << "\n";
+        s << "    // Watch this module's subscription transitions: Armed / Lost /\n";
+        s << "    // Held / Abandoned, with the establishment number. Lost followed by\n";
+        s << "    // Armed at a higher generation is the unrecoverable-gap marker.\n";
+        s << "    void onSubscriptionStatus(std::function<void(logos::SubStatus, std::uint64_t)> cb);\n";
+        s << "    // 0 = never armed, 1 = the first, N+1 after each re-establishment.\n";
+        s << "    std::uint64_t subscriptionGeneration();\n";
+        s << "    // Manual means \"do not RE-arm after a loss\", never \"do not arm\".\n";
+        s << "    void setRestartPolicy(logos::RestartPolicy policy);\n";
+        s << "    // Revive held subscriptions. Safe from inside the status callback.\n";
+        s << "    bool rearmSubscriptions();\n";
+        s << "\n";
+    }
 
     // Methods: sync (with optional CallError out-param + timeout) + async
     // overload.
@@ -1613,15 +1632,28 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
 
     // Typed event adapters: subscribe via lp_subscribe (JSON array payload),
     // decode into typed args, keep the RAII subscription alive in m_subs.
+    //
+    // The OWNING handle still goes into m_subs — the RAII lifetime stays the
+    // wrapper's, so an author cannot end their subscription by dropping a
+    // return value. What comes back is a non-owning logos::SubHandle, which
+    // exists so that unsubscribing is reachable at all: before it, the handle
+    // went into a private vector and the author had no way to name their own
+    // subscription again.
+    //
+    // It converts to bool implicitly, so every `if (dep.onFoo(cb))` and
+    // `bool ok = dep.onFoo(cb);` written against the old `bool` return keeps
+    // compiling and keeps meaning what it did.
     for (const QJsonValue& ev : events) {
         const QJsonObject eo = ev.toObject();
         const QString evName = eo.value("name").toString();
         if (evName.isEmpty()) continue;
         const QJsonArray evParams = eo.value("params").toArray();
-        s << "bool " << className << "::" << lpEventAccessorName(evName)
-          << "(std::function<void(" << lpEventCbParams(evParams, rs) << ")> callback) {\n";
-        s << "    if (!callback) return false;\n";
-        s << "    auto _sub = " << clientExpr << ".subscribe(\"" << evName << "\", [callback](nlohmann::json _a) {\n";
+        s << "logos::SubHandle " << className << "::" << lpEventAccessorName(evName)
+          << "(std::function<void(" << lpEventCbParams(evParams, rs)
+          << ")> callback) {\n";
+        s << "    if (!callback) return {};\n";
+        s << "    auto _sub = " << clientExpr << ".subscribe(\"" << evName
+          << "\", [callback](nlohmann::json _a) {\n";
         s << "        if (!_a.is_array() || _a.size() < " << evParams.size() << ") return;\n";
         s << "        callback(";
         for (int i = 0; i < evParams.size(); ++i) {
@@ -1632,9 +1664,27 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         }
         s << ");\n";
         s << "    });\n";
-        s << "    if (!_sub.valid()) return false;\n";
+        s << "    if (!_sub.valid()) return {};\n";
+        s << "    logos::SubHandle _h = _sub.handle();\n";
         s << "    " << subsExpr << ".push_back(std::move(_sub));\n";
-        s << "    return true;\n";
+        s << "    return _h;\n";
+        s << "}\n\n";
+    }
+
+    // The per-target state forwarders, emitted only when the dep has events.
+    if (!events.isEmpty()) {
+        s << "void " << className << "::onSubscriptionStatus("
+          << "std::function<void(logos::SubStatus, std::uint64_t)> cb) {\n";
+        s << "    " << clientExpr << ".onSubscriptionStatus(std::move(cb));\n";
+        s << "}\n\n";
+        s << "std::uint64_t " << className << "::subscriptionGeneration() {\n";
+        s << "    return " << clientExpr << ".subscriptionGeneration();\n";
+        s << "}\n\n";
+        s << "void " << className << "::setRestartPolicy(logos::RestartPolicy policy) {\n";
+        s << "    " << clientExpr << ".setRestartPolicy(policy);\n";
+        s << "}\n\n";
+        s << "bool " << className << "::rearmSubscriptions() {\n";
+        s << "    return " << clientExpr << ".rearmSubscriptions();\n";
         s << "}\n\n";
     }
 
