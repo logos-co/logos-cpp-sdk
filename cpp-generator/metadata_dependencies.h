@@ -42,4 +42,20 @@ inline QStringList dependencyNames(const QJsonArray& entries)
     return names;
 }
 
+/// Every module a consumer gets a typed `modules().<name>` member for: the
+/// union of `dependencies` and `optional_dependencies`, in that order.
+///
+/// The two kinds differ only in LIFETIME — an optional dependency is not
+/// auto-loaded and its absence is not a load error — and lifetime is not
+/// something the generated wrapper can express. So a consumer surface that
+/// split them would carry two spellings for one call.
+inline QJsonArray consumerDependencyEntries(const QJsonObject& metadata)
+{
+    QJsonArray all = metadata.value("dependencies").toArray();
+    for (const QJsonValue& entry : metadata.value("optional_dependencies").toArray()) {
+        all.append(entry);
+    }
+    return all;
+}
+
 #endif // METADATA_DEPENDENCIES_H

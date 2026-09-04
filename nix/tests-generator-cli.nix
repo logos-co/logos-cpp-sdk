@@ -81,6 +81,35 @@ pkgs.runCommand "${common.pname}-generator-cli-tests"
     [ -s ./gen/logos_sdk.h ] || fail "--general-only emitted no logos_sdk.h"
     echo "OK: --general-only still emits the umbrella"
 
+    # ── `optional_dependencies` reach the umbrella like required ones ──
+    #
+    # Only the binary can answer this: the umbrella member list is read out of
+    # metadata.json by the CLI, not out of the nix `config`, so a builder that
+    # resolved the key correctly would still emit an umbrella without the member
+    # if the generator did not union the two arrays.
+    cat > optional_metadata.json <<'EOF'
+    {
+      "name": "cli_optional_module",
+      "version": "1.0.0",
+      "type": "core",
+      "dependencies": ["hard_dep"],
+      "optional_dependencies": ["opt_dep", {"name": "opt_obj_dep", "version": "^1.0.0"}]
+    }
+    EOF
+
+    logos-cpp-generator --metadata ./optional_metadata.json --general-only       --api-style qt --output-dir ./gen-optional       >/dev/null 2>optional.err       || { cat optional.err >&2; fail "a module with optional_dependencies was refused"; }
+    [ -s ./gen-optional/logos_sdk.h ] || fail "optional_dependencies emitted no logos_sdk.h"
+
+    # One member per name, whatever list it came from and whichever entry form
+    # it used. The kinds differ in LIFETIME, which a wrapper cannot express.
+    for member in hard_dep opt_dep opt_obj_dep; do
+      grep -q "OptDep\|$member" ./gen-optional/logos_sdk.h         || { cat ./gen-optional/logos_sdk.h >&2
+             fail "umbrella is missing a member for '$member'"; }
+      grep -q "#include \"$member""_api.h\"" ./gen-optional/logos_sdk.h         || { cat ./gen-optional/logos_sdk.h >&2
+             fail "umbrella does not include the wrapper header for '$member'"; }
+    done
+    echo "OK: optional_dependencies get the same umbrella member as required ones"
+
     # ── `--binding origin`: the umbrella a module with no LogosAPI needs ──
     #
     # Emitter-level assertions live in the gtest suite; these are the ones only
