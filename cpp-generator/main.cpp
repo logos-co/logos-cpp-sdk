@@ -1,5 +1,6 @@
 #include "plugin_introspect.h"
 #include "generator_lib.h"
+#include "metadata_dependencies.h"
 #include "lidl_to_json.h"
 #include "experimental/lidl_gen_client.h"
 #include "experimental/lidl_gen_cdylib.h"
@@ -22,9 +23,9 @@
 // ─── Umbrella mode (`--umbrella`, alias `--general-only`) ────────────────────
 //
 // Emits the umbrella — `logos_sdk.h` / `logos_sdk.cpp`, i.e. `struct
-// LogosModules` — over a module's declared `metadata.json#dependencies` plus
-// its interface dependencies, and the per-dependency / per-interface wrappers
-// those aggregate.
+// LogosModules` — over a module's concrete dependencies
+// (`metadata.json#dependencies` + `optional_dependencies`) plus its interface
+// dependencies, and the per-dependency / per-interface wrappers those aggregate.
 //
 // This is NOT a legacy mode, despite having lived in `plugin_introspect.cpp` until
 // now: `LogosModuleContext::modules()` returns `LogosModules&`, so every
@@ -286,10 +287,11 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
         return 4;
     }
     const QJsonObject obj = doc.object();
-    const QJsonArray deps = obj.value("dependencies").toArray();
+    const QJsonArray deps = consumerDependencyEntries(obj);
 
-    // `LogosModules` exposes ONLY the modules listed in
-    // `metadata.json#dependencies` — apps that need to manage the core use
+    // `LogosModules` exposes ONLY the modules this one declares as a concrete
+    // dependency — `dependencies` plus `optional_dependencies`, which differ in
+    // lifetime and not in call shape. Apps that need to manage the core use
     // liblogos' C API directly.
     const QString genDirPath = outputDir.isEmpty()
         ? QDir::current().filePath("logos-cpp-sdk/cpp/generated")
