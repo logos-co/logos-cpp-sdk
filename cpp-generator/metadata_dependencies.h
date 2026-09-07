@@ -58,4 +58,29 @@ inline QJsonArray consumerDependencyEntries(const QJsonObject& metadata)
     return all;
 }
 
+/// The umbrella's member list, preferring the `--dep` flags to metadata.json.
+///
+/// Both name the same modules, but the flags are RESOLVED: nix expands them per
+/// platform and per dependency kind, so a member list built from them needs no
+/// second opinion about what a dependency is. Re-deriving it here is how the
+/// two came to disagree — a new dependency kind reached `--dep` through the
+/// builder while this binary still read `dependencies` alone, and the consuming
+/// module compiled with a wrapper it had no member for.
+///
+/// metadata.json stays the source when no flag is passed, which is the raw
+/// dev-shell path: LogosModule.cmake invokes with `--metadata` alone under
+/// `if(LOGOS_CPP_SDK_IS_SOURCE)`.
+inline QJsonArray umbrellaDependencyEntries(const QStringList& depFlagNames,
+                                            const QJsonObject& metadata)
+{
+    if (depFlagNames.isEmpty()) {
+        return consumerDependencyEntries(metadata);
+    }
+    QJsonArray all;
+    for (const QString& name : depFlagNames) {
+        all.append(name);
+    }
+    return all;
+}
+
 #endif // METADATA_DEPENDENCIES_H
