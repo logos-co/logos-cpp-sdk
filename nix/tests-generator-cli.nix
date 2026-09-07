@@ -244,6 +244,24 @@ pkgs.runCommand "${common.pname}-generator-cli-tests"
            fail "the umbrella still took its members from metadata.json"; }
     echo "OK: the --dep flags decide the umbrella when there are any"
 
+    # ── `--dep-name`: a member with no wrapper ────────────────────────────
+    #
+    # What the Qt path needs. Its dependency wrappers come from
+    # logos-qt-generator, so it cannot pass `--dep` (that would emit a second
+    # set over the top of them) — but the umbrella still owes every dependency
+    # a member. So: member emitted, wrapper NOT written.
+    logos-cpp-generator --metadata ./flagwins_metadata.json --general-only \
+      --api-style qt --dep-name qt_path_dep --output-dir ./gen-depname \
+      >/dev/null 2>depname.err \
+      || { cat depname.err >&2; fail "--dep-name was refused"; }
+
+    grep -q 'qt_path_dep' ./gen-depname/logos_sdk.h \
+      || { cat ./gen-depname/logos_sdk.h >&2
+           fail "--dep-name produced no umbrella member"; }
+    [ ! -e ./gen-depname/qt_path_dep_api.h ] \
+      || fail "--dep-name wrote a wrapper; it names a member and nothing else"
+    echo "OK: --dep-name adds an umbrella member without emitting a wrapper"
+
     mkdir -p "$out"
     echo "logos-cpp-generator CLI argument-surface tests passed" > "$out/result.txt"
   ''
