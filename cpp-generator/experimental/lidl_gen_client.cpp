@@ -626,6 +626,14 @@ QString lidlGenerateMetadataJson(const ModuleDecl& module)
     for (const std::string& d : module.depends)
         deps.append(qs(d));
     obj["dependencies"] = deps;
+    // Emitted only when there are any, so a contract carrying none produces the
+    // same metadata.json it always did.
+    if (!module.optional_depends.empty()) {
+        QJsonArray optionalDeps;
+        for (const std::string& d : module.optional_depends)
+            optionalDeps.append(qs(d));
+        obj["optional_dependencies"] = optionalDeps;
+    }
     QJsonDocument doc(obj);
     return doc.toJson(QJsonDocument::Indented);
 }

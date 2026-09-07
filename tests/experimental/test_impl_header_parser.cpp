@@ -83,6 +83,40 @@ TEST_F(ImplHeaderParserTest, ReadsDependenciesDeclaredInObjectForm)
     EXPECT_EQ(r.module.depends[2], "dep_c");
 }
 
+// `optional_dependencies` reaches the contract as its OWN list. The two differ
+// in lifetime — nothing loads an optional dependency and its absence is not an
+// error — and a contract that merged them would hand the other side back a
+// dependency the loader then treats as required.
+TEST_F(ImplHeaderParserTest, ReadsOptionalDependenciesAsTheirOwnList)
+{
+    auto r = parseImplHeader(
+        fixturesDir() + "/sample_impl.h",
+        "SampleModuleImpl",
+        fixturesDir() + "/optional_deps_metadata.json",
+        err);
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+
+    ASSERT_EQ(r.module.depends.size(), 2);
+    EXPECT_EQ(r.module.depends[0], "hard_dep");
+    EXPECT_EQ(r.module.depends[1], "hard_obj_dep");
+
+    ASSERT_EQ(r.module.optional_depends.size(), 2);
+    EXPECT_EQ(r.module.optional_depends[0], "soft_dep");
+    EXPECT_EQ(r.module.optional_depends[1], "soft_obj_dep");
+}
+
+// A module with none stays exactly as it was, so nothing regenerates.
+TEST_F(ImplHeaderParserTest, NoOptionalDependenciesLeavesTheListEmpty)
+{
+    auto r = parseImplHeader(
+        fixturesDir() + "/sample_impl.h",
+        "SampleModuleImpl",
+        fixturesDir() + "/object_deps_metadata.json",
+        err);
+    ASSERT_FALSE(r.hasError()) << r.error.toStdString();
+    EXPECT_TRUE(r.module.optional_depends.empty());
+}
+
 TEST_F(ImplHeaderParserTest, MethodTypes)
 {
     auto r = parseImplHeader(
