@@ -51,26 +51,6 @@ struct InterfaceSpec {
 // occurrences. Names and store paths contain no '=', so splitting on the
 // first two '=' is unambiguous. Used for both `--interface` (runtime-bound
 // wrappers) and `--dep` (name-baked wrappers generated from a dep's LIDL).
-/// Bare repeated values, e.g. `--dep-name chat_module`. `parseSpecFlags` below
-/// is for the `name=path` flags; this one is for a flag whose value IS the name.
-static QStringList parseNameFlags(const QStringList& args, const QString& flag)
-{
-    const QString flagEq = flag + "=";
-    QStringList names;
-    for (int i = 0; i < args.size(); ++i) {
-        QString value;
-        if (args.at(i) == flag && i + 1 < args.size()) {
-            value = args.at(i + 1);
-        } else if (args.at(i).startsWith(flagEq)) {
-            value = args.at(i).section('=', 1);
-        } else {
-            continue;
-        }
-        if (!value.isEmpty() && !names.contains(value)) names.append(value);
-    }
-    return names;
-}
-
 static QVector<InterfaceSpec> parseSpecFlags(const QStringList& args, const QString& flag)
 {
     const QString flagEq = flag + "=";
@@ -280,7 +260,7 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
             << " --metadata /absolute/path/to/metadata.json --umbrella (or --general-only)"
                " [--output-dir /path/to/output] [--api-style qt|lp] [--binding api|origin]"
                " [--interface <name>=<file.lidl|file.h>[=<ImplClass>]]"
-               " [--dep <name>=<file.lidl>] [--dep-name <name>]\n";
+               " [--dep <name>=<file.lidl>]\n";
         return 1;
     }
     const QString metaPathArg = stripAt(args.at(metaIdx + 1));
@@ -417,17 +397,8 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
     QStringList interfaceNames;
     for (const InterfaceSpec& sp : ifaceSpecs) interfaceNames.append(sp.name);
 
-    // `--dep` carries a contract and gets a wrapper; `--dep-name` carries only
-    // the name. The Qt path needs the second: its wrappers come from
-    // logos-qt-generator, so passing `--dep` there would emit a second set over
-    // the top of them, but the umbrella still owes every dependency a member.
     QStringList depFlagNames;
     for (const InterfaceSpec& sp : depSpecs) depFlagNames.append(sp.name);
-    for (const QString& name : parseNameFlags(args, "--dep-name")) {
-        if (!depFlagNames.contains(name) && !interfaceNames.contains(name)) {
-            depFlagNames.append(name);
-        }
-    }
     const QJsonArray deps = umbrellaDependencyEntries(depFlagNames, obj);
 
     // The umbrella itself. Emission lives in generator_lib next to the
