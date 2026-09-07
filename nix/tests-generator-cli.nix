@@ -83,10 +83,11 @@ pkgs.runCommand "${common.pname}-generator-cli-tests"
 
     # ── `optional_dependencies` reach the umbrella like required ones ──
     #
-    # Only the binary can answer this: the umbrella member list is read out of
-    # metadata.json by the CLI, not out of the nix `config`, so a builder that
-    # resolved the key correctly would still emit an umbrella without the member
-    # if the generator did not union the two arrays.
+    # With no `--dep` flag this is the metadata fallback — the raw dev-shell
+    # path, where LogosModule.cmake invokes with `--metadata` alone. Only the
+    # binary can answer it: a builder that resolved the key correctly would still
+    # emit an umbrella without the member if the generator did not union the two
+    # arrays here.
     cat > optional_metadata.json <<'EOF'
     {
       "name": "cli_optional_module",
@@ -213,6 +214,35 @@ pkgs.runCommand "${common.pname}-generator-cli-tests"
     grep -q 'Plugin file does not exist' sidecar.err \
       || { cat sidecar.err >&2; fail "control: a READABLE contract did not get as far as the plugin"; }
     echo "OK: control — a readable contract is accepted and the run reaches the plugin"
+
+    # ── `--dep` flags decide the umbrella, not metadata.json ──────────────
+    #
+    # The two agree in every nix build, which is exactly why a disagreement has
+    # to be constructed to see which one is consulted. metadata.json names a
+    # dependency the flags do not, and vice versa: the flag's name must be the
+    # one with a member.
+    printf 'module flag_dep {\n  version "1.0.0"\n  method ping() -> tstr\n}\n' > flag_dep.lidl
+    cat > flagwins_metadata.json <<'EOF'
+    {
+      "name": "cli_flagwins_module",
+      "version": "1.0.0",
+      "type": "core",
+      "dependencies": ["metadata_only_dep"]
+    }
+    EOF
+
+    logos-cpp-generator --metadata ./flagwins_metadata.json --general-only \
+      --api-style qt --dep flag_dep=./flag_dep.lidl --output-dir ./gen-flagwins \
+      >/dev/null 2>flagwins.err \
+      || { cat flagwins.err >&2; fail "a --dep flag with a disagreeing metadata.json was refused"; }
+
+    grep -q 'flag_dep' ./gen-flagwins/logos_sdk.h \
+      || { cat ./gen-flagwins/logos_sdk.h >&2
+           fail "the umbrella has no member for the --dep flag's module"; }
+    grep -q 'metadata_only_dep' ./gen-flagwins/logos_sdk.h \
+      && { cat ./gen-flagwins/logos_sdk.h >&2
+           fail "the umbrella still took its members from metadata.json"; }
+    echo "OK: the --dep flags decide the umbrella when there are any"
 
     mkdir -p "$out"
     echo "logos-cpp-generator CLI argument-surface tests passed" > "$out/result.txt"

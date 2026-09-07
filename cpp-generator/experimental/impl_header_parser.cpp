@@ -960,6 +960,11 @@ ImplParseResult parseImplHeader(const QString& headerPath,
         result.module.version = obj.value("version").toString().toStdString();
         result.module.description = obj.value("description").toString().toStdString();
         result.module.category = obj.value("category").toString().toStdString();
+        // `dependencies` ALONE, deliberately. LIDL's `depends` is one list with
+        // no kind, and lidl_gen_client writes it straight back out as
+        // `dependencies` — so unioning `optional_dependencies` in here would
+        // round-trip them into REQUIRED ones, auto-loaded and fatal when
+        // absent. Carrying them needs an `optional_depends` in the AST.
         const QJsonArray deps = obj.value("dependencies").toArray();
         for (const QString& depName : dependencyNames(deps))
             result.module.depends.push_back(depName.toStdString());

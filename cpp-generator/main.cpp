@@ -287,12 +287,12 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
         return 4;
     }
     const QJsonObject obj = doc.object();
-    const QJsonArray deps = consumerDependencyEntries(obj);
 
     // `LogosModules` exposes ONLY the modules this one declares as a concrete
     // dependency — `dependencies` plus `optional_dependencies`, which differ in
     // lifetime and not in call shape. Apps that need to manage the core use
-    // liblogos' C API directly.
+    // liblogos' C API directly. The list itself comes from the `--dep` flags
+    // where there are any; see umbrellaDependencyEntries below.
     const QString genDirPath = outputDir.isEmpty()
         ? QDir::current().filePath("logos-cpp-sdk/cpp/generated")
         : outputDir;
@@ -361,11 +361,11 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
 
     // Concrete dependencies generated from their published LIDL
     // (`--dep <name>=<lidl>`). Same backend as interfaces but BindMode::Static
-    // — the module name is baked in and the dep is exposed as a `<dep>` MEMBER
-    // (the umbrella already emits it from `dependencies`, so no umbrella
-    // change). nix passes `--dep` only for deps that publish a `lidl` output;
-    // deps without one fall back to the header-copy path and are NOT passed
-    // here. Dedup vs each other and vs interface names.
+    // — the module name is baked in and the dep is exposed as a `<dep>` MEMBER,
+    // which the umbrella then emits from these same names. Every concrete
+    // dependency arrives here: one publishing no `lidl` is refused by name in
+    // logos-module-builder before this runs. Dedup vs each other and vs
+    // interface names.
     QVector<InterfaceSpec> depSpecs;
     QSet<QString> haveDep;
     for (const InterfaceSpec& sp : parseSpecFlags(args, "--dep")) {
@@ -396,6 +396,10 @@ static int runUmbrellaMode(const QStringList& args, const QString& progName,
 
     QStringList interfaceNames;
     for (const InterfaceSpec& sp : ifaceSpecs) interfaceNames.append(sp.name);
+
+    QStringList depFlagNames;
+    for (const InterfaceSpec& sp : depSpecs) depFlagNames.append(sp.name);
+    const QJsonArray deps = umbrellaDependencyEntries(depFlagNames, obj);
 
     // The umbrella itself. Emission lives in generator_lib next to the
     // per-module wrapper emitters, so the aggregate can be asserted on without
