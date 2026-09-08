@@ -95,6 +95,7 @@ char** logos_core_get_known_modules()             { return dupCArray(g->known); 
 char** logos_core_get_loaded_modules()            { return dupCArray(g->loaded); }
 char** logos_core_get_module_dependencies(const char*, bool r) { return dupCArray(r ? std::vector<std::string>{"d1","d2"} : std::vector<std::string>{"d1"}); }
 char** logos_core_get_module_dependents(const char*, bool)     { return dupCArray({}); }
+char** logos_core_get_module_optional_dependencies(const char*) { return dupCArray({"opt1","opt2"}); }
 
 int logos_core_load_module(const char*, LogosLoadDeps deps) { g->lastLoadDeps = static_cast<int>(deps); return g->loadSucceeds ? 1 : 0; }
 char* logos_core_optional_load_report(const char*)          { return dupC(g->optionalReport); }
@@ -295,4 +296,13 @@ TEST_F(HostCoreTest, OptionalLoadReportIsPassedThrough)
     const auto report = core.optionalLoadReportJson("alpha");
     ASSERT_TRUE(report.has_value());
     EXPECT_NE(report->find("\"module\":\"extra\""), std::string::npos) << *report;
+}
+
+// The one entry point the mirror used to omit, in the release that made
+// optional dependencies loadable.
+TEST_F(HostCoreTest, OptionalDependenciesAreReachable)
+{
+    LogosCore core(0, nullptr, emptyConfig());
+    EXPECT_EQ(core.optionalDependencies("alpha"),
+              (std::vector<std::string>{"opt1", "opt2"}));
 }

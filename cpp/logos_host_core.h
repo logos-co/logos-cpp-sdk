@@ -89,6 +89,7 @@ int    logos_core_load_module(const char* module_name, LogosLoadDeps deps);
 int    logos_core_unload_module(const char* module_name, bool with_dependents);
 char** logos_core_get_module_dependencies(const char* module_name, bool recursive);
 char** logos_core_get_module_dependents(const char* module_name, bool recursive);
+char** logos_core_get_module_optional_dependencies(const char* module_name);
 char*  logos_core_optional_load_report(const char* module_name);
 char*  logos_core_get_modules_info();
 char*  logos_core_process_module(const char* module_path);
@@ -289,6 +290,20 @@ public:
     {
         return detail::drainCStringArray(
             logos_core_get_module_dependents(name.c_str(), recursive));
+    }
+
+    // The module's optional dependencies: concrete names it may call and does
+    // not require. Direct only — there is no recursive form, because the set
+    // a caller can act on is the one this module declares, and an optional
+    // dependency's own optional dependencies are its business.
+    //
+    // Worth pairing with loadModule(name, LOGOS_LOAD_REQUIRED_AND_OPTIONAL):
+    // this says what could come up, and optionalLoadReportJson says what will
+    // not.
+    std::vector<std::string> optionalDependencies(const std::string& name) const
+    {
+        return detail::drainCStringArray(
+            logos_core_get_module_optional_dependencies(name.c_str()));
     }
 
     // Full metadata for every known module, as liblogos' JSON.
