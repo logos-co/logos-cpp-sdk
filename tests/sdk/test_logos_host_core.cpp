@@ -46,7 +46,11 @@ struct CoreStub {
     std::string statsJson =
         R"([{"name":"alpha","cpu_percent":12.5,"cpu_time_seconds":3.5,"memory_mb":4096.0}])";
     bool tokenPresent = true;
-    int  lastLoadWithDeps = -1;
+    // The LogosLoadDeps value the wrapper passed, not a bool: the point of the
+    // enum is that there are three answers, and a bool stub could not tell
+    // REQUIRED_DEPS from REQUIRED_AND_OPTIONAL.
+    int  lastLoadDeps = -1;
+    std::string optionalReport = "[]";
     int  lastUnloadWithDependents = -1;
     bool loadSucceeds = true;
 };
@@ -92,7 +96,8 @@ char** logos_core_get_loaded_modules()            { return dupCArray(g->loaded);
 char** logos_core_get_module_dependencies(const char*, bool r) { return dupCArray(r ? std::vector<std::string>{"d1","d2"} : std::vector<std::string>{"d1"}); }
 char** logos_core_get_module_dependents(const char*, bool)     { return dupCArray({}); }
 
-int logos_core_load_module(const char*, bool withDeps)     { g->lastLoadWithDeps = withDeps ? 1 : 0; return g->loadSucceeds ? 1 : 0; }
+int logos_core_load_module(const char*, LogosLoadDeps deps) { g->lastLoadDeps = static_cast<int>(deps); return g->loadSucceeds ? 1 : 0; }
+char* logos_core_optional_load_report(const char*)          { return dupC(g->optionalReport); }
 int logos_core_unload_module(const char*, bool withDepdts) { g->lastUnloadWithDependents = withDepdts ? 1 : 0; return 1; }
 
 char* logos_core_get_modules_info()               { return dupC("[]"); }
@@ -203,7 +208,11 @@ TEST_F(HostCoreTest, LoadDefaultsToResolvingDependenciesAndUnloadDoesNotCascade)
     LogosCore core(0, nullptr, emptyConfig());
 
     EXPECT_TRUE(core.loadModule("alpha"));
-    EXPECT_EQ(stub.lastLoadWithDeps, 1) << "a host almost always wants the dependency graph";
+    EXPECT_EQ(g->lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_DEPS))
+        << "the default must stay the required tree — it is what every host "
+           "asking loadModule(name) has always got";
+    EXPECT_EQ(stub.lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_DEPS))
+        << "a host almost always wants the dependency graph";
 
     EXPECT_TRUE(core.unloadModule("alpha"));
     EXPECT_EQ(stub.lastUnloadWithDependents, 0)
@@ -266,3 +275,24 @@ TEST_F(HostCoreTest, NonArrayStatsIsRejected)
 }
 
 } // namespace
+
+// The third answer the enum exists for. A bool could not express it, which is
+// why this parameter stopped being one.
+TEST_F(HostCoreTest, BestEffortOptionalReachesTheCApi)
+{
+    LogosCore core(0, nullptr, emptyConfig());
+    EXPECT_TRUE(core.loadModule("alpha", LOGOS_LOAD_REQUIRED_AND_OPTIONAL));
+    EXPECT_EQ(stub.lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_AND_OPTIONAL));
+}
+
+// Worth asking after such a load: a skipped optional dependency keeps whatever
+// state it had, so nothing else tells it apart from one nobody wanted.
+TEST_F(HostCoreTest, OptionalLoadReportIsPassedThrough)
+{
+    stub.optionalReport =
+        R"([{"module":"extra","named_by":"alpha","reason":"not_installed"}])";
+    LogosCore core(0, nullptr, emptyConfig());
+    const auto report = core.optionalLoadReportJson("alpha");
+    ASSERT_TRUE(report.has_value());
+    EXPECT_NE(report->find("\"module\":\"extra\""), std::string::npos) << *report;
+}
