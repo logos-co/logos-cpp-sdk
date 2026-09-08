@@ -209,11 +209,12 @@ TEST_F(HostCoreTest, LoadDefaultsToResolvingDependenciesAndUnloadDoesNotCascade)
     LogosCore core(0, nullptr, emptyConfig());
 
     EXPECT_TRUE(core.loadModule("alpha"));
-    EXPECT_EQ(g->lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_DEPS))
-        << "the default must stay the required tree — it is what every host "
-           "asking loadModule(name) has always got";
-    EXPECT_EQ(stub.lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_DEPS))
-        << "a host almost always wants the dependency graph";
+    EXPECT_EQ(g->lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_AND_OPTIONAL))
+        << "the default brings up the optional collaborators that are installed; "
+           "a host asking loadModule(name) wants its fleet as complete as the "
+           "deployment allows";
+    EXPECT_EQ(stub.lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_AND_OPTIONAL))
+        << "a host almost always wants the dependency graph, optional half included";
 
     EXPECT_TRUE(core.unloadModule("alpha"));
     EXPECT_EQ(stub.lastUnloadWithDependents, 0)
@@ -277,13 +278,16 @@ TEST_F(HostCoreTest, NonArrayStatsIsRejected)
 
 } // namespace
 
-// The third answer the enum exists for. A bool could not express it, which is
-// why this parameter stopped being one.
-TEST_F(HostCoreTest, BestEffortOptionalReachesTheCApi)
+// The narrow modes are the ones worth probing explicitly: the widest is the
+// default, so passing it proves nothing an argument-dropping bug would fail.
+TEST_F(HostCoreTest, NarrowerModesReachTheCApi)
 {
     LogosCore core(0, nullptr, emptyConfig());
-    EXPECT_TRUE(core.loadModule("alpha", LOGOS_LOAD_REQUIRED_AND_OPTIONAL));
-    EXPECT_EQ(stub.lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_AND_OPTIONAL));
+    EXPECT_TRUE(core.loadModule("alpha", LOGOS_LOAD_REQUIRED_DEPS));
+    EXPECT_EQ(stub.lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_DEPS));
+
+    EXPECT_TRUE(core.loadModule("alpha", LOGOS_LOAD_MODULE_ONLY));
+    EXPECT_EQ(stub.lastLoadDeps, static_cast<int>(LOGOS_LOAD_MODULE_ONLY));
 }
 
 // Worth asking after such a load: a skipped optional dependency keeps whatever

@@ -230,13 +230,20 @@ public:
 
     // ── Module lifecycle ────────────────────────────────────────────────────
 
-    // Returns true on success. The default resolves and loads the module's
-    // REQUIRED dependency graph first, which is what a host almost always
-    // wants. LOGOS_LOAD_REQUIRED_AND_OPTIONAL additionally brings up whichever
-    // optional dependencies are installed — none of which can fail this call,
-    // so ask optionalLoadReport() below which ones were left out.
+    // Returns true on success. The default brings up the module's REQUIRED
+    // dependency graph AND whichever optional dependencies are installed —
+    // a host wants its fleet as complete as the deployment allows, and an
+    // optional dependency that is present but left down is a capability the
+    // operator installed and does not get.
+    //
+    // Nothing about the optional half can fail this call: not installed is
+    // skipped, unsatisfiable is left out, and a failed load is stepped over.
+    // Ask optionalLoadReportJson() below which ones were left out.
+    //
+    // Pass LOGOS_LOAD_REQUIRED_DEPS for the narrower answer, or
+    // LOGOS_LOAD_MODULE_ONLY to resolve nothing at all.
     bool loadModule(const std::string& name,
-                    LogosLoadDeps deps = LOGOS_LOAD_REQUIRED_DEPS)
+                    LogosLoadDeps deps = LOGOS_LOAD_REQUIRED_AND_OPTIONAL)
     {
         return logos_core_load_module(name.c_str(), deps) == 1;
     }
