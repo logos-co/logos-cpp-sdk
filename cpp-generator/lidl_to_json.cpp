@@ -13,9 +13,10 @@
 // (experimental/lidl_emit_common.cpp) and the two disagreed: this copy had no
 // `void` case, so a `-> void` method reaching it as Primitive("void") from the
 // impl-header parser fell through to QVariant and generated
-// `QVariant doVoid(...)`. (The .lidl parser spells the same thing
+// `QVariant doVoid(...)`. Older .lidl frontends spelled the same thing as
 // Named("void"), which survived only by accident — mapReturnType's
-// `base == "void"` early-out.) The lp/std tables are DERIVED from this name, so
+// `base == "void"` early-out. The canonical frontend now recognizes it as a
+// primitive method-return marker. The lp/std tables are DERIVED from this name, so
 // the same bug produced `LogosMap doVoid(...)` on the Qt-free surface: not a
 // Qt-only defect, a front-end one. It is now a delegation, so there is one
 // table to disagree with.

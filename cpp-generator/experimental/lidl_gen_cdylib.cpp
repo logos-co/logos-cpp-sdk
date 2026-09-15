@@ -36,9 +36,9 @@ QString cppStringLiteral(const QString& value)
 // Qt-free set the std apiStyle handled, so any universal module that built
 // under std also builds as a header-first cdylib.
 // The records a contract DECLARES. A `Named` type is a record only if it is in
-// here: `void` is not a LIDL builtin, so `-> void` arrives as Named("void") and
-// treating every Named as a record is how the Rust generator once emitted
-// `-> Void`. Same trap, same guard.
+// here. This explicit membership check also keeps older contracts/frontends
+// that represented `void` as Named("void") from turning it into a record — the
+// same trap that once made the Rust generator emit `-> Void`.
 std::set<std::string> recordNames(const ModuleDecl& module)
 {
     std::set<std::string> out;

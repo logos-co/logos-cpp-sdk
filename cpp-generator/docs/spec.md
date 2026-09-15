@@ -381,7 +381,7 @@ of the embedded copy that was deleted.
 
 1. **Lexer** — tokenizes source into keywords, identifiers, string literals, symbols (internal to `lidl::parse`)
 2. **Parser** (`lidlParse` → `lidl::parse`) — recursive descent parser producing a `ModuleDecl` AST
-3. **Validator** (`lidlValidate` → `lidl::validate`) — checks for duplicate names, unknown type references, builtin shadowing, duplicate parameters
+3. **Validator** (`lidlValidate` → `lidl::validate`) — checks for duplicate names, unknown type references, builtin shadowing, duplicate parameters, and restricts `void` to a direct method return
 4. **Serializer** (`lidlSerialize` → `lidl::serialize`) — emits the canonical LIDL document. `--normalize-lidl` exposes this full pipeline for authored files; serialization is byte-idempotent
 
 ### Impl Header Pipeline

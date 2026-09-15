@@ -165,7 +165,20 @@ TEST_F(ImplHeaderParserTest, MethodTypes)
     // void doNothing() → void
     auto doNothing = findMethod("doNothing");
     ASSERT_NE(doNothing, nullptr);
+    EXPECT_EQ(doNothing->returnType.kind, TypeExpr::Primitive);
     EXPECT_EQ(doNothing->returnType.name, "void");
+
+    // The header-derived form must survive the same canonicalization pass as
+    // an authored contract. This is the producer half of dependency bundling:
+    // consumers normalize the resulting sidecar again before packaging it.
+    const QString canonical = lidlSerialize(r.module);
+    auto normalized = lidlParse(canonical);
+    ASSERT_FALSE(normalized.hasError()) << normalized.error;
+    const auto validation = lidlValidate(normalized.module);
+    EXPECT_FALSE(validation.hasErrors());
+    for (const auto& error : validation.errors)
+        ADD_FAILURE() << error;
+    EXPECT_EQ(lidlSerialize(normalized.module), canonical);
 
     // std::vector<std::string> getNames() → [tstr]
     auto getNames = findMethod("getNames");
