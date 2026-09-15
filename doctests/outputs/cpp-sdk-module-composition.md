@@ -529,8 +529,9 @@ The greeter is a dependency of the orchestrator, so both must be tracked.
 
 ### 3.2 Build the greeter's .lgx against this SDK
 
-The greeter has no module dependency, so only its builder's
-`logos-cpp-sdk` needs overriding.
+The greeter has no module dependency. Its builder's `logos-cpp-sdk`,
+Qt SDK, and Qt plugin generator still move together: both Qt-side
+generators parse the interface emitted by the SDK under test.
 
 ```bash
 # From inside the greeter clone this is simply:
@@ -539,6 +540,8 @@ nix build 'path:./greeter_module#lgx' \
   --override-input logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-module-builder/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
   --override-input logos-module-builder/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
+  --override-input logos-module-builder/logos-plugin-qt 'github:logos-co/logos-plugin-qt' \
+  --override-input logos-module-builder/logos-plugin-qt/logos-lidl 'github:logos-co/logos-lidl' \
   -o greeter-lgx
 ```
 
@@ -552,9 +555,9 @@ ls greeter-lgx/*.lgx
 
 The orchestrator pulls in `greeter_module` as a dependency, so we lock
 that input to the local greeter checkout **and** override
-`logos-cpp-sdk` in both the orchestrator's builder and the greeter's
-builder — so the dependency wrapper the generator emits, and both
-plugins, are built against one consistent SDK.
+the SDK and Qt-side generator inputs in both the orchestrator's builder
+and the greeter's builder — so the dependency wrapper the generator
+emits, and both plugins, use one consistent LIDL grammar.
 
 ```bash
 nix build 'path:./orchestrator_module#lgx' \
@@ -562,9 +565,13 @@ nix build 'path:./orchestrator_module#lgx' \
   --override-input logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-module-builder/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
   --override-input logos-module-builder/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
+  --override-input logos-module-builder/logos-plugin-qt 'github:logos-co/logos-plugin-qt' \
+  --override-input logos-module-builder/logos-plugin-qt/logos-lidl 'github:logos-co/logos-lidl' \
   --override-input greeter_module/logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input greeter_module/logos-module-builder/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
   --override-input greeter_module/logos-module-builder/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
+  --override-input greeter_module/logos-module-builder/logos-plugin-qt 'github:logos-co/logos-plugin-qt' \
+  --override-input greeter_module/logos-module-builder/logos-plugin-qt/logos-lidl 'github:logos-co/logos-lidl' \
   -o orchestrator-lgx
 ```
 
