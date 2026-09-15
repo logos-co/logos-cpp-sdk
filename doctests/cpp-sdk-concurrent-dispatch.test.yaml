@@ -131,7 +131,7 @@ sections:
 
                 // Hold every call at a batch barrier until all requested calls have
                 // entered work(). This tests dispatch concurrency without relying on
-                // a particular machine scheduling four workers within 500 ms.
+                // a particular machine scheduling the whole batch within 500 ms.
                 {
                     std::unique_lock<std::mutex> lock(m_batchMutex);
                     ++m_batchArrived;
@@ -401,17 +401,17 @@ sections:
         expect_contains:
           - "fanout_driver_module"
           - "slow_worker_module"
-      - title: "Fan out 4 concurrent calls"
-        text: "`fanOut(4, 500)` fires four `work(500)` calls at the worker without waiting, and returns `4` immediately:"
-        run: "./logos/bin/logoscore call fanout_driver_module fanOut 4 500"
-        code_block: "logoscore call fanout_driver_module fanOut 4 500"
+      - title: "Fan out 2 concurrent calls"
+        text: "`fanOut(2, 500)` fires two `work(500)` calls at the worker without waiting, and returns `2` immediately. Two calls are enough to distinguish concurrent dispatch from serialization without assuming a larger worker pool:"
+        run: "./logos/bin/logoscore call fanout_driver_module fanOut 2 500"
+        code_block: "logoscore call fanout_driver_module fanOut 2 500"
         expect_contains:
-          - '"result":4'
-      - title: "The worker ran them concurrently (peak == 4)"
+          - '"result":2'
+      - title: "The worker ran them concurrently (peak == 2)"
         text: |
           `peak` is the most calls the worker saw running at once. Because the
-          worker is `concurrency: "multi"`, all four overlapped, so the peak is
-          **4**. Had the worker been `"single"`, the peak would be **1**. The
+          worker is `concurrency: "multi"`, both calls overlapped, so the peak is
+          **2**. Had the worker been `"single"`, the peak would be **1**. The
           worker's `peak()` method waits until the batch barrier opens, so this
           checks dispatch concurrency without relying on an arbitrary sleep. We
           read it **through the driver** (`fanout_driver_module.peak`), which
@@ -420,7 +420,7 @@ sections:
         run: "./logos/bin/logoscore call fanout_driver_module peak"
         code_block: "logoscore call fanout_driver_module peak"
         expect_contains:
-          - '"result":4'
+          - '"result":2'
       - title: "Stop the daemon"
         run: "./logos/bin/logoscore stop"
         code_block: "logoscore stop"
