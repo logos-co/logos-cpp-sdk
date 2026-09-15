@@ -20,7 +20,7 @@ intro: |
 
   | Module | `concurrency` | Role |
   |---|---|---|
-  | `slow_worker_module` | **`"multi"`** | `work(ms, batchSize)` waits for its batch, then blocks for `ms`, recording the PEAK number of calls running at once |
+  | `slow_worker_module` | **`"multi"`** | `work(ms, batchSize)` waits for its batch, then blocks for `ms`, while `peak()` waits for that batch and returns the PEAK number of calls running at once |
   | `fanout_driver_module` | `"single"` (default) | an ordinary single-threaded module that fires several `work` calls at the worker without waiting between them (the generated `workAsync` client) |
 
   The driver is single-threaded, yet it drives the worker concurrently: it fires
@@ -65,11 +65,12 @@ sections:
     step: true
     text: |
       A universal C++ module whose `work(ms, batchSize)` waits for the whole
-      batch to enter, then blocks for `ms`. The barrier makes the overlap
-      assertion independent of host scheduling. The single thing that makes it
-      concurrent is **`"concurrency": "multi"`** in its metadata. Under
-      multi dispatch its methods run on worker threads, so the author owns
-      synchronization of shared state.
+      batch to enter, then blocks for `ms`. Its `peak()` query waits on that same
+      barrier before reading the counter, making the overlap assertion
+      independent of host scheduling. The single thing that makes it concurrent
+      is **`"concurrency": "multi"`** in its metadata. Under multi dispatch its
+      methods run on worker threads, so the author owns synchronization of shared
+      state.
     steps:
       - title: "The implementation — plain C++, header-only"
         text: |
@@ -149,7 +150,16 @@ sections:
                 return ms;
             }
 
-            int64_t SlowWorkerModuleImpl::peak() { return m_maxSeen.load(); }
+            int64_t SlowWorkerModuleImpl::peak() {
+                // A peak query can race ahead of one of the async work requests on
+                // a heavily loaded host. Wait for the batch itself, rather than
+                // guessing how long dispatch should take.
+                std::unique_lock<std::mutex> lock(m_batchMutex);
+                m_batchReady.wait_for(lock, std::chrono::seconds(30), [this] {
+                    return m_batchOpen;
+                });
+                return m_maxSeen.load();
+            }
       - title: "metadata.json — note `concurrency: \"multi\"`"
         text: |
           `interface: "universal"` is the pure-C++ path; **`concurrency: "multi"`**
@@ -397,15 +407,16 @@ sections:
         code_block: "logoscore call fanout_driver_module fanOut 4 500"
         expect_contains:
           - '"result":4'
-      - run: "sleep 2"
       - title: "The worker ran them concurrently (peak == 4)"
         text: |
           `peak` is the most calls the worker saw running at once. Because the
           worker is `concurrency: "multi"`, all four overlapped, so the peak is
-          **4**. Had the worker been `"single"`, the peak would be **1**. We read it
-          **through the driver** (`fanout_driver_module.peak`), which forwards to the
-          worker: the driver is a protocol-0.2 consumer, so it awaits the multi
-          worker's deferred reply and returns the real number:
+          **4**. Had the worker been `"single"`, the peak would be **1**. The
+          worker's `peak()` method waits until the batch barrier opens, so this
+          checks dispatch concurrency without relying on an arbitrary sleep. We
+          read it **through the driver** (`fanout_driver_module.peak`), which
+          forwards to the worker: the driver is a protocol-0.2 consumer, so it
+          awaits the multi worker's deferred reply and returns the real number:
         run: "./logos/bin/logoscore call fanout_driver_module peak"
         code_block: "logoscore call fanout_driver_module peak"
         expect_contains:
