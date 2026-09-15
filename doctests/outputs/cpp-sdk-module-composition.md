@@ -530,8 +530,8 @@ The greeter is a dependency of the orchestrator, so both must be tracked.
 ### 3.2 Build the greeter's .lgx against this SDK
 
 The greeter has no module dependency. Its builder's `logos-cpp-sdk`,
-Qt SDK, and Qt plugin generator still move together: both Qt-side
-generators parse the interface emitted by the SDK under test.
+Qt SDK, and both Qt plugin-backend aliases still move together: the
+Qt-side generators parse the interface emitted by the SDK under test.
 
 ```bash
 # From inside the greeter clone this is simply:
@@ -542,6 +542,8 @@ nix build 'path:./greeter_module#lgx' \
   --override-input logos-module-builder/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
   --override-input logos-module-builder/logos-plugin-qt 'github:logos-co/logos-plugin-qt' \
   --override-input logos-module-builder/logos-plugin-qt/logos-lidl 'github:logos-co/logos-lidl' \
+  --override-input logos-module-builder/logos-plugin-core 'github:logos-co/logos-plugin-qt' \
+  --override-input logos-module-builder/logos-plugin-core/logos-lidl 'github:logos-co/logos-lidl' \
   -o greeter-lgx
 ```
 
@@ -567,11 +569,15 @@ nix build 'path:./orchestrator_module#lgx' \
   --override-input logos-module-builder/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
   --override-input logos-module-builder/logos-plugin-qt 'github:logos-co/logos-plugin-qt' \
   --override-input logos-module-builder/logos-plugin-qt/logos-lidl 'github:logos-co/logos-lidl' \
+  --override-input logos-module-builder/logos-plugin-core 'github:logos-co/logos-plugin-qt' \
+  --override-input logos-module-builder/logos-plugin-core/logos-lidl 'github:logos-co/logos-lidl' \
   --override-input greeter_module/logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input greeter_module/logos-module-builder/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
   --override-input greeter_module/logos-module-builder/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
   --override-input greeter_module/logos-module-builder/logos-plugin-qt 'github:logos-co/logos-plugin-qt' \
   --override-input greeter_module/logos-module-builder/logos-plugin-qt/logos-lidl 'github:logos-co/logos-lidl' \
+  --override-input greeter_module/logos-module-builder/logos-plugin-core 'github:logos-co/logos-plugin-qt' \
+  --override-input greeter_module/logos-module-builder/logos-plugin-core/logos-lidl 'github:logos-co/logos-lidl' \
   -o orchestrator-lgx
 ```
 
