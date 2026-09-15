@@ -338,6 +338,7 @@ sections:
             --override-input logos-module-builder/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
             --override-input logos-module-builder/logos-protocol 'github:logos-co/logos-protocol' \
             --override-input slow_worker_module/logos-module-builder/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
+            --override-input slow_worker_module/logos-module-builder/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
             --override-input slow_worker_module/logos-module-builder/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl'
         check_file: "fanout-driver/driver-lgx"
 
