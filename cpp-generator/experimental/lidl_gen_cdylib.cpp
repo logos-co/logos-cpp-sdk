@@ -783,16 +783,14 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
 
     s << "char* logos_module_dispatch(const char* method, const char* args_json)\n{\n";
     s << "    if (!method) return nullptr;\n";
-    s << "    lidlTryFireContext(false);\n";
     s << "    nlohmann::json args = nlohmann::json::array();\n";
     s << "    if (args_json && *args_json) {\n";
     s << "        args = nlohmann::json::parse(args_json, nullptr, false);\n";
     s << "        if (args.is_discarded() || !args.is_array()) return nullptr;\n";
     s << "    }\n";
     s << "    const std::string m(method);\n";
-    s << "    try {\n";
 
-    for (const MethodDecl& md : module.methods) {
+    const auto emitMethod = [&](const MethodDecl& md) {
         // The arity gate, and the one place the LIBERAL half of the decode rule
         // reaches a POSITIONAL slot.
         //
@@ -879,7 +877,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
             s << "            return lidlStrdup(" << stdReturnToJson(md, "result", recs)
               << ".dump());\n";
             s << "        }\n";
-            continue;
+            return;
         }
         QString call = "lidlImpl()." + qs(md.name) + "(";
         for (size_t i = 0; i < md.params.size(); ++i) {
@@ -899,13 +897,29 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
             s << "            return lidlStrdup(" << stdReturnToJson(md, "result", recs) << ".dump());\n";
         }
         s << "        }\n";
-    }
+    };
+    const auto emitCatch = [&] {
+        s << "    } catch (const std::exception& e) {\n";
+        s << "        nlohmann::json err{{\"code\", \"dispatch_failed\"}, {\"message\", e.what()},\n";
+        s << "                           {\"origin\", \"" << module.name << "\"}};\n";
+        s << "        return lidlStrdup(err.dump());\n";
+        s << "    }\n";
+    };
+    const auto isIdentity = [](const MethodDecl& md) {
+        return md.derived && lidl::isIdentityMethod(md.name);
+    };
 
-    s << "    } catch (const std::exception& e) {\n";
-    s << "        nlohmann::json err{{\"code\", \"dispatch_failed\"}, {\"message\", e.what()},\n";
-    s << "                           {\"origin\", \"" << module.name << "\"}};\n";
-    s << "        return lidlStrdup(err.dump());\n";
-    s << "    }\n";
+    // name()/version()/lidl() first: a host asks name() before it has tokens or
+    // context, and lidlTryFireContext() constructs the impl and may fire onContextReady.
+    s << "    try {\n";
+    for (const MethodDecl& md : module.methods)
+        if (isIdentity(md)) emitMethod(md);
+    emitCatch();
+    s << "    lidlTryFireContext(false);\n";
+    s << "    try {\n";
+    for (const MethodDecl& md : module.methods)
+        if (!isIdentity(md)) emitMethod(md);
+    emitCatch();
     s << "    return nullptr;  // unknown method\n";
     s << "}\n\n";
 
