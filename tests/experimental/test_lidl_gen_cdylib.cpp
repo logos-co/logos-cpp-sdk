@@ -786,6 +786,25 @@ TEST(LidlGenCdylib, IdentityMethodsAnswerFromTheModuleDeclaration)
     EXPECT_FALSE(src.contains("lidlImpl().lidl(")) << src.toStdString();
 }
 
+// Detector: dispatch fired lidlTryFireContext() before answering name(), so the
+// host's identity check constructed the impl, and ran onContextReady, before tokens.
+TEST(LidlGenCdylib, IdentityIsAnsweredBeforeTheImplIsTouched)
+{
+    ModuleDecl m = moduleWithIdentity("weather_module", "2.4.1");
+    m.methods.push_back(method("forecast", prim("tstr"), {}));
+    const QString src = implExportsFor(m);
+    const int dispatch = src.indexOf("char* logos_module_dispatch(");
+    ASSERT_GE(dispatch, 0) << src.toStdString();
+    const int name = src.indexOf("if (m == \"name\")", dispatch);
+    const int hook = src.indexOf("lidlTryFireContext(false);", dispatch);
+    const int call = src.indexOf("lidlImpl().forecast(", dispatch);
+    ASSERT_GE(name, 0) << src.toStdString();
+    ASSERT_GE(hook, 0) << src.toStdString();
+    ASSERT_GE(call, 0) << src.toStdString();
+    EXPECT_LT(name, hook) << "name() is answered only after the impl is touched";
+    EXPECT_LT(hook, call) << "a method reaches the impl before the context hook";
+}
+
 TEST(LidlGenCdylib, LidlMethodAnswersTheCanonicalDocument)
 {
     ModuleDecl m = moduleWithIdentity("weather_module", "2.4.1");
