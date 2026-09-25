@@ -1124,3 +1124,18 @@ TEST(LidlGenCdylib, PublishedTypesSpellMapsAndOptionals)
     EXPECT_TRUE(opts.contains("obj[\"signature\"] = \"m(? tstr)\"")) << opts.toStdString();
     EXPECT_TRUE(opts.contains("{\"type\", \"? tstr\"}")) << opts.toStdString();
 }
+
+// A host that loads the image in-process hands it a runtime delegate through
+// this export. Guarded MAJOR-aware on 0.13 so unifdef can resolve it.
+TEST(LidlGenCdylib, TheRuntimeDelegateExportIsGuardedOnProtocol013)
+{
+    const QString src = implExportsFor(moduleWithMethod(method("m", prim("bool"), {})));
+    const QString guard =
+        "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && (LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+        "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && LOGOS_PROTOCOL_VERSION_MINOR >= 13))\n";
+    EXPECT_TRUE(src.contains(guard + "#include \"logos_runtime_delegate.h\"")) << src.toStdString();
+    EXPECT_TRUE(src.contains(guard + "LOGOS_MODULE_IMPL_EXPORT int logos_module_set_runtime_delegate("
+                                     "const lp_runtime_delegate_v1* delegate)"))
+        << src.toStdString();
+    EXPECT_TRUE(src.contains("return lp_runtime_install_delegate(delegate);")) << src.toStdString();
+}

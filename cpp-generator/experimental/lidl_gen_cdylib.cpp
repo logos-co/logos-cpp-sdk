@@ -652,6 +652,13 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "#include \"" << module.name << "_types.h\"\n";
     s << "#include \"logos_module_impl.h\"\n";
     s << "#include \"logos_protocol.h\"\n";
+    // Protocol 0.13's runtime delegate, for a host that loads this image in-process.
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && "
+         "LOGOS_PROTOCOL_VERSION_MINOR >= 13))\n";
+    s << "#include \"logos_runtime_delegate.h\"\n";
+    s << "#endif\n";
     s << "#include \"logos_module_context.h\"\n";
     s << "#include \"logos_result.h\"\n";
     // The caller-of-a-dispatch reader. Unconditional: it is a logos-cpp-sdk
@@ -1116,6 +1123,17 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
 
     s << "void logos_module_string_free(char* str)\n{\n";
     s << "    std::free(str);\n}\n\n";
+
+    // OPTIONAL and not declared in logos_module_impl.h, so a backend without it
+    // stays loadable (as a subprocess only): the host looks it up by name.
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && "
+         "LOGOS_PROTOCOL_VERSION_MINOR >= 13))\n";
+    s << "LOGOS_MODULE_IMPL_EXPORT int logos_module_set_runtime_delegate("
+         "const lp_runtime_delegate_v1* delegate)\n{\n";
+    s << "    return lp_runtime_install_delegate(delegate);\n}\n";
+    s << "#endif\n\n";
 
     s << "} // extern \"C\"\n";
     return c;
