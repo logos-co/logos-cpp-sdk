@@ -649,6 +649,23 @@ program actually is — take the narrow one when touching a repo:
 | `logos-cpp-sdk::logos_provider` | `logos_module_context.h`, `logos_host_services.h` | IMPLEMENTING a module |
 | `logos-cpp-sdk::logos_host` | `logos_host_core.h` | STANDING UP a core and loading modules (basecamp, logoscore-cli, standalone-app, module-viewer). A module never needs this |
 
+`logos::host::LogosCore` (in `logos_host_core.h`) is how a host stands up
+liblogos. Everything in its `Config` is applied before `start()`:
+- `modulesDirs` and `bundledModulesDirs`. A reserved module name resolves only
+  from the bundled directories, and only their modules may run in-process.
+- `placementPolicyJson`, `packageConfigJson`, `accessPolicyJson` and
+  `moduleTransports`.
+- `shellName`, the host's own identity (`basecamp`, `standalone`, ...).
+
+When capability_module runs in-process, `start()` takes the shell binding. Module
+lifecycle then goes through `core_service` (its contract ships as
+`share/logos/core_service.lidl`) as that identity: `loadModule`, `unloadModule`
+and `refreshModules`. `admitConsumer(name)` returns a credential for one of the
+host's UI plugins, and `retireConsumer(name)` ends it. `shellCredential()` is the
+host's own, for a `LogosAPI` that should call as the shell. Without the
+authority, the C API serves the same methods as before. `tokenListener` is
+deprecated: once capability_module is the authority, core saves no tokens.
+
 ### Transports
 
 > **Where they live:** none of the types in this section are in this repo any
