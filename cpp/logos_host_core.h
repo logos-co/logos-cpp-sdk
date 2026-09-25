@@ -60,11 +60,18 @@
 // UI plugins. The C API that is left is the configuration before start, start
 // and cleanup, the binding itself, and processModule.
 //
+// ── Where the runtime runs ──────────────────────────────────────────────────
+// By default (Config::separateProcess) start() spawns the runtime as liblogos'
+// bin/logos_runtime: the token authority and every module's credential stay in
+// that process, and this one reaches it only over the binding, as its shell.
+// With separateProcess off it runs in this process, as before.
+//
 // Header-only, Qt-free, and it adds no link edge: `cpp/CMakeLists.txt` exports
 // an INTERFACE library and this drops straight into it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -118,6 +125,14 @@ logos_consumer_subscription* logos_consumer_subscribe(logos_consumer* consumer,
 void   logos_consumer_unsubscribe(logos_consumer_subscription* subscription);
 void   logos_consumer_string_free(char* value);
 void   logos_consumer_release(logos_consumer* consumer);
+// The runtime in a process of its own.
+typedef struct logos_runtime logos_runtime;
+typedef void (*logos_runtime_exit_cb)(const char* reason, void* user_data);
+logos_runtime*  logos_runtime_spawn(const char* config_json, char** out_error);
+logos_consumer* logos_runtime_binding(logos_runtime* runtime);
+char*  logos_runtime_process_module(logos_runtime* runtime, const char* module_path);
+void   logos_runtime_on_exit(logos_runtime* runtime, logos_runtime_exit_cb cb, void* user_data);
+void   logos_runtime_stop(logos_runtime* runtime);
 }
 
 namespace logos {
@@ -204,6 +219,15 @@ inline std::vector<std::string> names(const nlohmann::json& answer)
     return out;
 }
 
+// A string from the binding or the runtime, freed as liblogos allocated it.
+inline std::optional<std::string> drainConsumerString(char* s)
+{
+    if (!s) return std::nullopt;
+    std::optional<std::string> out(std::string{s});
+    logos_consumer_string_free(s);
+    return out;
+}
+
 // A JSON answer as text, or nullopt when there was none.
 inline std::optional<std::string> text(const nlohmann::json& answer)
 {
@@ -245,12 +269,12 @@ inline std::vector<ModuleStats> parseStats(const nlohmann::json& parsed)
 } // namespace detail
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LogosCore — owns the process-wide Logos core.
+// LogosCore — owns the process's Logos runtime, in a process of its own or here.
 //
 // Construct exactly ONE, in main(), and keep it alive for the process. The
 // underlying C API is process-global, so this type is neither copyable nor
-// movable: two instances would mean two owners of one core, and the second
-// destructor would call logos_core_cleanup() on an already-cleaned core.
+// movable: two instances would mean two owners of one runtime, and the second
+// destructor would stop an already-stopped one.
 //
 //     logos::host::LogosCore::Config cfg;
 //     cfg.shellName = "my_app";
@@ -300,12 +324,21 @@ public:
         // REQUIRED: the host's own identity ("basecamp", ...). start() takes the
         // shell binding, and every call below goes through core_service as it.
         std::string shellName;
+
+        // The runtime in a process of its own: start() spawns it, and the
+        // settings above go with it (a refused one fails start()). Off, it runs
+        // here and the constructor applies them (tests, single-process builds).
+        bool separateProcess = true;
     };
 
     LogosCore(int argc, char* argv[], Config config)
     {
         if (config.shellName.empty())
             throw std::invalid_argument("logos::host::LogosCore: a shellName is required");
+        if (config.separateProcess) {
+            m_runtimeConfig = runtimeConfig(config);
+            return;
+        }
         logos_core_init(argc, argv);
         // Ordered exactly as liblogos documents: dirs, then persistence, then
         // transports, then policy — all strictly before start().
@@ -334,6 +367,12 @@ public:
 
     ~LogosCore()
     {
+        // The runtime's handle owns its binding.
+        if (m_runtime) {
+            logos_runtime_stop(m_runtime);
+            return;
+        }
+        if (!m_runtimeConfig.is_null()) return; // never spawned
         if (m_binding) logos_consumer_release(m_binding);
         logos_core_cleanup();
     }
@@ -343,12 +382,24 @@ public:
     LogosCore(LogosCore&&) = delete;
     LogosCore& operator=(LogosCore&&) = delete;
 
-    // Boots the core and spawns the modules liblogos starts itself (notably
-    // capability_module), then takes the shell binding. After this, the
-    // pre-start settings above can no longer be changed. Throws when there is
-    // no binding: liblogos then has no token authority and loads nothing.
+    // Boots the runtime, in its own process or here, with the modules liblogos
+    // starts itself (notably capability_module), then takes the shell binding.
+    // After this, the pre-start settings above can no longer be changed. Throws
+    // when there is no binding: the runtime then has no token authority and
+    // loads nothing, or (separately) did not start at all.
     void start()
     {
+        if (!m_runtimeConfig.is_null()) {
+            char* error = nullptr;
+            m_runtime = logos_runtime_spawn(m_runtimeConfig.dump().c_str(), &error);
+            const std::string why = detail::drainConsumerString(error).value_or("");
+            if (!m_runtime)
+                throw std::runtime_error("logos::host::LogosCore: the runtime did not start: " + why);
+            m_started = true;
+            m_binding = logos_runtime_binding(m_runtime);
+            if (m_onExit) logos_runtime_on_exit(m_runtime, &LogosCore::runtimeExited, this);
+            return;
+        }
         logos_core_start();
         m_started = true;
         m_binding = logos_core_take_shell_binding();
@@ -358,6 +409,18 @@ public:
     }
 
     bool isStarted() const { return m_started; }
+
+    // Whether the runtime runs in a process of its own.
+    bool separateProcess() const { return !m_runtimeConfig.is_null(); }
+
+    // Called once, on a liblogos thread, if the separate runtime exits before
+    // this object stops it: nothing then answers the calls below. Set it before
+    // start(); it must not block.
+    void onRuntimeExit(std::function<void(const std::string& reason)> callback)
+    {
+        m_onExit = std::move(callback);
+        if (m_runtime && m_onExit) logos_runtime_on_exit(m_runtime, &LogosCore::runtimeExited, this);
+    }
 
     // ── The shell identity ──────────────────────────────────────────────────
 
@@ -442,11 +505,16 @@ public:
                                 detail::kLifecycleMs);
     }
 
-    // Registers a module file with the core, returning whatever liblogos
-    // reports about it (nullopt on error). The one call left on the C API: it
-    // is the embedder's alone, and refuses names the runtime already knows.
+    // Registers a module file with the runtime, returning its name (nullopt on
+    // error). Never a core_service call: it is the embedder's alone, and
+    // refuses names the runtime already knows. A separate runtime takes it
+    // over its private channel, once started.
     std::optional<std::string> processModule(const std::string& modulePath)
     {
+        if (m_runtime)
+            return detail::drainConsumerString(
+                logos_runtime_process_module(m_runtime, modulePath.c_str()));
+        if (!m_runtimeConfig.is_null()) return std::nullopt;
         return detail::drainCString(logos_core_process_module(modulePath.c_str()));
     }
 
@@ -532,6 +600,34 @@ private:
         throw std::invalid_argument(std::string("logos::host::LogosCore: liblogos refused ") + what);
     }
 
+    // What logos_runtime_spawn takes: the settings the setters would.
+    static nlohmann::json runtimeConfig(const Config& config)
+    {
+        nlohmann::json doc = {{"shell", config.shellName}};
+        if (!config.modulesDirs.empty()) doc["modules_dirs"] = config.modulesDirs;
+        if (!config.bundledModulesDirs.empty()) doc["bundled_modules_dirs"] = config.bundledModulesDirs;
+        if (!config.persistenceBasePath.empty())
+            doc["persistence_base_path"] = config.persistenceBasePath;
+        if (!config.moduleTransports.empty()) {
+            nlohmann::json transports = nlohmann::json::object();
+            for (const auto& entry : config.moduleTransports) transports[entry.first] = entry.second;
+            doc["module_transports"] = transports;
+        }
+        if (config.accessPolicyJson) doc["access_policy"] = *config.accessPolicyJson;
+        if (config.placementPolicyJson) doc["placement_policy"] = *config.placementPolicyJson;
+        if (config.packageConfigJson) doc["package_config"] = *config.packageConfigJson;
+        return doc;
+    }
+
+    static void runtimeExited(const char* reason, void* self)
+    {
+        auto* core = static_cast<LogosCore*>(self);
+        if (core->m_onExit) core->m_onExit(reason ? reason : "");
+    }
+
+    nlohmann::json m_runtimeConfig; // null: the runtime runs here
+    logos_runtime* m_runtime = nullptr;
+    std::function<void(const std::string&)> m_onExit;
     logos_consumer* m_binding = nullptr;
     bool m_started = false;
 };
