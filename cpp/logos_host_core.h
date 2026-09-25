@@ -114,6 +114,7 @@ void   logos_core_refresh_modules();
 int    logos_core_set_bundled_modules_dirs(const char* const* dirs);
 int    logos_core_set_placement_policy(const char* policy_json);
 int    logos_core_set_shell_identity(const char* name);
+int    logos_core_set_package_config(const char* config_json);
 // The shell binding: the host's own identity, admitted by capability_module.
 typedef struct logos_consumer logos_consumer;
 typedef struct logos_consumer_subscription logos_consumer_subscription;
@@ -306,6 +307,11 @@ public:
         // Where modules run, as liblogos' placement policy; nullopt keeps its default.
         std::optional<std::string> placementPolicyJson;
 
+        // package_manager's directories and signature policy, which the runtime
+        // applies as it loads (its setters answer only the runtime); see
+        // logos_core_set_package_config.
+        std::optional<std::string> packageConfigJson;
+
         // The host's own identity ("basecamp", ...). When capability_module runs
         // in-process, start() takes the shell binding and module lifecycle goes
         // through core_service as that identity; otherwise through the C API.
@@ -334,6 +340,9 @@ public:
         if (config.placementPolicyJson.has_value())
             require(logos_core_set_placement_policy(config.placementPolicyJson->c_str()),
                     "the placement policy");
+        if (config.packageConfigJson.has_value())
+            require(logos_core_set_package_config(config.packageConfigJson->c_str()),
+                    "the package config");
         if (!config.shellName.empty()) {
             require(logos_core_set_shell_identity(config.shellName.c_str()), "the shell name");
             m_shellName = config.shellName;
