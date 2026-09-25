@@ -17,7 +17,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <cstring>
+#include <map>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -53,6 +57,20 @@ struct CoreStub {
     std::string optionalReport = "[]";
     int  lastUnloadWithDependents = -1;
     bool loadSucceeds = true;
+    LogosCoreTokenListener tokenListener = nullptr;
+    void* tokenListenerData = nullptr;
+
+    // The protected setters and the shell binding.
+    std::vector<std::string> bundledDirs;
+    std::string placement;
+    std::string shellName;
+    std::string packageConfig;
+    int refuseSetters = 0;          // what the protected setters answer
+    bool bindingAvailable = true;   // capability_module is the token authority
+    int bindingReleases = 0;
+    // core_service over the binding: each call, and a canned answer per method.
+    std::vector<std::pair<std::string, std::string>> coreServiceCalls; // (method, args)
+    std::map<std::string, std::string> answers;
 };
 
 CoreStub* g = nullptr;
@@ -104,7 +122,56 @@ int logos_core_unload_module(const char*, bool withDepdts) { g->lastUnloadWithDe
 char* logos_core_get_modules_info()               { return dupC("[]"); }
 char* logos_core_process_module(const char*)      { return dupC("processed"); }
 char* logos_core_get_token(const char*)           { return g->tokenPresent ? dupC("tok-123") : nullptr; }
+void logos_core_set_token_listener(LogosCoreTokenListener l, void* d)
+{
+    g->tokenListener = l;
+    g->tokenListenerData = d;
+    g->callOrder.push_back(l ? "token_listener" : "token_listener_removed");
+}
 char* logos_core_get_module_stats()               { return g->statsJson.empty() ? nullptr : dupC(g->statsJson); }
+
+int logos_core_set_bundled_modules_dirs(const char* const* dirs)
+{
+    for (const char* const* d = dirs; *d; ++d) g->bundledDirs.emplace_back(*d);
+    g->callOrder.push_back("bundled_dirs");
+    return g->refuseSetters;
+}
+int logos_core_set_placement_policy(const char* p) { g->placement = p; g->callOrder.push_back("placement"); return g->refuseSetters; }
+int logos_core_set_shell_identity(const char* n)   { g->shellName = n; g->callOrder.push_back("shell"); return g->refuseSetters; }
+int logos_core_set_package_config(const char* c)   { g->packageConfig = c; g->callOrder.push_back("package_config"); return g->refuseSetters; }
+
+// The binding is a tag: nothing here dereferences it.
+char gBindingTag;
+logos_consumer* logos_core_take_shell_binding(void)
+{
+    g->callOrder.push_back("take_binding");
+    return g->bindingAvailable ? reinterpret_cast<logos_consumer*>(&gBindingTag) : nullptr;
+}
+const char* logos_consumer_name(const logos_consumer*) { return g->shellName.c_str(); }
+char* logos_consumer_credential(const logos_consumer*)
+{
+    char* value = static_cast<char*>(std::malloc(10));
+    std::memcpy(value, "shell-cr", 9);
+    return value;
+}
+int logos_consumer_call(logos_consumer* consumer, const char* target, const char* method,
+                        const char* args, int, char** out, char** err)
+{
+    if (consumer != reinterpret_cast<logos_consumer*>(&gBindingTag) || std::string(target) != "core_service")
+        return -1;
+    g->coreServiceCalls.emplace_back(method, args);
+    const auto it = g->answers.find(method);
+    if (it == g->answers.end()) return -1;
+    *out = static_cast<char*>(std::malloc(it->second.size() + 1));
+    std::memcpy(*out, it->second.c_str(), it->second.size() + 1);
+    *err = nullptr;
+    return 0;
+}
+logos_consumer_subscription* logos_consumer_subscribe(logos_consumer*, const char*, const char*,
+                                                      logos_consumer_event_cb, void*) { return nullptr; }
+void logos_consumer_unsubscribe(logos_consumer_subscription*) {}
+void logos_consumer_string_free(char* value) { std::free(value); }
+void logos_consumer_release(logos_consumer*) { ++g->bindingReleases; g->callOrder.push_back("release_binding"); }
 }
 
 namespace {
@@ -160,6 +227,31 @@ TEST_F(HostCoreTest, AbsentOptionalSettingsAreNotPushedAtAll)
     EXPECT_FALSE(stub.accessPolicySet);
     EXPECT_TRUE(stub.modulesDirs.empty());
     EXPECT_TRUE(stub.persistenceBasePath.empty());
+}
+
+TEST_F(HostCoreTest, TokenListenerIsInstalledBeforeStartAndRemovedBeforeCleanup)
+{
+    std::vector<std::pair<std::string, std::string>> seen;
+    LogosCore::Config cfg;
+    cfg.tokenListener = [&](const std::string& key, const std::string& token) {
+        seen.emplace_back(key, token);
+    };
+    {
+        LogosCore core(0, nullptr, std::move(cfg));
+        ASSERT_NE(stub.tokenListener, nullptr);
+        stub.tokenListener("capability_module", "tok-1", stub.tokenListenerData);
+        core.start();
+    }
+    EXPECT_EQ(seen, (std::vector<std::pair<std::string, std::string>>{
+        {"capability_module", "tok-1"}}));
+    EXPECT_EQ(stub.callOrder, (std::vector<std::string>{
+        "init", "token_listener", "start", "token_listener_removed", "cleanup"}));
+}
+
+TEST_F(HostCoreTest, NoTokenListenerTouchesNothing)
+{
+    { LogosCore core(0, nullptr, emptyConfig()); }
+    EXPECT_EQ(stub.callOrder, (std::vector<std::string>{"init", "cleanup"}));
 }
 
 TEST_F(HostCoreTest, EmptyAccessPolicyStringIsStillInstalled)
@@ -305,4 +397,123 @@ TEST_F(HostCoreTest, OptionalDependenciesAreReachable)
     LogosCore core(0, nullptr, emptyConfig());
     EXPECT_EQ(core.optionalDependencies("alpha"),
               (std::vector<std::string>{"opt1", "opt2"}));
+}
+
+// ── the shell binding ───────────────────────────────────────────────────────
+
+namespace {
+
+LogosCore::Config shellConfig()
+{
+    LogosCore::Config cfg;
+    cfg.bundledModulesDirs = {"/app/modules", "/app/modules-pkg"};
+    cfg.placementPolicyJson = std::string(R"({"default":"subprocess"})");
+    cfg.packageConfigJson = std::string(R"({"user_modules_dir":"/u/modules"})");
+    cfg.shellName = "basecamp";
+    return cfg;
+}
+
+} // namespace
+
+TEST_F(HostCoreTest, ProtectedInputIsAppliedBeforeStart)
+{
+    LogosCore core(0, nullptr, shellConfig());
+    core.start();
+    EXPECT_EQ(stub.bundledDirs, (std::vector<std::string>{"/app/modules", "/app/modules-pkg"}));
+    EXPECT_EQ(stub.placement, R"({"default":"subprocess"})");
+    EXPECT_EQ(stub.shellName, "basecamp");
+    EXPECT_EQ(stub.packageConfig, R"({"user_modules_dir":"/u/modules"})");
+    EXPECT_EQ(stub.callOrder, (std::vector<std::string>{
+        "init", "bundled_dirs", "placement", "package_config", "shell", "start",
+        "take_binding"}));
+}
+
+TEST_F(HostCoreTest, ARefusedSettingThrowsAfterCleaningUp)
+{
+    stub.refuseSetters = -1;
+    EXPECT_THROW(LogosCore(0, nullptr, shellConfig()), std::invalid_argument);
+    EXPECT_EQ(stub.cleanupCalls, 1) << "an initialised core must not be left behind";
+}
+
+TEST_F(HostCoreTest, WithTheBindingLifecycleGoesThroughCoreService)
+{
+    stub.answers = {
+        {"loadModule", R"({"status":"ok","module":"alpha"})"},
+        {"unloadModule", R"({"status":"ok","module":"alpha"})"},
+        {"refreshModules", R"({"status":"ok"})"},
+        {"listModules", R"([{"name":"alpha","status":"loaded"},{"name":"beta","status":"loaded"}])"},
+        {"getModuleStats", R"([{"name":"alpha","cpu_percent":1.5,"memory_mb":2.0}])"},
+    };
+    LogosCore core(0, nullptr, shellConfig());
+    core.start();
+    ASSERT_TRUE(core.shellBound());
+
+    EXPECT_TRUE(core.loadModule("alpha"));
+    EXPECT_TRUE(core.loadModule("alpha", LOGOS_LOAD_MODULE_ONLY));
+    EXPECT_TRUE(core.unloadModule("alpha", /*withDependents=*/true));
+    core.refreshModules();
+    EXPECT_EQ(core.loadedModules(), (std::vector<std::string>{"alpha", "beta"}));
+    const auto stats = core.stats("alpha");
+    ASSERT_TRUE(stats.has_value());
+    EXPECT_DOUBLE_EQ(stats->cpuPercent, 1.5);
+
+    EXPECT_EQ(stub.lastLoadDeps, -1) << "the C API was bypassed";
+    EXPECT_EQ(stub.coreServiceCalls, (std::vector<std::pair<std::string, std::string>>{
+        {"loadModule", R"(["alpha","required"])"},
+        {"loadModule", R"(["alpha","module_only"])"},
+        {"unloadModule", R"(["alpha",true])"},
+        {"refreshModules", "[]"},
+        {"listModules", R"(["loaded"])"},
+        {"getModuleStats", "[]"},
+    }));
+}
+
+TEST_F(HostCoreTest, AnErrorAnswerIsAFailedLoad)
+{
+    stub.answers = {{"loadModule", R"({"status":"error","code":"MODULE_LOAD_FAILED"})"}};
+    LogosCore core(0, nullptr, shellConfig());
+    core.start();
+    EXPECT_FALSE(core.loadModule("alpha"));
+}
+
+// Without capability_module in-process there is no binding: the C API serves.
+TEST_F(HostCoreTest, WithoutTheBindingTheCApiStillServes)
+{
+    stub.bindingAvailable = false;
+    LogosCore core(0, nullptr, shellConfig());
+    core.start();
+    EXPECT_FALSE(core.shellBound());
+    EXPECT_TRUE(core.loadModule("alpha"));
+    EXPECT_EQ(stub.lastLoadDeps, static_cast<int>(LOGOS_LOAD_REQUIRED_DEPS));
+    EXPECT_FALSE(core.admitConsumer("my_ui").has_value());
+    EXPECT_FALSE(core.shellCredential().has_value());
+    EXPECT_TRUE(stub.coreServiceCalls.empty());
+}
+
+TEST_F(HostCoreTest, ConsumersAreAdmittedThroughCoreService)
+{
+    stub.answers = {
+        {"admitConsumer", R"({"status":"ok","name":"my_ui","credential":"cred-1"})"},
+        {"retireConsumer", R"({"status":"ok","name":"my_ui"})"},
+    };
+    LogosCore core(0, nullptr, shellConfig());
+    core.start();
+    EXPECT_EQ(core.shellCredential().value_or(""), "shell-cr");
+    EXPECT_EQ(core.admitConsumer("my_ui").value_or(""), "cred-1");
+    EXPECT_TRUE(core.retireConsumer("my_ui"));
+    ASSERT_EQ(stub.coreServiceCalls.size(), 2u);
+    EXPECT_EQ(stub.coreServiceCalls[0].second, R"(["my_ui","presentation"])");
+}
+
+TEST_F(HostCoreTest, TheBindingIsReleasedBeforeCleanup)
+{
+    {
+        LogosCore core(0, nullptr, shellConfig());
+        core.start();
+    }
+    EXPECT_EQ(stub.bindingReleases, 1);
+    const auto release = std::find(stub.callOrder.begin(), stub.callOrder.end(), "release_binding");
+    const auto cleanup = std::find(stub.callOrder.begin(), stub.callOrder.end(), "cleanup");
+    ASSERT_NE(release, stub.callOrder.end());
+    EXPECT_LT(release, cleanup);
 }

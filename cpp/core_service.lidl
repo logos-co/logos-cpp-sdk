@@ -1,0 +1,35 @@
+; core_service: the runtime's control surface, compiled into liblogos and published
+; by logos_core_start() as a module of its own (logos-liblogos
+; src/core_service/embedded_core_service.cpp). Each method answers only the callers
+; its scope admits; a refusal is {"status":"error","code":"FORBIDDEN",...}.
+; logos::host::LogosCore (logos_host_core.h) calls it over the shell binding.
+module core_service {
+  version "1.0.0"
+  description "The Logos runtime's control surface"
+  category "system"
+  depends []
+
+  ; read: any admitted module, the shell, operators
+  method listModules(filter: ?tstr) -> [any] description "Known modules as {name, status, version, uptime_seconds?}; filter \"loaded\" keeps the running ones."
+  method getStatus() -> any description "{daemon, modules, modules_summary}."
+  method getModuleInfo(name: tstr) -> any description "{name, version, status, dependencies, dependents, methods?, events?}."
+  method getModuleStats() -> [any] description "One {name, cpu_percent, cpu_time_seconds, memory_mb} per running module."
+
+  ; control: the shell and operators
+  method loadModule(name: tstr, deps: ?tstr) -> any description "Ensures the module is loaded. deps: module_only | required | required_and_optional (the default). {status, module, version, dependencies_loaded, optional_skipped?}."
+  method unloadModule(name: tstr, withDependents: ?bool) -> any description "withDependents defaults to true. {status, module, dependents_unloaded}."
+  method reloadModule(name: tstr) -> any description "{status: loaded | error, module, previous_status, version?, restored?}."
+  method refreshModules() -> any description "Rescans the module directories. {status, known_modules}."
+  method shutdown() -> any description "Hands shutdown to the embedder's handler; refused without one."
+
+  ; shell only: presentation consumers (UI plugins), minted by capability_module
+  method admitConsumer(name: tstr, kind: ?tstr) -> any description "kind is presentation. {status, name, credential}; a reserved or known module name is refused."
+  method retireConsumer(name: tstr) -> any description "Ends a consumer admitted here and revokes its tokens."
+
+  ; operators only, and never to capability_module or core_service
+  method callModuleMethod(module: tstr, method: tstr, args: ?[any]) -> any description "The target sees the operator. {status, module, method, result} or METHOD_FAILED / METHOD_NOT_FOUND."
+  method watchModuleEvents(module: tstr, eventName: ?tstr) -> bool description "Forwards the module's events as module_event."
+
+  event moduleStateChanged(module: tstr, from: tstr, to: tstr, reason: ?tstr, seq: uint)
+  event module_event(module: tstr, event: tstr, args: ?[any])
+}
