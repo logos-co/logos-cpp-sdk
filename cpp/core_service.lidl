@@ -14,6 +14,11 @@ module core_service {
   method getStatus() -> any description "{daemon, modules, modules_summary}."
   method getModuleInfo(name: tstr) -> any description "{name, version, status, dependencies, dependents, methods?, events?}."
   method getModuleStats() -> [any] description "One {name, cpu_percent, cpu_time_seconds, memory_mb} per running module."
+  method getModulesInfo() -> [any] description "Every known module's full record, as liblogos keeps it."
+  method getModuleDependencies(name: tstr, recursive: ?bool) -> [tstr] description "The modules it requires; recursive walks the whole tree."
+  method getModuleDependents(name: tstr, recursive: ?bool) -> [tstr] description "The modules that require it; recursive walks the whole tree."
+  method getModuleOptionalDependencies(name: tstr) -> [tstr] description "The optional dependencies it declares."
+  method getOptionalLoadReport(name: tstr) -> [any] description "The optional dependencies its last required_and_optional load left out, and why."
 
   ; control: the shell and operators
   method loadModule(name: tstr, deps: ?tstr) -> any description "Ensures the module is loaded. deps: module_only | required | required_and_optional (the default). {status, module, version, dependencies_loaded, optional_skipped?}."

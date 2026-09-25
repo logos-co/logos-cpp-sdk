@@ -3,15 +3,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // logos_host_services.h — the C++ veneer over the privileged host services.
 //
-// These are the operations an ordinary module must NOT have: enumerating the
-// token store, and pushing an auth token to an arbitrary target. Exactly one
-// module in a normal deployment needs them — capability_module, the trust root
-// — which is why they are a declared, host-granted privilege rather than part
-// of the ambient SDK surface.
+// These are the operations an ordinary module must NOT have: pushing an auth
+// token to, or withdrawing one from, an arbitrary target. Exactly one module in
+// a normal deployment needs them — capability_module, the token authority —
+// which is why they are a declared, host-granted privilege rather than part of
+// the ambient SDK surface.
 //
 // A module declares what it needs in metadata.json:
 //
-//     "host_services": ["token_registry", "token_delivery"]
+//     "host_services": ["token_delivery"]
 //
 // and the HOST decides whether to grant it, pushing the grant in over the
 // module-impl C ABI (logos_module_grant_host_services). Until that happens
@@ -82,9 +82,9 @@ private:
 
 /// The module names this image's token store holds.
 ///
-/// Requires the "token_registry" service. Returns an empty vector both when the
-/// service was not granted and when the store is genuinely empty; pass
-/// `status` when the difference matters — it is the whole point of the gate.
+/// Retired with the protocol's token registry: from protocol 0.13 lp_token_keys
+/// always refuses, so this answers empty with an ungranted `status`. Kept so a
+/// module that still calls it compiles.
 inline std::vector<std::string> tokenKeys(Status* status = nullptr)
 {
     detail::OwnedString raw(lp_token_keys());
@@ -115,10 +115,9 @@ inline std::vector<std::string> tokenKeys(Status* status = nullptr)
 ///
 /// ⚠️ NOT gated. `lp_token_get` performs no host-service check
 /// (logos_protocol.cpp), so ANY module in this image can look up ANY name it
-/// can guess — "token_registry" gates ENUMERATION (lp_token_keys) only, which
-/// is what stops a module discovering names it was never told. Do not read the
-/// presence of this function as a privilege boundary; if lookup is meant to be
-/// gated too, that gate belongs in lp_token_get, not here.
+/// can guess. Do not read the presence of this function as a privilege
+/// boundary; if lookup is meant to be gated, that gate belongs in lp_token_get,
+/// not here.
 inline std::string tokenFor(const std::string& moduleName)
 {
     detail::OwnedString raw(lp_token_get(moduleName.c_str()));
