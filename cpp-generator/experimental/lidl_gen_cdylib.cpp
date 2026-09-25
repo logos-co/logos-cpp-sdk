@@ -997,15 +997,8 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    // THE INBOUND DOOR: `caller` is the module that will CALL US and\n";
     s << "    // `token` is what it will present. This is NOT a credential this\n";
     s << "    // module may present to anyone, and lp_token_save_inbound writes a\n";
-    s << "    // key namespace lp_token_get and lp_token_keys cannot read -- which\n";
-    s << "    // is what stops a grant one way from being a grant the other way.\n";
-    s << "    //\n";
-    s << "    // One line, deliberately: the token-registry carve-out (a granted\n";
-    s << "    // registry ALSO gets the outbound entry, because for it the same\n";
-    s << "    // wire message means \"here is X's token, present it when you call\n";
-    s << "    // X\") lives in logos-protocol, where a unit test reaches it by\n";
-    s << "    // value. Logic that lives in emitted text is logic no test ever\n";
-    s << "    // executes, only greps.\n";
+    s << "    // key namespace lp_token_get cannot read -- which is what stops a\n";
+    s << "    // grant one way from being a grant the other way.\n";
     s << "    return lp_token_save_inbound(caller, token);\n}\n";
     s << "#endif\n\n";
 
@@ -1028,9 +1021,9 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "    // export exists: the host binary and this cdylib each link their\n";
     s << "    // own copy of logos-protocol, so each has its own process-global\n";
     s << "    // grant state, exactly as each has its own TokenManager. A grant\n";
-    s << "    // the host records for itself is invisible to the gate a\n";
-    s << "    // lp_token_keys() call checks HERE, so a gate 'simplified' into\n";
-    s << "    // the host would silently never fire.\n";
+    s << "    // the host records for itself is invisible to the gate a token\n";
+    s << "    // push checks HERE, so a gate 'simplified' into the host would\n";
+    s << "    // silently never fire.\n";
     s << "    //\n";
     s << "    // Emitted unconditionally, for every module, rather than behind a\n";
     s << "    // codegen flag: which modules are privileged is the HOST's\n";

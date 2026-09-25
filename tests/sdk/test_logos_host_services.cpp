@@ -6,13 +6,13 @@
 
 // Coverage for the Qt-free host-services veneer.
 //
-// The GATE itself (ungranted callers get LP_ERR_UNSUPPORTED / a null
-// lp_token_keys) is tested in logos-protocol, which is where the gate lives and
+// The GATE itself (ungranted callers get LP_ERR_UNSUPPORTED) is tested in
+// logos-protocol, which is where the gate lives and
 // where the library is linked — see tests/protocol/test_host_services_grant.cpp.
 // What is tested here is what this header ADDS: constantTimeEquals, plus the
 // fact that the header parses standalone in a Qt-free, protocol-unlinked TU.
 //
-// Note this file deliberately does NOT call tokenKeys()/informModuleTokenTo():
+// Note this file deliberately does NOT call informModuleTokenTo():
 // they are `inline` and never ODR-used here, so no lp_* symbol is referenced
 // and sdk_tests keeps linking against logos_headers alone. That is also the
 // property being asserted by this file existing at all — the veneer must not

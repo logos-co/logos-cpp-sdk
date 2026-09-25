@@ -698,8 +698,8 @@ TEST(LidlGenCdylib, NonMapSlotsStillNameTheirType)
 // The grant must cross the module-impl C ABI, because the host binary and this
 // cdylib each link their own logos-protocol and so have SEPARATE process-global
 // grant state. A grant the host records for itself leaves the cdylib's gates
-// shut forever, and the failure is silent: lp_token_keys() simply keeps
-// returning null, which is indistinguishable from an empty token store.
+// shut forever, and the failure is silent: every token push is refused as
+// ungranted.
 
 TEST(LidlGenCdylib, EmitsTheHostServicesGrantExport)
 {
