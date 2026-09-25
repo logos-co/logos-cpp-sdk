@@ -16,7 +16,9 @@
   #
   # checks.module-impl-abi additionally consumes
   # packages.<system>.module-impl-abi from here (logos-protocol#66).
-  inputs.logos-protocol.url = "github:logos-co/logos-protocol";
+  #
+  # On protocol 0.13's branch (logos-protocol#97) until it merges; back to master then.
+  inputs.logos-protocol.url = "github:logos-co/logos-protocol/feat/plain-local-inproc";
   inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
   # The canonical, language-neutral LIDL frontend (lexer/parser/AST/serializer/
   # validator) the code generator links. Follows our logos-nix so it resolves
