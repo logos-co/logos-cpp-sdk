@@ -80,6 +80,37 @@ private:
 
 } // namespace detail
 
+/// The module names this image's token store holds.
+///
+/// Retired with the protocol's token registry: from protocol 0.13 lp_token_keys
+/// always refuses, so this answers empty with an ungranted `status`. Kept so a
+/// module that still calls it compiles.
+inline std::vector<std::string> tokenKeys(Status* status = nullptr)
+{
+    detail::OwnedString raw(lp_token_keys());
+    if (!raw) {
+        // The C surface signals refusal by returning null rather than a code,
+        // so map it onto the same "ungranted" answer the other call reports.
+        if (status) *status = Status{false, LP_ERR_UNSUPPORTED};
+        return {};
+    }
+
+    nlohmann::json parsed = nlohmann::json::parse(raw.get(), nullptr,
+                                                  /*allow_exceptions=*/false);
+    if (parsed.is_discarded() || !parsed.is_array()) {
+        if (status) *status = Status{false, LP_ERR_INVALID_ARG};
+        return {};
+    }
+
+    std::vector<std::string> keys;
+    keys.reserve(parsed.size());
+    for (const nlohmann::json& e : parsed) {
+        if (e.is_string()) keys.push_back(e.get<std::string>());
+    }
+    if (status) *status = Status{true, LP_OK};
+    return keys;
+}
+
 /// The token this image holds for `moduleName`, or empty when there is none.
 ///
 /// ⚠️ NOT gated. `lp_token_get` performs no host-service check
