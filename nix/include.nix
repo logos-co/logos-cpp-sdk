@@ -37,6 +37,10 @@ pkgs.stdenv.mkDerivation {
       cp cpp/$file $out/include/
     done
 
+    # core_service's contract, for clients generated from it.
+    mkdir -p $out/share/logos
+    cp cpp/core_service.lidl $out/share/logos/
+
     runHook postInstall
   '';
 }
