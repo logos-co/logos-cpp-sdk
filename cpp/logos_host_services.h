@@ -3,15 +3,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // logos_host_services.h — the C++ veneer over the privileged host services.
 //
-// These are the operations an ordinary module must NOT have: enumerating the
-// token store, and pushing an auth token to an arbitrary target. Exactly one
-// module in a normal deployment needs them — capability_module, the trust root
-// — which is why they are a declared, host-granted privilege rather than part
-// of the ambient SDK surface.
+// These are the operations an ordinary module must NOT have: pushing an auth
+// token to, or withdrawing one from, an arbitrary target. Exactly one module in
+// a normal deployment needs them — capability_module, the token authority —
+// which is why they are a declared, host-granted privilege rather than part of
+// the ambient SDK surface.
 //
 // A module declares what it needs in metadata.json:
 //
-//     "host_services": ["token_registry", "token_delivery"]
+//     "host_services": ["token_delivery"]
 //
 // and the HOST decides whether to grant it, pushing the grant in over the
 // module-impl C ABI (logos_module_grant_host_services). Until that happens
@@ -80,45 +80,13 @@ private:
 
 } // namespace detail
 
-/// The module names this image's token store holds.
-///
-/// Requires the "token_registry" service. Returns an empty vector both when the
-/// service was not granted and when the store is genuinely empty; pass
-/// `status` when the difference matters — it is the whole point of the gate.
-inline std::vector<std::string> tokenKeys(Status* status = nullptr)
-{
-    detail::OwnedString raw(lp_token_keys());
-    if (!raw) {
-        // The C surface signals refusal by returning null rather than a code,
-        // so map it onto the same "ungranted" answer the other call reports.
-        if (status) *status = Status{false, LP_ERR_UNSUPPORTED};
-        return {};
-    }
-
-    nlohmann::json parsed = nlohmann::json::parse(raw.get(), nullptr,
-                                                  /*allow_exceptions=*/false);
-    if (parsed.is_discarded() || !parsed.is_array()) {
-        if (status) *status = Status{false, LP_ERR_INVALID_ARG};
-        return {};
-    }
-
-    std::vector<std::string> keys;
-    keys.reserve(parsed.size());
-    for (const nlohmann::json& e : parsed) {
-        if (e.is_string()) keys.push_back(e.get<std::string>());
-    }
-    if (status) *status = Status{true, LP_OK};
-    return keys;
-}
-
 /// The token this image holds for `moduleName`, or empty when there is none.
 ///
 /// ⚠️ NOT gated. `lp_token_get` performs no host-service check
 /// (logos_protocol.cpp), so ANY module in this image can look up ANY name it
-/// can guess — "token_registry" gates ENUMERATION (lp_token_keys) only, which
-/// is what stops a module discovering names it was never told. Do not read the
-/// presence of this function as a privilege boundary; if lookup is meant to be
-/// gated too, that gate belongs in lp_token_get, not here.
+/// can guess. Do not read the presence of this function as a privilege
+/// boundary; if lookup is meant to be gated, that gate belongs in lp_token_get,
+/// not here.
 inline std::string tokenFor(const std::string& moduleName)
 {
     detail::OwnedString raw(lp_token_get(moduleName.c_str()));
