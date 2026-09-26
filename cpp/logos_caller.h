@@ -60,6 +60,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+
 namespace logos {
 
 // The arms of the caller document. Mirrors logos-rust-sdk's enum one-for-one;
@@ -73,6 +75,7 @@ enum class CallerKind {
     Module,
     Derived,
     Operator,
+    Remote,
 };
 
 // A parsed caller identity.
@@ -83,17 +86,21 @@ enum class CallerKind {
 //   Module    name, instance (opt)
 //   Derived   parent, leaf
 //   Operator  name
+//   Remote    peer, name              (rule 8: a consumer on another runtime)
 struct LogosCaller {
     CallerKind kind = CallerKind::Unknown;
-    std::string name;       // Module, Operator
+    std::string name;       // Module, Operator, Remote
     std::string instance;   // Module, optional (rule 6)
     std::string parent;     // Derived
     std::string leaf;       // Derived
+    std::string peer;       // Remote: the other runtime's id
 
     bool isUnknown() const { return kind == CallerKind::Unknown; }
     bool isHost() const { return kind == CallerKind::Host; }
     bool isDerived() const { return kind == CallerKind::Derived; }
     bool isOperator() const { return kind == CallerKind::Operator; }
+    // A remote caller is never isModule(): "wallet_ui" on another runtime is not ours.
+    bool isRemote() const { return kind == CallerKind::Remote; }
 
     bool isModule() const { return kind == CallerKind::Module; }
 
@@ -150,9 +157,25 @@ LOGOS_CALLER_LOCAL inline LogosCaller parseCaller(const std::string& json)
 
     // allow_exceptions = false: a module handler must not be able to crash the
     // dispatch by being handed a bad document, and the host is not the only
-    // thing that can produce one.
-    const nlohmann::json doc = nlohmann::json::parse(json, nullptr, false);
-    if (!doc.is_object())
+    // thing that can produce one. Rule 7: a repeated key anywhere is unknown.
+    bool duplicate = false;
+    std::vector<std::vector<std::string>> keys;
+    const nlohmann::json doc = nlohmann::json::parse(json,
+        [&](int, nlohmann::json::parse_event_t event, nlohmann::json& parsed) {
+            if (event == nlohmann::json::parse_event_t::object_start) {
+                keys.emplace_back();
+            } else if (event == nlohmann::json::parse_event_t::object_end) {
+                if (!keys.empty()) keys.pop_back();
+            } else if (event == nlohmann::json::parse_event_t::key && !keys.empty()) {
+                const std::string key = parsed.get<std::string>();
+                auto& seen = keys.back();
+                if (std::find(seen.begin(), seen.end(), key) != seen.end()) duplicate = true;
+                else seen.push_back(key);
+            }
+            return true;
+        },
+        false);
+    if (duplicate || !doc.is_object())
         return caller;   // rule 1: unparseable, empty, or not an object
 
     const auto kindIt = doc.find("kind");
@@ -207,6 +230,12 @@ LOGOS_CALLER_LOCAL inline LogosCaller parseCaller(const std::string& json)
         if (!required("name", caller.name))
             return LogosCaller{};   // rule 4
         caller.kind = CallerKind::Operator;
+        return caller;
+    }
+    if (kind == "remote") {
+        if (!required("peer", caller.peer) || !required("name", caller.name))
+            return LogosCaller{};   // rule 4
+        caller.kind = CallerKind::Remote;
         return caller;
     }
 
