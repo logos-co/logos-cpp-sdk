@@ -292,6 +292,80 @@ pkgs.runCommand "${common.pname}-generator-cli-tests"
       || { cat reserved.err >&2; fail "authored lidl() failed without the ownership diagnostic"; }
     echo "OK: lidl() is reserved for the canonical built-in"
 
+    # ── `--lidl X --api-style lp`: the client wrapper, and nothing else ───
+    #
+    # For a program that is not a module (an app): the wrapper the umbrella
+    # emits for `--dep`, no umbrella, no metadata, no Qt.
+    cat > client_probe.lidl <<'EOF'
+    module client_probe {
+      version "1.0.0"
+      type Pair {
+        a: uint
+        b: [int]
+      }
+      method ping(v: tstr) -> tstr
+      method sum(values: [int]) -> int
+      method pairs(p: {tstr: Pair}) -> ?tstr
+      event ticked(n: uint)
+    }
+    EOF
+
+    logos-cpp-generator --lidl client_probe.lidl --api-style lp --output-dir gen-client \
+      >/dev/null 2>client.err \
+      || { cat client.err >&2; fail "the client mode refused a valid contract"; }
+    [ "$(ls gen-client | sort | tr '\n' ' ')" = "client_probe_api.cpp client_probe_api.h " ] \
+      || { ls -la gen-client >&2; fail "the client mode wrote more than the wrapper pair"; }
+    grep -q 'explicit ClientProbe(const std::string& origin);' gen-client/client_probe_api.h \
+      || { cat gen-client/client_probe_api.h >&2; fail "the client is not built from an origin"; }
+    if grep -nE '#include <Q|QString|QVariant|LogosAPI' gen-client/*; then
+      fail "the client mode emitted Qt"
+    fi
+    echo "OK: --lidl --api-style lp emits the Qt-free wrapper pair alone"
+
+    printf '{"name":"client_host","version":"1.0.0","dependencies":["client_probe"]}\n' \
+      > client_meta.json
+    logos-cpp-generator --metadata client_meta.json --umbrella --api-style lp \
+      --dep client_probe=./client_probe.lidl --output-dir gen-client-umbrella >/dev/null 2>&1 \
+      || fail "control: the umbrella refused the client contract"
+    for f in client_probe_api.h client_probe_api.cpp; do
+      cmp gen-client/$f gen-client-umbrella/$f \
+        || { diff -u gen-client-umbrella/$f gen-client/$f >&2
+             fail "$f differs from the umbrella's --dep wrapper"; }
+    done
+    echo "OK: the client wrapper is byte-identical to the umbrella's --dep wrapper"
+
+    # ── --typed-collections: the client only ──────────────────────────────
+    logos-cpp-generator --lidl client_probe.lidl --api-style lp --typed-collections \
+      --output-dir gen-client-typed >/dev/null 2>typed.err \
+      || { cat typed.err >&2; fail "--typed-collections was refused in the client mode"; }
+    grep -q 'int64_t sum(const std::vector<int64_t>& values' gen-client-typed/client_probe_api.h \
+      || { cat gen-client-typed/client_probe_api.h >&2; fail "--typed-collections left [int] untyped"; }
+    grep -q 'int64_t sum(const LogosList& values' gen-client/client_probe_api.h \
+      || fail "control: without the flag [int] is a LogosList"
+    echo "OK: --typed-collections types the client's collections"
+
+    # Everywhere else it is refused, never ignored: it changes a wrapper's API.
+    for args in "--lidl client_probe.lidl --typed-collections --output-dir x1" \
+                "--lidl client_probe.lidl --api-style qt --typed-collections --output-dir x2" \
+                "--metadata client_meta.json --umbrella --api-style lp --typed-collections --dep client_probe=./client_probe.lidl --output-dir x3" \
+                "--lidl client_probe.lidl --backend cdylib --impl-class X --typed-collections --output-dir x4"; do
+      set +e
+      logos-cpp-generator $args >refused.out 2>refused.err
+      status=$?
+      set -e
+      [ "$status" -ne 0 ] || fail "--typed-collections accepted outside the lp client mode: $args"
+      grep -q -- '--typed-collections' refused.err \
+        || { cat refused.err >&2; fail "the refusal does not name the flag: $args"; }
+    done
+    echo "OK: --typed-collections is refused outside the lp client mode"
+
+    # No --api-style keeps the Qt client stubs, umbrella and all.
+    logos-cpp-generator --lidl client_probe.lidl --output-dir gen-stubs >/dev/null 2>&1 \
+      || fail "the Qt client stubs regressed"
+    [ -s gen-stubs/logos_sdk.h ] && grep -q '#include <Q' gen-stubs/client_probe_api.h \
+      || fail "--lidl without --api-style no longer emits the Qt client stubs"
+    echo "OK: --lidl without --api-style still emits the Qt client stubs"
+
     mkdir -p "$out"
     echo "logos-cpp-generator CLI argument-surface tests passed" > "$out/result.txt"
   ''

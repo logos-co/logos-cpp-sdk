@@ -98,11 +98,6 @@ bool typeSupported(const TypeExpr& te, bool isReturn, const std::set<std::string
     return false;
 }
 
-// Qt-free spelling of a LIDL type (defined below). Forward-declared so the
-// method-param decoder can spell composite `any` containers as their nlohmann
-// aliases instead of Qt containers in this Qt-free TU.
-QString lidlTypeToStdCdylib(const TypeExpr& te, const std::set<std::string>& recs);
-
 // json arg expression -> std-typed C++ expression
 // A method argument, decoded into the author's C++ type.
 //
@@ -230,13 +225,16 @@ QString stdReturnToJson(const MethodDecl& md, const QString& var,
     return "logos::toJson<" + cppRet + ">(" + var + ")";
 }
 
+} // namespace
+
 // Qt-free spelling of a LIDL type. lidlTypeToStd() falls back to Qt containers
 // (QVariant / QVariantMap / QVariantList) for the composite types, but a cdylib
 // TU is Qt-free by definition and typeSupported() admits `any` and maps — so
 // spell those as their nlohmann aliases (LogosMap / LogosList) instead. Without
 // this the events sidecar emits a bare `QVariant` parameter and does not
 // compile.
-QString lidlTypeToStdCdylib(const TypeExpr& te, const std::set<std::string>& recs)
+QString lidlTypeToStdCdylib(const TypeExpr& te, const std::set<std::string>& recs,
+                            const std::function<QString(const QString&)>& recordName)
 {
     // `?T` -> std::optional<T>, EXCEPT over the untyped-JSON aliases.
     //
@@ -247,7 +245,7 @@ QString lidlTypeToStdCdylib(const TypeExpr& te, const std::set<std::string>& rec
     // states, one C++ type. (logos-lidl's validator warns on `?any` for the same
     // reason, and the warning is about the spelling, not about this mapping.)
     if (te.kind == TypeExpr::Optional && !te.elements.empty()) {
-        const QString inner = lidlTypeToStdCdylib(optionalValueType(te), recs);
+        const QString inner = lidlTypeToStdCdylib(optionalValueType(te), recs, recordName);
         if (inner == "LogosMap" || inner == "LogosList")
             return inner;
         return "std::optional<" + inner + ">";
@@ -267,7 +265,7 @@ QString lidlTypeToStdCdylib(const TypeExpr& te, const std::set<std::string>& rec
 
     // A declared record is its generated struct.
     if (isRecord(te, recs))
-        return qs(te.name);
+        return recordName ? recordName(qs(te.name)) : qs(te.name);
     // Recurse, so [bstr] is std::vector<std::vector<uint8_t>> and {tstr: Blob}
     // is std::map<std::string, Blob>. lidlTypeToStd() would answer QVariantList
     // / QVariantMap here — a Qt name in a Qt-FREE translation unit, which only
@@ -275,12 +273,20 @@ QString lidlTypeToStdCdylib(const TypeExpr& te, const std::set<std::string>& rec
     // the gate makes that fallback a live leak, so composites must never reach
     // it.
     if (te.kind == TypeExpr::Array && te.elements.size() == 1)
-        return "std::vector<" + lidlTypeToStdCdylib(te.elements[0], recs) + ">";
+        return "std::vector<" + lidlTypeToStdCdylib(te.elements[0], recs, recordName) + ">";
     if (te.kind == TypeExpr::Map && te.elements.size() == 2)
-        return "std::map<std::string, " + lidlTypeToStdCdylib(te.elements[1], recs) + ">";
+        return "std::map<std::string, "
+             + lidlTypeToStdCdylib(te.elements[1], recs, recordName) + ">";
 
     return lidlTypeToStd(te);
 }
+
+bool lidlTypeIsQtFree(const TypeExpr& te, const std::set<std::string>& recs)
+{
+    return typeSupported(te, /*isReturn=*/false, recs);
+}
+
+namespace {
 
 // The C++ spelling of a RECORD FIELD, honouring both optionality spellings.
 //
