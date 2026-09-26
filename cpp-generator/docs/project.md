@@ -240,6 +240,19 @@ logos-cpp-generator --lidl my_module.lidl \
     --module-only
 ```
 
+### From LIDL file — Qt-free client for an app
+
+```bash
+logos-cpp-generator --lidl my_module.lidl --api-style lp \
+    [--typed-collections] --output-dir ./clients
+```
+
+Only `<name>_api.{h,cpp}`: the wrapper `--umbrella --dep <name>=my_module.lidl`
+emits, for a program that is not a module (`runLpClientMode` in `main.cpp`).
+`--typed-collections` exists only here. `annotateTypedCollections`
+(`lidl_to_json`) gives each slot the flat names collapse a `stdType`, and the lp
+emitter types it through logos-protocol's codec.
+
 ### Plugin-introspection and umbrella modes
 
 ```bash

@@ -4,6 +4,10 @@
 #include "lidl_compat.h"
 #include <QString>
 
+#include <functional>
+#include <set>
+#include <string>
+
 // ---------------------------------------------------------------------------
 // Cdylib authoring backend — the common module-impl C ABI seam.
 //
@@ -34,6 +38,16 @@
 // Returns false (with *error filled) when the module uses types outside the
 // cdylib-supported subset.
 bool lidlCdylibSupported(const ModuleDecl& module, QString* error);
+
+// The Qt-free C++ spelling of a LIDL type — std::vector / std::map /
+// std::optional over the scalars, LogosMap / LogosList for `any`. `recs` names
+// the contract's records; `recordName` spells one (as written by default). Also
+// the typed client surface of `--api-style lp --typed-collections`.
+QString lidlTypeToStdCdylib(const TypeExpr& te, const std::set<std::string>& recs,
+                            const std::function<QString(const QString&)>& recordName = {});
+
+// Whether `te` is in that Qt-free subset (as a parameter: no `result`/`void`).
+bool lidlTypeIsQtFree(const TypeExpr& te, const std::set<std::string>& recs);
 
 // The record structs a contract declares, plus their codec — a Qt-free header
 // the author's impl class includes so it can name the structs directly.
