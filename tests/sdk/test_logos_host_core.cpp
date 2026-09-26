@@ -46,6 +46,7 @@ struct CoreStub {
     std::string placement;
     std::string shellName;
     std::string packageConfig;
+    std::string peeringConfig;
     int refuseSetters = 0;          // what the protected setters answer
     bool bindingAvailable = true;   // capability_module is the token authority
     int bindingReleases = 0;
@@ -99,6 +100,7 @@ int logos_core_set_bundled_modules_dirs(const char* const* dirs)
 int logos_core_set_placement_policy(const char* p) { g->placement = p; g->callOrder.push_back("placement"); return g->refuseSetters; }
 int logos_core_set_shell_identity(const char* n)   { g->shellName = n; g->callOrder.push_back("shell"); return g->refuseSetters; }
 int logos_core_set_package_config(const char* c)   { g->packageConfig = c; g->callOrder.push_back("package_config"); return g->refuseSetters; }
+int logos_core_set_peering_config(const char* c)   { g->peeringConfig = c; g->callOrder.push_back("peering_config"); return g->refuseSetters; }
 
 // The binding is a tag: nothing here dereferences it.
 char gBindingTag;
@@ -187,6 +189,7 @@ LogosCore::Config shellConfig()
     cfg.bundledModulesDirs = {"/app/modules", "/app/modules-pkg"};
     cfg.placementPolicyJson = std::string(R"({"default":"subprocess"})");
     cfg.packageConfigJson = std::string(R"({"user_modules_dir":"/u/modules"})");
+    cfg.peeringConfigJson = std::string(R"({"name":"desk"})");
     cfg.shellName = "basecamp";
     cfg.separateProcess = false;
     return cfg;
@@ -272,9 +275,10 @@ TEST_F(HostCoreTest, ProtectedInputIsAppliedBeforeStart)
     EXPECT_EQ(stub.placement, R"({"default":"subprocess"})");
     EXPECT_EQ(stub.shellName, "basecamp");
     EXPECT_EQ(stub.packageConfig, R"({"user_modules_dir":"/u/modules"})");
+    EXPECT_EQ(stub.peeringConfig, R"({"name":"desk"})");
     EXPECT_EQ(stub.callOrder, (std::vector<std::string>{
-        "init", "bundled_dirs", "placement", "package_config", "shell", "start",
-        "take_binding"}));
+        "init", "bundled_dirs", "placement", "package_config", "peering_config", "shell",
+        "start", "take_binding"}));
 }
 
 TEST_F(HostCoreTest, ARefusedSettingThrowsAfterCleaningUp)
@@ -527,6 +531,7 @@ TEST_F(HostCoreTest, StartSpawnsTheRuntimeWithEverySetting)
             {"access_policy", R"({"mode":"enforce"})"},
             {"placement_policy", R"({"default":"subprocess"})"},
             {"package_config", R"({"user_modules_dir":"/u/modules"})"},
+            {"peering_config", R"({"name":"desk"})"},
         }));
         EXPECT_TRUE(core.shellBound());
         EXPECT_TRUE(core.loadModule("alpha")) << "the same core_service calls, over its binding";
