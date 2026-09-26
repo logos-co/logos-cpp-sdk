@@ -191,7 +191,8 @@ The client is the wrapper the umbrella emits for `--dep blockchain_module=…`,
 byte for byte: `explicit BlockchainModule(const std::string& origin)`, the three
 call surfaces below, typed `on<Event>` subscriptions. The app compiles the pair
 against logos-protocol's headers, links the plain protocol image from liblogos'
-own lib output, and builds the client with its shell name as the origin.
+own lib output, and builds the client with its shell name as the origin:
+`LogosCore::client<T>()` does (see *Consuming the SDK*).
 
 Without `--typed-collections`, collections and positional `?T` are `LogosList` /
 `LogosMap`, as on every module's wrappers. With it they are typed and cross the
@@ -713,6 +714,13 @@ ships as `share/logos/core_service.lidl`) as the shell:
 `shellCredential()` is the host's own, for a `LogosAPI` that should call as the
 shell. `processModule` is the one call left on liblogos' C API; a separate
 runtime takes it over its private channel once started.
+
+`shellName()` is `Config::shellName`, and `client<T>()` builds a generated
+Qt-free client (see *Clients for an app*) with it as the origin, so the client
+calls as the shell: `auto chain = core.client<BlockchainModule>();`. Its calls
+work once `start()` has returned, and only if the host links the plain protocol
+image from liblogos' lib output, which holds the shell's credential. The binding
+itself (`shellBinding()`) also takes `logos_consumer_call_async`.
 
 ### Transports
 
