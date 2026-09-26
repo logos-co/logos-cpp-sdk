@@ -8,6 +8,8 @@ add_executable(generator_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/generator_lib.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/lidl_to_json.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/experimental/lidl_emit_common.cpp
+    # lidl_to_json's --typed-collections spellings are the cdylib backend's.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../cpp-generator/experimental/lidl_gen_cdylib.cpp
     test_to_pascal_case.cpp
     test_normalize_type.cpp
     test_map_param_type.cpp
@@ -23,6 +25,9 @@ add_executable(generator_tests
     # the per-module (not per-event) subscription state surface.
     test_lp_event_options.cpp
     test_optional_spellings.cpp
+    # --typed-collections: which slots lidl_to_json types, and the lp emitter's
+    # use of them. tests/clients compiles and round-trips the output.
+    test_typed_collections.cpp
 )
 
 target_include_directories(generator_tests PRIVATE

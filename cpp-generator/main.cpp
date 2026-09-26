@@ -152,10 +152,13 @@ static bool parseInterfaceFile(const InterfaceSpec& spec, const QString& genDirP
 //   Static — concrete dependency: the module name is baked in; exposed as a
 //            `<name>` member on the umbrella (byte-identical to the wrapper the
 //            dep's prebuilt headers used to ship).
+// `typedCollections` (the client mode's --typed-collections, lp only) types the
+// slots the flat names collapse to LogosList / LogosMap.
 static bool generateInterfaceWrappers(const QVector<InterfaceSpec>& ifaces,
                                       const QString& genDirPath, ApiStyle apiStyle,
                                       QTextStream& out, QTextStream& err,
-                                      BindMode bindMode = BindMode::Bound)
+                                      BindMode bindMode = BindMode::Bound,
+                                      bool typedCollections = false)
 {
     for (const InterfaceSpec& spec : ifaces) {
         ModuleDecl mod;
@@ -181,12 +184,14 @@ static bool generateInterfaceWrappers(const QVector<InterfaceSpec>& ifaces,
             }
         }
 
-        noteOptionalPositionalSlots(mod, spec.path, err);
+        if (!typedCollections) noteOptionalPositionalSlots(mod, spec.path, err);
 
         const QString className = toPascalCase(spec.name);
-        const QJsonArray methods = moduleMethodsToJson(mod);
-        const QJsonArray events  = moduleEventsToJson(mod);
-        const QJsonArray records = moduleRecordsToJson(mod);
+        QJsonArray methods = moduleMethodsToJson(mod);
+        QJsonArray events  = moduleEventsToJson(mod);
+        QJsonArray records = moduleRecordsToJson(mod);
+        if (typedCollections)
+            annotateTypedCollections(mod, className + "::", methods, events, records);
         const QString headerRel = spec.name + "_api.h";
         const QString sourceRel = spec.name + "_api.cpp";
 
@@ -215,6 +220,37 @@ static bool generateInterfaceWrappers(const QVector<InterfaceSpec>& ifaces,
     }
     out.flush();
     return true;
+}
+
+// `--lidl X.lidl --api-style lp`: the Qt-free client for one contract, for a
+// program that is not a module (an app, a test). It is the wrapper the umbrella
+// emits for `--dep <name>=X.lidl`, named after the contract's module, with no
+// umbrella: the program constructs it with its own origin (an app's shell name).
+static int runLpClientMode(const QString& lidlPath, const QString& outputDir,
+                           bool typedCollections, QTextStream& out, QTextStream& err)
+{
+    QFile f(lidlPath);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        err << "Error: cannot read " << lidlPath << "\n";
+        return 1;
+    }
+    const LidlParseResult pr = lidlParse(QString::fromUtf8(f.readAll()));
+    if (pr.hasError()) {
+        err << lidlPath << ":" << pr.errorLine << ":" << pr.errorColumn << ": " << pr.error << "\n";
+        return 4;
+    }
+    const LidlValidationResult vr = lidlValidate(pr.module);
+    if (vr.hasErrors()) {
+        for (const std::string& e : vr.errors) err << lidlPath << ": " << e << "\n";
+        return 5;
+    }
+    const QString genDirPath = outputDir.isEmpty()
+        ? QDir::current().filePath("generated")
+        : outputDir;
+    QDir().mkpath(genDirPath);
+    const InterfaceSpec spec{qs(pr.module.name), lidlPath, QString()};
+    return generateInterfaceWrappers({spec}, genDirPath, ApiStyle::Lp, out, err,
+                                     BindMode::Static, typedCollections) ? 0 : 9;
 }
 
 // The mode proper. `progName` is only used in the usage diagnostic.
@@ -454,6 +490,8 @@ int main(int argc, char* argv[])
     bool hasUmbrella = false;
     bool hasGeneralOnly = false;
     bool hasMetadata = false;
+    bool hasBackend = false;
+    bool hasTypedCollections = false;
     for (int i = 1; i < argc; ++i) {
         QString arg = QString::fromUtf8(argv[i]);
         if (arg == "--lidl") hasLidl = true;
@@ -463,6 +501,20 @@ int main(int argc, char* argv[])
         if (arg == "--umbrella") hasUmbrella = true;
         if (arg == "--general-only") hasGeneralOnly = true;
         if (arg == "--metadata") hasMetadata = true;
+        if (arg == "--backend") hasBackend = true;
+        if (arg == "--typed-collections") hasTypedCollections = true;
+    }
+
+    // Typed collections change a wrapper's API, so they exist only in the mode
+    // no module build runs: the client wrapper. Refused anywhere else rather
+    // than ignored.
+    if (hasTypedCollections
+        && (!hasLidl || hasFromHeader || hasBackend || hasUmbrella || hasGeneralOnly
+            || hasHeaderToLidl || hasNormalizeLidl)) {
+        QTextStream err(stderr);
+        err << "Error: --typed-collections applies only to the client wrapper: "
+               "--lidl <contract.lidl> --api-style lp\n";
+        return 1;
     }
 
     // Umbrella mode. `--general-only` routes here too — ONE implementation,
@@ -758,6 +810,8 @@ int main(int argc, char* argv[])
             err << "Usage: " << QFileInfo(app.applicationFilePath()).fileName()
                 << " --lidl /path/to/module.lidl [--output-dir /path] [--module-only]\n"
                 << "       " << QFileInfo(app.applicationFilePath()).fileName()
+                << " --lidl /path/to/module.lidl --api-style lp [--typed-collections] [--output-dir /path]   (Qt-free client wrapper, no umbrella)\n"
+                << "       " << QFileInfo(app.applicationFilePath()).fileName()
                 << " --lidl /path/to/module.lidl --backend cdylib [--output-dir /path]   (glue-only: C exports come from the module's own language backend)\n"
                 << "       " << QFileInfo(app.applicationFilePath()).fileName()
                 << " --from-header src/impl.h --backend cdylib --metadata metadata.json [--output-dir /path]\n";
@@ -878,6 +932,17 @@ int main(int argc, char* argv[])
             }
 
             err << "Error: unsupported backend '" << backend << "' (supported: cdylib)\n";
+            return 1;
+        }
+
+        // `--api-style lp`: the Qt-free client wrapper alone. Absent or `qt`:
+        // the Qt client stubs, as before.
+        ApiStyle apiStyle = ApiStyle::Qt;
+        if (!parseApiStyleFlag(args, apiStyle, err)) return 1;
+        if (apiStyle == ApiStyle::Lp)
+            return runLpClientMode(lidlPath, outputDir, hasTypedCollections, out, err);
+        if (hasTypedCollections) {
+            err << "Error: --typed-collections needs --api-style lp\n";
             return 1;
         }
 

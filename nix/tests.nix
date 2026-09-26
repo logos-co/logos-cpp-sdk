@@ -43,6 +43,7 @@ pkgs.stdenv.mkDerivation {
     cp build-tests/sdk/sdk_tests $out/bin/
     cp build-tests/generator/generator_tests $out/bin/
     cp build-tests/experimental/experimental_tests $out/bin/
+    cp build-tests/clients/plain_client_tests build-tests/clients/typed_client_tests $out/bin/
 
     # Copy test fixtures needed by experimental_tests at runtime
     mkdir -p $out/fixtures

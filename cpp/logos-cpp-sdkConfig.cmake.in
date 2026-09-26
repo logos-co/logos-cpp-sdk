@@ -13,4 +13,7 @@ find_dependency(nlohmann_json REQUIRED)
 
 include("${CMAKE_CURRENT_LIST_DIR}/logos-cpp-sdkTargets.cmake")
 
+# logos_generate_clients(): typed Qt-free clients for an app, from .lidl contracts.
+include("${CMAKE_CURRENT_LIST_DIR}/LogosGenerateClients.cmake")
+
 check_required_components(logos-cpp-sdk)

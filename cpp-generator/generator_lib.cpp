@@ -281,7 +281,8 @@ static QString mapReturnTypeStd(const QString& qtType)
 // An empty record set leaves every emission path byte-for-byte as it was, and so
 // does a record set in which nothing is optional.
 
-struct RecordField { QString name; QString type; bool optional = false; };
+// `stdType` is the --typed-collections spelling of the VALUE type, or empty.
+struct RecordField { QString name; QString type; bool optional = false; QString stdType; };
 struct RecordDef   { QString name; QVector<RecordField> fields; };
 using RecordSet = QVector<RecordDef>;
 
@@ -305,6 +306,7 @@ static RecordSet parseRecords(const QJsonArray& records)
             f.name = fo.value("name").toString();
             f.type = fo.value("type").toString();
             f.optional = fo.value("optional").toBool();
+            f.stdType = fo.value("stdType").toString();
             if (f.name.isEmpty()) continue;
             def.fields.append(f);
         }
@@ -423,6 +425,7 @@ static bool isStdRefType(const QString& t)
 {
     return t == "std::string" || t.startsWith("std::vector")
         || t == "std::map" || t.startsWith("std::map")
+        || t.startsWith("std::optional")
         || t == "LogosMap" || t == "LogosList";
 }
 
@@ -446,20 +449,26 @@ static bool isQtRefType(const QString& t)
 // The one entry point every emission site goes through. A record-bearing type
 // takes the record path; everything else falls through to the pre-existing
 // mapping tables unchanged, so an empty record set is a no-op.
+//
+// `stdType` is the slot's --typed-collections spelling (lidl_to_json's
+// "stdType"), Lp only and empty unless asked for: the codec carries it, and
+// its record names come qualified, so it needs no `qual`.
 
 static QString paramTypeFor(const QString& qtType, ApiStyle style, const RecordSet& rs,
-                            const QString& qual = QString())
+                            const QString& qual = QString(), const QString& stdType = QString())
 {
     const QString rec = recordCppType(rs, qtType, style, qual);
     if (!rec.isEmpty()) return rec;
+    if (style == ApiStyle::Lp && !stdType.isEmpty()) return stdType;
     return (style == ApiStyle::Qt) ? mapParamType(qtType) : mapParamTypeStd(qtType);
 }
 
 static QString returnTypeFor(const QString& qtType, ApiStyle style, const RecordSet& rs,
-                             const QString& qual = QString())
+                             const QString& qual = QString(), const QString& stdType = QString())
 {
     const QString rec = recordCppType(rs, qtType, style, qual);
     if (!rec.isEmpty()) return rec;
+    if (style == ApiStyle::Lp && !stdType.isEmpty()) return stdType;
     return (style == ApiStyle::Qt) ? mapReturnType(qtType) : mapReturnTypeStd(qtType);
 }
 
@@ -471,20 +480,27 @@ static bool byRefFor(const QString& qtType, const QString& cppType, ApiStyle sty
 }
 
 // Typed value -> wire value (QVariant for Qt, nlohmann::json for Lp).
-static QString toWireFor(const QString& qtType, ApiStyle style, const RecordSet& rs, const QString& expr)
+static QString toWireFor(const QString& qtType, ApiStyle style, const RecordSet& rs,
+                         const QString& expr, const QString& stdType = QString())
 {
     const QString rec = recordToWireExpr(rs, qtType, style, expr);
     if (!rec.isEmpty()) return rec;
+    if (style == ApiStyle::Lp && !stdType.isEmpty())
+        return "logos::toJson<" + stdType + ">(" + expr + ")";
     if (style == ApiStyle::Lp)  return lpPushExpr(qtType, expr);
     return expr;  // Qt: the wrapper's own surface already IS the wire type
 }
 
 // Wire value -> typed value.
 static QString fromWireFor(const QString& qtType, ApiStyle style, const RecordSet& rs,
-                           const QString& wire, const QString& qual = QString())
+                           const QString& wire, const QString& qual = QString(),
+                           const QString& stdType = QString())
 {
     const QString rec = recordFromWireExpr(rs, qtType, style, wire, qual);
     if (!rec.isEmpty()) return rec;
+    // logosTypedFromJson is emitted beside the conversions (emitTypedDecode).
+    if (style == ApiStyle::Lp && !stdType.isEmpty())
+        return "logosTypedFromJson<" + stdType + ">(" + wire + ")";
     if (style == ApiStyle::Lp)  return lpFromJsonExpr(qtType, wire);
     return toQVariantConversion(mapParamType(qtType), wire);
 }
@@ -524,7 +540,7 @@ static bool lpAliasIsAlreadyNullable(const QString& lpType)
 // byte-for-byte what it emitted before.
 static QString fieldTypeFor(const RecordField& f, ApiStyle style, const RecordSet& rs)
 {
-    const QString value = paramTypeFor(f.type, style, rs);
+    const QString value = paramTypeFor(f.type, style, rs, QString(), f.stdType);
     if (!f.optional) return value;
     if (style == ApiStyle::Qt) return QStringLiteral("QVariant");
     if (lpAliasIsAlreadyNullable(value)) return value;
@@ -539,7 +555,8 @@ static bool recordsUseStdOptional(const RecordSet& rs)
 {
     for (const RecordDef& d : rs)
         for (const RecordField& f : d.fields)
-            if (f.optional && !lpAliasIsAlreadyNullable(paramTypeFor(f.type, ApiStyle::Lp, rs)))
+            if (f.optional && !lpAliasIsAlreadyNullable(
+                    paramTypeFor(f.type, ApiStyle::Lp, rs, QString(), f.stdType)))
                 return true;
     return false;
 }
@@ -550,7 +567,48 @@ static bool recordsUseStdOptional(const RecordSet& rs)
 static bool fieldIsWrappedOptional(const RecordField& f, ApiStyle style, const RecordSet& rs)
 {
     return f.optional && style == ApiStyle::Lp
-        && !lpAliasIsAlreadyNullable(paramTypeFor(f.type, style, rs));
+        && !lpAliasIsAlreadyNullable(paramTypeFor(f.type, style, rs, QString(), f.stdType));
+}
+
+// Whether --typed-collections gave any slot a spelling, or (with `what`) one
+// naming `what` — "std::map<", "std::optional<".
+static bool typedSpellingsMention(const QJsonArray& methods, const QJsonArray& events,
+                                  const RecordSet& rs, const QString& what = QString())
+{
+    auto hit = [&](const QString& t) {
+        return !t.isEmpty() && (what.isEmpty() || t.contains(what));
+    };
+    for (const QJsonValue& mv : methods) {
+        const QJsonObject o = mv.toObject();
+        if (hit(o.value("returnStdType").toString())) return true;
+        for (const QJsonValue& pv : o.value("parameters").toArray())
+            if (hit(pv.toObject().value("stdType").toString())) return true;
+    }
+    for (const QJsonValue& ev : events)
+        for (const QJsonValue& pv : ev.toObject().value("params").toArray())
+            if (hit(pv.toObject().value("stdType").toString())) return true;
+    for (const RecordDef& d : rs)
+        for (const RecordField& f : d.fields)
+            if (hit(f.stdType)) return true;
+    return false;
+}
+
+// The decode every typed slot goes through: the canonical codec, made lenient
+// like the rest of this surface. Guarded as the rejection detector is.
+static void emitTypedDecode(QTextStream& s)
+{
+    s << "#ifndef LOGOS_GENERATED_TYPED_DECODE\n";
+    s << "#define LOGOS_GENERATED_TYPED_DECODE\n\n";
+    s << "namespace {\n\n";
+    s << "// A typed collection or ?T through the canonical codec. A value of the\n";
+    s << "// wrong shape yields T{}, as every other decode on this surface does.\n";
+    s << "template <class T>\n";
+    s << "T logosTypedFromJson(const nlohmann::json& j)\n";
+    s << "{\n";
+    s << "    try { return logos::fromJson<T>(j); } catch (const logos::CodecError&) { return T{}; }\n";
+    s << "}\n\n";
+    s << "} // namespace\n\n";
+    s << "#endif  // LOGOS_GENERATED_TYPED_DECODE\n\n";
 }
 
 // The struct declarations, emitted inside the wrapper class.
@@ -570,8 +628,12 @@ static void emitRecordStructs(QTextStream& s, const RecordSet& rs, ApiStyle styl
 // The struct <-> wire conversions, emitted as file-local statics in the
 // generated .cpp. Declared up front so records can reference each other (and
 // themselves, through a list field) regardless of declaration order.
+//
+// `typedCodecs` (Lp, --typed-collections) also gives each record a codec
+// specialization over those conversions, so a record can sit anywhere inside a
+// typed collection.
 static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle style,
-                                  const QString& className)
+                                  const QString& className, bool typedCodecs = false)
 {
     if (rs.isEmpty()) return;
     const QString wire = (style == ApiStyle::Lp) ? "nlohmann::json" : "QVariant";
@@ -584,6 +646,19 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
           << "(const " << wire << "& w);\n";
     }
     s << "\n";
+
+    if (typedCodecs && style == ApiStyle::Lp) {
+        s << "namespace logos { namespace detail {\n";
+        for (const RecordDef& d : rs) {
+            s << "template <> struct Codec<" << qual << d.name << ", void> {\n";
+            s << "    static nlohmann::json to(const " << qual << d.name << "& v) { return "
+              << recToWireFn(d.name) << "(v); }\n";
+            s << "    static " << qual << d.name << " from(const nlohmann::json& j, const std::string&) "
+              << "{ return " << recFromWireFn(d.name) << "(j); }\n";
+            s << "};\n";
+        }
+        s << "}}  // namespace logos::detail\n\n";
+    }
 
     for (const RecordDef& d : rs) {
         // Encode.
@@ -601,11 +676,11 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
                     // `"f": null` gets the key back omitted, and both spellings
                     // decode to the same single empty state.
                     s << "    if (v." << f.name << ".has_value()) __j[\"" << f.name << "\"] = "
-                      << toWireFor(f.type, style, rs, "(*v." + f.name + ")") << ";\n";
+                      << toWireFor(f.type, style, rs, "(*v." + f.name + ")", f.stdType) << ";\n";
                     continue;
                 }
                 s << "    __j[\"" << f.name << "\"] = "
-                  << toWireFor(f.type, style, rs, "v." + f.name) << ";\n";
+                  << toWireFor(f.type, style, rs, "v." + f.name, f.stdType) << ";\n";
             }
             s << "    return __j;\n";
         } else {
@@ -649,11 +724,11 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
                     // value conversion and turn empty into a VALUE (0, "").
                     s << "    if (w.contains(\"" << f.name << "\") && !" << acc
                       << ".is_null()) __out." << f.name << " = "
-                      << fromWireFor(f.type, style, rs, acc, qual) << ";\n";
+                      << fromWireFor(f.type, style, rs, acc, qual, f.stdType) << ";\n";
                     continue;
                 }
                 s << "    if (w.contains(\"" << f.name << "\")) __out." << f.name << " = "
-                  << fromWireFor(f.type, style, rs, acc, qual) << ";\n";
+                  << fromWireFor(f.type, style, rs, acc, qual, f.stdType) << ";\n";
             }
         } else {
             s << "    const QVariantMap __m = w.toMap();\n";
@@ -1425,7 +1500,8 @@ static QString lpEventCbParams(const QJsonArray& evParams, const RecordSet& rs)
     for (int i = 0; i < evParams.size(); ++i) {
         const QJsonObject p = evParams.at(i).toObject();
         const QString qtPt = p.value("type").toString();
-        const QString pt = paramTypeFor(qtPt, ApiStyle::Lp, rs);
+        const QString pt = paramTypeFor(qtPt, ApiStyle::Lp, rs, QString(),
+                                        p.value("stdType").toString());
         if (byRefFor(qtPt, pt, ApiStyle::Lp, rs)) cbParams += "const " + pt + "& ";
         else                                      cbParams += pt + " ";
         cbParams += p.value("name").toString();
@@ -1453,7 +1529,8 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
     s << "#include <vector>\n";
     // Only when a field actually materialises one, so a contract with no
     // optional keeps its header byte-for-byte unchanged.
-    if (recordsUseStdOptional(rs)) s << "#include <optional>\n";
+    if (recordsUseStdOptional(rs) || typedSpellingsMention(methods, events, rs, "std::optional<"))
+        s << "#include <optional>\n";
     s << "#include <functional>\n";
     s << "#include <nlohmann/json.hpp>\n";
     s << "#include \"logos_json.h\"\n";
@@ -1462,7 +1539,8 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
     s << "#include \"logos_async_result.h\"\n";
     s << "#include \"logos_lp_client.h\"\n";
     // Record maps are std::map on the Qt-free surface.
-    if (!rs.isEmpty()) s << "#include <map>\n";
+    if (!rs.isEmpty() || typedSpellingsMention(methods, events, rs, "std::map<"))
+        s << "#include <map>\n";
     s << "\n";
 
     s << "class " << className << " {\n";
@@ -1548,14 +1626,16 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
         const QJsonObject o = v.toObject();
         if (!o.value("isInvokable").toBool()) continue;
         const QString name = o.value("name").toString();
-        const QString ret = returnTypeFor(o.value("returnType").toString(), ApiStyle::Lp, rs);
+        const QString ret = returnTypeFor(o.value("returnType").toString(), ApiStyle::Lp, rs,
+                                          QString(), o.value("returnStdType").toString());
         const QJsonArray params = o.value("parameters").toArray();
 
         auto emitDeclParams = [&]() {
             for (int i = 0; i < params.size(); ++i) {
                 const QJsonObject p = params.at(i).toObject();
                 const QString qtPt = p.value("type").toString();
-                const QString pt = paramTypeFor(qtPt, ApiStyle::Lp, rs);
+                const QString pt = paramTypeFor(qtPt, ApiStyle::Lp, rs, QString(),
+                                                p.value("stdType").toString());
                 if (byRefFor(qtPt, pt, ApiStyle::Lp, rs)) s << "const " << pt << "& " << p.value("name").toString();
                 else                                     s << pt << " " << p.value("name").toString();
                 if (i + 1 < params.size()) s << ", ";
@@ -1601,10 +1681,14 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
 QString makeSourceLp(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
 {
     const RecordSet rs = parseRecords(records);
+    // Only a --typed-collections contract names the codec; the rest is unchanged.
+    const bool typed = typedSpellingsMention(methods, events, rs);
     QString c;
     QTextStream s(&c);
     s << "#include \"" << headerBaseName << "\"\n";
-    s << "#include <nlohmann/json.hpp>\n\n";
+    s << "#include <nlohmann/json.hpp>\n";
+    if (typed) s << "#include \"logos_codec.h\"\n";
+    s << "\n";
     // Only reachable from a method body, so a contract with no invokable method
     // must not emit it: an unused function in an anonymous namespace is a
     // -Wunused-function warning, and such a wrapper stays byte-identical to
@@ -1614,7 +1698,8 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         if (mv.toObject().value("isInvokable").toBool()) { anyInvokable = true; break; }
     }
     if (anyInvokable) emitDispatchRejectionDetectorJson(s);
-    emitRecordConversions(s, rs, ApiStyle::Lp, className);
+    if (typed) emitTypedDecode(s);
+    emitRecordConversions(s, rs, ApiStyle::Lp, className, typed);
 
     // How the wrapper reaches its persistent LpClient + subscription store.
     // Static (concrete dep): owns them by value — the wrapper itself is a
@@ -1659,7 +1744,8 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         for (int i = 0; i < evParams.size(); ++i) {
             const QJsonObject p = evParams.at(i).toObject();
             s << fromWireFor(p.value("type").toString(), ApiStyle::Lp, rs,
-                             QString("_a.at(%1)").arg(i), className + "::");
+                             QString("_a.at(%1)").arg(i), className + "::",
+                             p.value("stdType").toString());
             if (i + 1 < evParams.size()) s << ", ";
         }
         s << ");\n";
@@ -1694,15 +1780,17 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         if (!o.value("isInvokable").toBool()) continue;
         const QString name = o.value("name").toString();
         const QString qtRet = o.value("returnType").toString();
-        const QString ret = returnTypeFor(qtRet, ApiStyle::Lp, rs);
-        const QString retQual = returnTypeFor(qtRet, ApiStyle::Lp, rs, className + "::");
+        const QString retStd = o.value("returnStdType").toString();
+        const QString ret = returnTypeFor(qtRet, ApiStyle::Lp, rs, QString(), retStd);
+        const QString retQual = returnTypeFor(qtRet, ApiStyle::Lp, rs, className + "::", retStd);
         const QJsonArray params = o.value("parameters").toArray();
 
         auto emitParams = [&]() {
             for (int i = 0; i < params.size(); ++i) {
                 const QJsonObject p = params.at(i).toObject();
                 const QString qtPt = p.value("type").toString();
-                const QString pt = paramTypeFor(qtPt, ApiStyle::Lp, rs);
+                const QString pt = paramTypeFor(qtPt, ApiStyle::Lp, rs, QString(),
+                                                p.value("stdType").toString());
                 if (byRefFor(qtPt, pt, ApiStyle::Lp, rs)) s << "const " << pt << "& " << p.value("name").toString();
                 else                                     s << pt << " " << p.value("name").toString();
                 if (i + 1 < params.size()) s << ", ";
@@ -1712,7 +1800,7 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
             s << "    nlohmann::json _args = nlohmann::json::array();\n";
             for (const QJsonValue& pv : params) {
                 const QJsonObject p = pv.toObject();
-                s << "    _args.push_back(" << toWireFor(p.value("type").toString(), ApiStyle::Lp, rs, p.value("name").toString()) << ");\n";
+                s << "    _args.push_back(" << toWireFor(p.value("type").toString(), ApiStyle::Lp, rs, p.value("name").toString(), p.value("stdType").toString()) << ");\n";
             }
         };
 
@@ -1747,7 +1835,7 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         s << "    if (_err.ok()) logosDispatchRejectionJson(_r, _err);\n";
         s << "    if (err) *err = _err;\n";
         if (ret != "void")
-            s << "    return " << fromWireFor(qtRet, ApiStyle::Lp, rs, "_r", className + "::") << ";\n";
+            s << "    return " << fromWireFor(qtRet, ApiStyle::Lp, rs, "_r", className + "::", retStd) << ";\n";
         s << "}\n\n";
 
         // Async
@@ -1764,7 +1852,7 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         if (ret == "void") {
             s << "        (void)_r; callback();\n";
         } else {
-            s << "        callback(" << fromWireFor(qtRet, ApiStyle::Lp, rs, "_r", className + "::") << ");\n";
+            s << "        callback(" << fromWireFor(qtRet, ApiStyle::Lp, rs, "_r", className + "::", retStd) << ");\n";
         }
         s << "    });\n";
         s << "}\n\n";
@@ -1786,7 +1874,7 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         // Same fold as the sync path above, and for the same reason.
         s << "            if (_res.error.ok()) logosDispatchRejectionJson(_r, _res.error);\n";
         if (ret != "void")
-            s << "            _res.value = " << fromWireFor(qtRet, ApiStyle::Lp, rs, "_r", className + "::") << ";\n";
+            s << "            _res.value = " << fromWireFor(qtRet, ApiStyle::Lp, rs, "_r", className + "::", retStd) << ";\n";
         else
             s << "            (void)_r;\n";
         s << "            callback(_res);\n";

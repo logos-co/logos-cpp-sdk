@@ -3,7 +3,11 @@
 #include <QJsonObject>
 #include <QStringList>
 
+#include <set>
+#include <string>
+
 #include "experimental/lidl_emit_common.h"   // lidlTypeToQt — the one Qt type mapper
+#include "experimental/lidl_gen_cdylib.h"    // lidlTypeToStdCdylib — the one std one
 
 // Convert a TypeExpr → Qt-typed string name (same surface the
 // metaobject-introspection path produces for methods, so generator_lib
@@ -141,4 +145,90 @@ QJsonArray moduleEventsToJson(const ModuleDecl& mod)
         arr.append(o);
     }
     return arr;
+}
+
+namespace {
+
+// The shapes generator_lib's record path types already (recordShape there).
+bool onRecordPath(const TypeExpr& te, const std::set<std::string>& recs)
+{
+    auto isRecord = [&](const TypeExpr& t) {
+        return t.kind == TypeExpr::Named && recs.count(t.name) > 0;
+    };
+    if (te.kind == TypeExpr::Array && te.elements.size() == 1) return isRecord(te.elements[0]);
+    if (te.kind == TypeExpr::Map && te.elements.size() == 2) return isRecord(te.elements[1]);
+    return isRecord(te);
+}
+
+// Empty when the slot keeps its flat spelling: a scalar, [tstr], anything that
+// bottoms out at `any`, a record shape, or a type with no Qt-free spelling.
+QString typedSpelling(const TypeExpr& te, const std::set<std::string>& recs,
+                      const QString& recordQual)
+{
+    if (!lidlQtNeedsElementLoop(te) || onRecordPath(te, recs) || !lidlTypeIsQtFree(te, recs))
+        return QString();
+    return lidlTypeToStdCdylib(te, recs, [&](const QString& n) { return recordQual + n; });
+}
+
+void setTyped(QJsonObject& o, const char* key, const QString& spelling)
+{
+    if (!spelling.isEmpty()) o[key] = spelling;
+}
+
+// Rewrites the i-th object of `arr` through `fn`.
+template <class Fn>
+void editAt(QJsonArray& arr, int i, Fn fn)
+{
+    QJsonObject o = arr.at(i).toObject();
+    fn(o);
+    arr.replace(i, o);
+}
+
+} // namespace
+
+// Walks the AST beside the arrays built from it above, which follow it 1:1.
+void annotateTypedCollections(const ModuleDecl& mod, const QString& recordQual,
+                              QJsonArray& methods, QJsonArray& events,
+                              QJsonArray& records)
+{
+    std::set<std::string> recs;
+    for (const TypeDecl& td : mod.types) recs.insert(td.name);
+
+    for (int i = 0; i < int(mod.methods.size()) && i < methods.size(); ++i) {
+        const MethodDecl& m = mod.methods[i];
+        editAt(methods, i, [&](QJsonObject& o) {
+            if (m.returnType)
+                setTyped(o, "returnStdType", typedSpelling(*m.returnType, recs, recordQual));
+            QJsonArray params = o.value("parameters").toArray();
+            for (int j = 0; j < int(m.params.size()) && j < params.size(); ++j)
+                editAt(params, j, [&](QJsonObject& p) {
+                    setTyped(p, "stdType", typedSpelling(m.params[j].type, recs, recordQual));
+                });
+            o["parameters"] = params;
+        });
+    }
+    for (int i = 0; i < int(mod.events.size()) && i < events.size(); ++i) {
+        const EventDecl& e = mod.events[i];
+        editAt(events, i, [&](QJsonObject& o) {
+            QJsonArray params = o.value("params").toArray();
+            for (int j = 0; j < int(e.params.size()) && j < params.size(); ++j)
+                editAt(params, j, [&](QJsonObject& p) {
+                    setTyped(p, "stdType", typedSpelling(e.params[j].type, recs, recordQual));
+                });
+            o["params"] = params;
+        });
+    }
+    // A field's key types its VALUE; optionality stays the "optional" flag.
+    for (int i = 0; i < int(mod.types.size()) && i < records.size(); ++i) {
+        const TypeDecl& td = mod.types[i];
+        editAt(records, i, [&](QJsonObject& o) {
+            QJsonArray fields = o.value("fields").toArray();
+            for (int j = 0; j < int(td.fields.size()) && j < fields.size(); ++j)
+                editAt(fields, j, [&](QJsonObject& f) {
+                    setTyped(f, "stdType",
+                             typedSpelling(fieldValueType(td.fields[j]), recs, recordQual));
+                });
+            o["fields"] = fields;
+        });
+    }
 }

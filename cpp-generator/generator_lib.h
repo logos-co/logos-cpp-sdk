@@ -140,6 +140,8 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
 // StdLogosResult) whose generated body calls the logos-protocol C ABI through
 // logos::LpClient instead of LogosAPIClient — no Qt in the wrapper's TU.
 // makeHeader/makeSource dispatch here when apiStyle == ApiStyle::Lp.
+// A slot carrying "stdType" (a method: "returnStdType"; see
+// annotateTypedCollections in lidl_to_json.h) is typed through the codec.
 QString makeHeaderLp(const QString& moduleName, const QString& className, const QJsonArray& methods, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static, const QJsonArray& records = {});
 QString makeSourceLp(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, const QJsonArray& events = {}, BindMode bindMode = BindMode::Static, const QJsonArray& records = {});
 
