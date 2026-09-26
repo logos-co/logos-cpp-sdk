@@ -1,7 +1,7 @@
 {
   description = "Logos C++ SDK";
 
-  inputs.logos-nix.url = "github:logos-co/logos-nix";
+  inputs.logos-nix.url = "github:logos-co/logos-nix/feat/standalone-apps";
   inputs.nixpkgs.follows = "logos-nix/nixpkgs";
   # The protocol layer (transports, token exchange, lp_* C ABI). Follows our
   # logos-nix so both repos resolve the identical nixpkgs/Qt pin — the QRO
@@ -19,7 +19,7 @@
   #
   # On protocol 0.14's branch (logos-protocol#99, on #98 and #97) until they
   # merge; back to master then.
-  inputs.logos-protocol.url = "github:logos-co/logos-protocol/feat/peering";
+  inputs.logos-protocol.url = "github:logos-co/logos-protocol/feat/standalone-apps";
   inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
   # The canonical, language-neutral LIDL frontend (lexer/parser/AST/serializer/
   # validator) the code generator links. Follows our logos-nix so it resolves
