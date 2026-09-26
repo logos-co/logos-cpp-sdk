@@ -106,6 +106,7 @@ int    logos_core_set_bundled_modules_dirs(const char* const* dirs);
 int    logos_core_set_placement_policy(const char* policy_json);
 int    logos_core_set_shell_identity(const char* name);
 int    logos_core_set_package_config(const char* config_json);
+int    logos_core_set_peering_config(const char* config_json);
 // The shell binding: the host's own identity, admitted by capability_module.
 typedef struct logos_consumer logos_consumer;
 typedef struct logos_consumer_subscription logos_consumer_subscription;
@@ -321,6 +322,10 @@ public:
         // logos_core_set_package_config.
         std::optional<std::string> packageConfigJson;
 
+        // Links with other runtimes: peering_module's configuration (logos-peering's
+        // docs/api.md), with this host's shell as the one that manages it.
+        std::optional<std::string> peeringConfigJson;
+
         // REQUIRED: the host's own identity ("basecamp", ...). start() takes the
         // shell binding, and every call below goes through core_service as it.
         std::string shellName;
@@ -362,6 +367,9 @@ public:
         if (config.packageConfigJson.has_value())
             require(logos_core_set_package_config(config.packageConfigJson->c_str()),
                     "the package config");
+        if (config.peeringConfigJson.has_value())
+            require(logos_core_set_peering_config(config.peeringConfigJson->c_str()),
+                    "the peering config");
         require(logos_core_set_shell_identity(config.shellName.c_str()), "the shell name");
     }
 
@@ -616,6 +624,7 @@ private:
         if (config.accessPolicyJson) doc["access_policy"] = *config.accessPolicyJson;
         if (config.placementPolicyJson) doc["placement_policy"] = *config.placementPolicyJson;
         if (config.packageConfigJson) doc["package_config"] = *config.packageConfigJson;
+        if (config.peeringConfigJson) doc["peering_config"] = *config.peeringConfigJson;
         return doc;
     }
 
