@@ -37,6 +37,29 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
         pkgs = import nixpkgs { inherit system; };
       });
+
+      # The Qt-free SDK for Android (pseudo-system aarch64-android): the headers
+      # and CMake package a plain module builds against. No generator: it runs
+      # on the build platform, from packages.<buildSystem>.logos-cpp-bin.
+      androidPackages = pkgs:
+        let
+          common = import ./nix/default.nix { inherit pkgs; qt = false; };
+          src = ./.;
+          lib = import ./nix/lib.nix { inherit pkgs common src logos-protocol; };
+          include = import ./nix/include.nix { inherit pkgs common src logos-protocol; };
+          # The headers need nlohmann_json alone; transports come from logos-protocol.
+          sdk = pkgs.symlinkJoin {
+            name = "logos-cpp-sdk";
+            paths = [ lib include ];
+            propagatedBuildInputs = [ pkgs.nlohmann_json ];
+          };
+        in
+        {
+          logos-cpp-lib = lib;
+          logos-cpp-include = include;
+          logos-cpp-sdk = sdk;
+          default = sdk;
+        };
     in
     {
       packages = forAllTargets ({ pkgs, ... }: 
@@ -79,7 +102,9 @@
           # Default package
           default = sdk;
         }
-      );
+      ) // {
+        aarch64-android = androidPackages logos-nix.lib.mobileTargets.aarch64-android.pkgs;
+      };
 
       # Typed Qt-free clients for an app: `<name>_api.{h,cpp}` per contract, no
       # umbrella. `lidls` maps a module name to its .lidl, or to a directory
