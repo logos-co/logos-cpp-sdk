@@ -81,6 +81,30 @@
         }
       );
 
+      # Typed Qt-free clients for an app: `<name>_api.{h,cpp}` per contract, no
+      # umbrella. `lidls` maps a module name to its .lidl, or to a directory
+      # holding `<name>.lidl` (a module's packages.<sys>.lidl). The app compiles
+      # them and links the plain protocol image liblogos links.
+      lib.mkClients = { system, lidls, typedCollections ? false }:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          flag = nixpkgs.lib.optionalString typedCollections "--typed-collections";
+        in
+        pkgs.runCommand "logos-cpp-clients" {
+          nativeBuildInputs = [ self.packages.${system}.logos-cpp-bin ];
+        } ''
+          mkdir -p $out
+          ${nixpkgs.lib.concatMapStrings (name: ''
+            src=${lidls.${name}}
+            if [ -d "$src" ]; then src="$src/${name}.lidl"; fi
+            logos-cpp-generator --lidl "$src" --api-style lp ${flag} --output-dir $out
+            if [ ! -f $out/${name}_api.h ]; then
+              echo "mkClients: $src does not declare module ${name}" >&2
+              exit 1
+            fi
+          '') (builtins.attrNames lidls)}
+        '';
+
       checks = forAllSystems ({ pkgs }:
         let
           common = import ./nix/default.nix { inherit pkgs; };
@@ -103,6 +127,29 @@
             inherit pkgs common src generator;
             module-impl-abi = logos-protocol.packages.${pkgs.system}.module-impl-abi;
           };
+          # logos_generate_clients() from the installed package, as an app uses it.
+          clients-cmake = import ./nix/tests-clients-cmake.nix {
+            inherit pkgs common src;
+            sdk = self.packages.${pkgs.system}.logos-cpp-sdk;
+            protocolPlain = logos-protocol.packages.${pkgs.system}.logos-protocol-plain;
+          };
+          # lib.mkClients over tests/clients' fixture, from a file and from a
+          # directory, with and without typed collections.
+          mk-clients =
+            let
+              probe = ./tests/clients/typed_probe.lidl;
+              mk = args: self.lib.mkClients ({ system = pkgs.system; } // args);
+            in
+            import ./nix/tests-mk-clients.nix {
+              inherit pkgs common;
+              plain = mk { lidls.typed_probe = probe; };
+              typed = mk { lidls.typed_probe = probe; typedCollections = true; };
+              fromDir = mk {
+                lidls.typed_probe = pkgs.runCommand "typed-probe-lidl" { } ''
+                  mkdir -p $out && cp ${probe} $out/typed_probe.lidl
+                '';
+              };
+            };
         }
       );
 

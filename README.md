@@ -100,15 +100,21 @@ nix build '.#tests'
 
 # Run the built binary against its retired/renamed CLI flags
 nix build '.#checks.<system>.generator-cli'
+
+# lib.mkClients over the client-mode fixture
+nix build '.#checks.<system>.mk-clients'
 ```
 
-The three test binaries are available in `result/bin/` and can be re-run with
+The test binaries are available in `result/bin/` and can be re-run with
 filters:
 
 ```bash
 ./result/bin/sdk_tests --gtest_filter="LogosModuleContextTest.*"
 ./result/bin/generator_tests --gtest_filter="*PascalCase*"
 ./result/bin/experimental_tests --gtest_filter="*Cdylib*"
+# The client mode's output, compiled and round-tripped over stubbed lp_* calls
+./result/bin/plain_client_tests
+./result/bin/typed_client_tests
 ```
 
 ### Manual Build
@@ -200,6 +206,18 @@ wire through logos-protocol's codec (`logos_codec.h`); a reply of the wrong shap
 decodes to the default value, as every decode on this surface does. Scalars,
 `[tstr]`, `any`, records, `[Rec]` and `{tstr: Rec}` are unchanged. The flag is
 refused in every other mode, so no module build can reach it.
+
+CMake, from the SDK's package, runs the generator at build time:
+
+```cmake
+find_package(logos-cpp-sdk REQUIRED)
+add_executable(my_app main.cpp)
+logos_generate_clients(TARGET my_app LIDL contracts/blockchain_module.lidl TYPED_COLLECTIONS)
+```
+
+Nix: `logos-cpp-sdk.lib.mkClients { system; lidls.blockchain_module = <.lidl, or a
+module's packages.<sys>.lidl>; typedCollections = true; }` is a directory of the
+pairs.
 
 #### Options
 
