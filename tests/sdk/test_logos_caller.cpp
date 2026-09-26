@@ -219,6 +219,37 @@ TEST_F(CallerScope, TheOperatorArmParses)
     EXPECT_FALSE(c.isModule("ops-readonly"));
 }
 
+// A consumer on another runtime, vouched for by that runtime over a session.
+TEST_F(CallerScope, TheRemoteArmParsesAndIsNeverAModule)
+{
+    const LogosCaller c =
+        parseCaller(R"({"kind":"remote","peer":"0b5f7e1a-9a58-4c6e-8f39-3c1d1c7a2e10","name":"wallet_ui"})");
+    EXPECT_EQ(c.kind, CallerKind::Remote);
+    EXPECT_TRUE(c.isRemote());
+    EXPECT_EQ(c.peer, "0b5f7e1a-9a58-4c6e-8f39-3c1d1c7a2e10");
+    EXPECT_EQ(c.name, "wallet_ui");
+    // "wallet_ui" on another runtime is not the local wallet_ui.
+    EXPECT_FALSE(c.isModule("wallet_ui"));
+    EXPECT_FALSE(c.isOperator());
+    EXPECT_EQ(parseCaller(R"({"kind":"remote","name":"wallet_ui"})").kind, CallerKind::Unknown);
+    EXPECT_EQ(parseCaller(R"({"kind":"remote","peer":"p"})").kind, CallerKind::Unknown);
+    EXPECT_EQ(parseCaller(R"({"kind":"remote","peer":"","name":"x"})").kind, CallerKind::Unknown);
+}
+
+// Rule 7: which copy of a repeated key wins differs between parsers, so an
+// identity with one is Unknown rather than whatever this parser happens to keep.
+TEST_F(CallerScope, ARepeatedKeyMakesTheDocumentUnknown)
+{
+    EXPECT_EQ(parseCaller(R"({"kind":"module","name":"a","name":"b"})").kind, CallerKind::Unknown);
+    EXPECT_EQ(parseCaller(R"({"kind":"host","kind":"module","name":"x"})").kind,
+              CallerKind::Unknown);
+    EXPECT_EQ(parseCaller(R"({"kind":"module","name":"x","extra":{"a":1,"a":2}})").kind,
+              CallerKind::Unknown);
+    // The same key in sibling objects is not a repeat.
+    EXPECT_EQ(parseCaller(R"({"kind":"module","name":"x","e1":{"a":1},"e2":{"a":2}})").kind,
+              CallerKind::Module);
+}
+
 // The two arms nothing emits yet must nonetheless PARSE. They are specified, so
 // a 0.6 module can receive one from a later host; a reader that treated them as
 // unrecognised would be within rule 2 but would lose real information for no
