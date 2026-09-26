@@ -19,3 +19,7 @@ enable_testing()
 add_subdirectory(sdk)
 add_subdirectory(generator)
 add_subdirectory(experimental)
+# The generator binary itself, which the client-mode tests run at build time.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cpp-generator
+                 ${CMAKE_CURRENT_BINARY_DIR}/cpp-generator)
+add_subdirectory(clients)
