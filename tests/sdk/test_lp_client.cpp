@@ -58,6 +58,7 @@ enum class AsyncStub {
     Success,        // ok != 0, `json` is the result value
     FailWithError,  // ok == 0, `json` is the canonical {code, message, origin}
     FailMalformed,  // ok == 0, `json` is not a usable error object
+    FailNotAuthorised, // ok == 0, the target's grant refused the method
     RefuseSync,     // returns LP_ERR_INVALID_ARG and does NOT call back
 };
 AsyncStub g_asyncStub = AsyncStub::Success;
@@ -125,6 +126,9 @@ int lp_invoke_async(lp_client*, const char*, const char*, int, lp_result_cb cb, 
         return LP_OK;
     case AsyncStub::FailMalformed:
         cb(0, "not json at all", ud);
+        return LP_OK;
+    case AsyncStub::FailNotAuthorised:
+        cb(0, "{\"code\":\"not_authorised\",\"message\":\"outside the grant\",\"origin\":\"target\"}", ud);
         return LP_OK;
     case AsyncStub::RefuseSync:
         // The ABI's rule: a synchronous argument/handle rejection does NOT
@@ -270,6 +274,17 @@ TEST_F(LpClientAsyncResultTest, FailureDeliversTheCanonicalErrorAndNoValue) {
     // The error object is NOT handed back as if it were a value — that is the
     // distinction the plain invokeAsync path cannot make.
     EXPECT_TRUE(got.is_null());
+}
+
+// A refusal by the target's grant keeps its own code all the way to the wrapper.
+TEST_F(LpClientAsyncResultTest, AGrantRefusalPassesThroughAsNotAuthorised) {
+    logos::LpClient client("target", "origin");
+    g_asyncStub = AsyncStub::FailNotAuthorised;
+    logos::CallError err;
+    client.invokeAsyncResult("m", nlohmann::json::array(),
+                             [&](nlohmann::json, const logos::CallError& e) { err = e; });
+    EXPECT_EQ(err.code, "not_authorised");
+    EXPECT_EQ(err.message, "outside the grant");
 }
 
 TEST_F(LpClientAsyncResultTest, AMalformedErrorObjectStillReportsNotOk) {
