@@ -344,11 +344,12 @@ so the Qt and Qt-free emitters cannot drift. Anything else stays a value: a
 method may legitimately return a three-string map, and matching the shape alone
 would let user data impersonate a refusal.
 
-**Contract names in C++.** A parameter named like one of the wrapper's own
-(`err`, `timeout` / `timeout_ms`, `callback`) gets a trailing `_` in C++ only:
-`method timed(sleep_ms: int, timeout_ms: int)` is
-`timed(int64_t sleep_ms, int64_t timeout_ms_, logos::CallError* err = nullptr, int timeout_ms = 0)`.
-The wire is unchanged. The rule is in `cpp-generator/docs/project.md` (*C++ names*).
+**Contract names in C++.** A name that is a C++ keyword, or a parameter named
+like one of the wrapper's own (`err`, `timeout` / `timeout_ms`, `callback`),
+gets a trailing `_` in C++ only: `method delete(class: tstr, timeout_ms: int)`
+is `delete_(const std::string& class_, int64_t timeout_ms_, logos::CallError* err = nullptr, int timeout_ms = 0)`,
+still called `"delete"` on the wire, and its async twins stay `deleteAsync` /
+`deleteAsyncResult`. The rule is in `cpp-generator/docs/project.md` (*C++ names*).
 
 ### Universal modules: LogosModuleContext
 

@@ -51,6 +51,31 @@ bool isRecord(const TypeExpr& te, const std::set<std::string>& recs)
     return te.kind == TypeExpr::Named && recs.count(te.name) > 0;
 }
 
+// The C++ name the author gives a record, a field, a method or an event
+// (cpp_identifier.h): a keyword gains `_`. The wire keeps the LIDL name.
+QString recordCppName(const std::string& name, const std::set<std::string>& recs)
+{
+    QStringList scope;
+    for (const std::string& r : recs) scope << qs(r);
+    return lidlCppName(qs(name), scope);
+}
+
+template <class Decls>
+QStringList declCppNames(const Decls& decls)
+{
+    QStringList names;
+    for (const auto& d : decls) names << qs(d.name);
+    return lidlCppNames(names);
+}
+
+template <class Decls>
+QString declCppName(const Decls& decls, const std::string& name)
+{
+    QStringList scope;
+    for (const auto& d : decls) scope << qs(d.name);
+    return lidlCppName(qs(name), scope);
+}
+
 bool typeSupported(const TypeExpr& te, bool isReturn, const std::set<std::string>& recs)
 {
     if (te.kind == TypeExpr::Primitive) {
@@ -268,7 +293,7 @@ QString lidlTypeToStdCdylib(const TypeExpr& te, const std::set<std::string>& rec
 
     // A declared record is its generated struct.
     if (isRecord(te, recs))
-        return qs(te.name);
+        return recordCppName(te.name, recs);
     // Recurse, so [bstr] is std::vector<std::vector<uint8_t>> and {tstr: Blob}
     // is std::map<std::string, Blob>. lidlTypeToStd() would answer QVariantList
     // / QVariantMap here — a Qt name in a Qt-FREE translation unit, which only
@@ -374,13 +399,17 @@ void emitRecordCodecs(QTextStream& s, const ModuleDecl& module,
     s << "namespace logos { namespace detail {\n\n";
     // One specialization per declared record. Field order follows the contract.
     for (const TypeDecl& t : module.types) {
-        const QString name = qs(t.name);
+        const QString name = recordCppName(t.name, recs);
+        // `fn` is the author's member, `key` the field's name on the wire.
+        const QStringList members = declCppNames(t.fields);
         s << "template <> struct Codec<::" << name << ", void> {\n";
         s << "    static nlohmann::json to(const " << name << "& v) {\n";
         s << "        nlohmann::json out = nlohmann::json::object();\n";
-        for (const FieldDecl& f : t.fields) {
+        for (size_t i = 0; i < t.fields.size(); ++i) {
+            const FieldDecl& f = t.fields[i];
             const QString ft = lidlFieldTypeCdylib(f, recs);
-            const QString fn = qs(f.name);
+            const QString fn = members.at(int(i));
+            const QString key = qs(f.name);
             if (ft.startsWith("std::optional<")) {
                 // ENCODE: a record field is a NAMED slot, so empty is spelled by
                 // OMITTING the key — never by writing null. This is the half of
@@ -394,10 +423,10 @@ void emitRecordCodecs(QTextStream& s, const ModuleDecl& module,
                 // spellings mean the same state.
                 const QString vt = lidlTypeToStdCdylib(fieldValueType(f), recs);
                 s << "        if (v." << fn << ".has_value())\n";
-                s << "            out[\"" << fn << "\"] = Codec<" << vt << ">::to(*v."
+                s << "            out[\"" << key << "\"] = Codec<" << vt << ">::to(*v."
                   << fn << ");\n";
             } else {
-                s << "        out[\"" << fn << "\"] = Codec<" << ft << ">::to(v."
+                s << "        out[\"" << key << "\"] = Codec<" << ft << ">::to(v."
                   << fn << ");\n";
             }
         }
@@ -405,9 +434,11 @@ void emitRecordCodecs(QTextStream& s, const ModuleDecl& module,
         s << "    static " << name << " from(const nlohmann::json& j, const std::string& path) {\n";
         s << "        if (!j.is_object()) detail::typeError(path, \"object\", j);\n";
         s << "        " << name << " out;\n";
-        for (const FieldDecl& f : t.fields) {
+        for (size_t i = 0; i < t.fields.size(); ++i) {
+            const FieldDecl& f = t.fields[i];
             const QString ft = lidlFieldTypeCdylib(f, recs);
-            const QString fn = qs(f.name);
+            const QString fn = members.at(int(i));
+            const QString key = qs(f.name);
             // A missing field is reported at its own path rather than
             // default-constructed: a record that silently loses a field is the
             // failure mode this whole layer exists to prevent.
@@ -419,9 +450,9 @@ void emitRecordCodecs(QTextStream& s, const ModuleDecl& module,
             // in a required one Codec<T> still rejects both. One expression,
             // both halves of the rule.
             s << "        out." << fn << " = Codec<" << ft << ">::from(\n";
-            s << "            j.contains(\"" << fn << "\") ? j.at(\"" << fn
+            s << "            j.contains(\"" << key << "\") ? j.at(\"" << key
               << "\") : nlohmann::json(),\n";
-            s << "            path + \"." << fn << "\");\n";
+            s << "            path + \"." << key << "\");\n";
         }
         s << "        return out;\n    }\n};\n\n";
     }
@@ -626,7 +657,7 @@ QString lidlMakeTypesHeaderCdylib(const ModuleDecl& module)
     // declarations, so the codec below can name them in any order.
     if (!module.types.empty()) {
         for (const TypeDecl& t : module.types)
-            s << "struct " << qs(t.name) << ";\n";
+            s << "struct " << recordCppName(t.name, recs) << ";\n";
         s << "\n";
     }
 
@@ -880,7 +911,7 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
             s << "        }\n";
             return;
         }
-        QString call = "lidlImpl()." + qs(md.name) + "(";
+        QString call = "lidlImpl()." + declCppName(module.methods, md.name) + "(";
         for (size_t i = 0; i < md.params.size(); ++i) {
             const QString expr = (i < minArgs)
                 ? QString("args.at(%1)").arg(i)
@@ -1159,7 +1190,7 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
         QStringList pnames;
         for (const ParamDecl& pd : ed.params) pnames << qs(pd.name);
         pnames = lidlCppNames(pnames, {"args", "emitEventImpl_"});
-        s << "void " << implClass << "::" << ed.name << "(";
+        s << "void " << implClass << "::" << declCppName(module.events, ed.name) << "(";
         for (int i = 0; i < ed.params.size(); ++i) {
             const QString stdType = lidlTypeToStdCdylib(ed.params[i].type, recsEv);
             // Must match the author's declaration in the `logos_events:` block:

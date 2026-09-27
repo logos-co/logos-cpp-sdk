@@ -27,6 +27,7 @@ add_executable(generator_tests
     test_optional_spellings.cpp
     # Generate from a small contract and compile the result (generated_code.h).
     test_reserved_param_names.cpp
+    test_keyword_names.cpp
 )
 
 target_include_directories(generator_tests PRIVATE
