@@ -17,9 +17,9 @@
   # checks.module-impl-abi additionally consumes
   # packages.<system>.module-impl-abi from here (logos-protocol#66).
   #
-  # On protocol 0.13's branches (logos-protocol#97, and #98 on it) until they
+  # On protocol 0.13's branches (logos-protocol#97, #98 on it, #101 on that) until they
   # merge; back to master then.
-  inputs.logos-protocol.url = "github:logos-co/logos-protocol/feat/drop-legacy-mode";
+  inputs.logos-protocol.url = "github:logos-co/logos-protocol/feat/method-scopes";
   inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
   # The canonical, language-neutral LIDL frontend (lexer/parser/AST/serializer/
   # validator) the code generator links. Follows our logos-nix so it resolves
