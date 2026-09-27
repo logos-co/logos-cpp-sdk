@@ -344,6 +344,19 @@ so the Qt and Qt-free emitters cannot drift. Anything else stays a value: a
 method may legitimately return a three-string map, and matching the shape alone
 would let user data impersonate a refusal.
 
+**Contract names in C++.** A name that is a C++ keyword, or a parameter named
+like one of the wrapper's own (`err`, `timeout` / `timeout_ms`, `callback`),
+gets a trailing `_` in C++ only: `method delete(class: tstr, timeout_ms: int)`
+is `delete_(const std::string& class_, int64_t timeout_ms_, logos::CallError* err = nullptr, int timeout_ms = 0)`,
+still called `"delete"` on the wire, and its async twins stay `deleteAsync` /
+`deleteAsyncResult`. The rule is in `cpp-generator/docs/project.md` (*C++ names*).
+
+**Recursive records.** A record field that would hold its own record by value
+(`type Node { ? parent: Node }`, or two records holding each other) is a
+`std::shared_ptr<T>` in C++: `node.parent->value`, empty when absent. Lists and
+maps of a record (`children: [Node]`) stay `std::vector` / `std::map`. See
+*Recursive records* in `cpp-generator/docs/project.md`.
+
 ### Universal modules: LogosModuleContext
 
 Universal (codegen-driven) modules — those built from a plain `src/<name>_impl.h` header rather than a handcrafted `QObject` plugin — don't see the raw `LogosAPI` at all. The contract is **derived from that header**: the module's ordinary public methods *are* its API, with no marker of any kind (there used to be a `LOGOS_METHOD` marker under `interface: "provider"`; both are gone). `metadata.json#codegen.impl_class` / `codegen.impl_header` name the class and the header when they differ from the defaults (`<Name>Impl` in `src/<name>_impl.h`). Instead of a `LogosAPI`, the generated C-ABI export TU (`<name>_module_impl.cpp`) populates a narrow `LogosModuleContext` base class with everything an impl typically needs:

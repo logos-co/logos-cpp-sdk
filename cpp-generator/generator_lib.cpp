@@ -1,5 +1,6 @@
 #include "generator_lib.h"
 
+#include "cpp_identifier.h"
 #include "metadata_dependencies.h"
 
 #include <QFile>
@@ -7,6 +8,8 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
+
+#include <functional>
 
 bool parseApiStyleFlag(const QStringList& args, ApiStyle& outStyle, QTextStream& err)
 {
@@ -319,6 +322,22 @@ static bool isRecordName(const RecordSet& rs, const QString& name)
     return false;
 }
 
+// C++ spellings (cpp_identifier.h): record names share the wrapper class's
+// scope, a record's field names their own. The wire keeps the LIDL names.
+static QString recordCppName(const RecordSet& rs, const QString& name)
+{
+    QStringList names;
+    for (const RecordDef& d : rs) names << d.name;
+    return lidlCppName(name, names);
+}
+
+static QStringList fieldCppNames(const RecordDef& d)
+{
+    QStringList names;
+    for (const RecordField& f : d.fields) names << f.name;
+    return lidlCppNames(names);
+}
+
 // How a type name mentions a record, if at all.
 enum class RecordShape { None, Scalar, List, Map };
 
@@ -345,7 +364,7 @@ static QString recordCppType(const RecordSet& rs, const QString& t, ApiStyle sty
 {
     QString elem;
     const RecordShape shape = recordShape(rs, t, &elem);
-    const QString q = qual + elem;
+    const QString q = qual + recordCppName(rs, elem);
     switch (shape) {
     case RecordShape::None:   return QString();
     case RecordShape::Scalar: return q;
@@ -531,6 +550,110 @@ static QString fieldTypeFor(const RecordField& f, ApiStyle style, const RecordSe
     return "std::optional<" + value + ">";
 }
 
+// ─── Recursive records ───────────────────────────────────────────────────
+//
+// A struct cannot hold itself: `Node { ? parent: Node }` spelled
+// std::optional<Node> inside Node is an incomplete type, and so is any cycle of
+// records held by value (`Loop { next: Loop }`, or two records holding each
+// other). A field on such a cycle is held through std::shared_ptr<T> instead.
+// std::vector / std::map / QList / QMap take an incomplete T, so `[Node]` stays.
+// A struct is defined after those it holds by value, and all are declared first
+// when one names a struct defined after it.
+
+// The record a field holds by value, or empty: `T`, and `?T` on the lp surface
+// (the Qt one spells an optional field QVariant).
+static QString valueFieldRecord(const RecordField& f, ApiStyle style, const RecordSet& rs)
+{
+    QString elem;
+    if (recordShape(rs, f.type, &elem) != RecordShape::Scalar) return QString();
+    return (f.optional && style == ApiStyle::Qt) ? QString() : elem;
+}
+
+// Whether record `from` holds record `to` by value, directly or through others.
+static bool holdsByValue(const RecordSet& rs, ApiStyle style, const QString& from, const QString& to)
+{
+    QSet<QString> seen;
+    QStringList pending{from};
+    while (!pending.isEmpty()) {
+        const QString cur = pending.takeLast();
+        if (cur == to) return true;
+        if (seen.contains(cur)) continue;
+        seen.insert(cur);
+        for (const RecordDef& d : rs) {
+            if (d.name != cur) continue;
+            for (const RecordField& f : d.fields) {
+                const QString held = valueFieldRecord(f, style, rs);
+                if (!held.isEmpty()) pending << held;
+            }
+        }
+    }
+    return false;
+}
+
+// A field whose record, held by value, would hold the record it belongs to.
+static bool fieldIsBoxed(const RecordDef& owner, const RecordField& f, ApiStyle style,
+                         const RecordSet& rs)
+{
+    const QString held = valueFieldRecord(f, style, rs);
+    return !held.isEmpty() && holdsByValue(rs, style, held, owner.name);
+}
+
+static QString recordFieldCppType(const RecordDef& owner, const RecordField& f, ApiStyle style,
+                                  const RecordSet& rs)
+{
+    if (fieldIsBoxed(owner, f, style, rs))
+        return "std::shared_ptr<" + recordCppType(rs, f.type, style, QString()) + ">";
+    return fieldTypeFor(f, style, rs);
+}
+
+static bool recordsBoxAny(const RecordSet& rs, ApiStyle style)
+{
+    for (const RecordDef& d : rs)
+        for (const RecordField& f : d.fields)
+            if (fieldIsBoxed(d, f, style, rs)) return true;
+    return false;
+}
+
+// Declaration order, except that a struct follows every struct it holds by value.
+// The fields left unboxed form no cycle, so this always terminates.
+static QVector<int> recordDefinitionOrder(const RecordSet& rs, ApiStyle style)
+{
+    QVector<int> order;
+    QVector<bool> placed(rs.size(), false);
+    std::function<void(int)> place = [&](int i) {
+        if (placed[i]) return;
+        placed[i] = true;
+        for (const RecordField& f : rs[i].fields) {
+            const QString held = valueFieldRecord(f, style, rs);
+            if (held.isEmpty() || fieldIsBoxed(rs[i], f, style, rs)) continue;
+            for (int j = 0; j < rs.size(); ++j)
+                if (rs[j].name == held) { place(j); break; }
+        }
+        order << i;
+    };
+    for (int i = 0; i < rs.size(); ++i) place(i);
+    return order;
+}
+
+// Whether, in `order`, a struct's fields name a record defined after it.
+static bool recordsNeedForwardDecls(const RecordSet& rs, ApiStyle style, const QVector<int>& order)
+{
+    static const QRegularExpression identifier("[A-Za-z_][A-Za-z0-9_]*");
+    QSet<QString> records, defined;
+    for (const RecordDef& d : rs) records << recordCppName(rs, d.name);
+    for (int i : order) {
+        defined << recordCppName(rs, rs[i].name);
+        for (const RecordField& f : rs[i].fields) {
+            auto words = identifier.globalMatch(recordFieldCppType(rs[i], f, style, rs));
+            while (words.hasNext()) {
+                const QString word = words.next().captured();
+                if (records.contains(word) && !defined.contains(word)) return true;
+            }
+        }
+    }
+    return false;
+}
+
 // True when some field actually materialises a std::optional on the Lp surface
 // — gates the generated `#include <optional>`, so a contract with no optional
 // (or one whose only optionals are untyped-JSON aliases) keeps its header
@@ -539,7 +662,8 @@ static bool recordsUseStdOptional(const RecordSet& rs)
 {
     for (const RecordDef& d : rs)
         for (const RecordField& f : d.fields)
-            if (f.optional && !lpAliasIsAlreadyNullable(paramTypeFor(f.type, ApiStyle::Lp, rs)))
+            if (f.optional && !fieldIsBoxed(d, f, ApiStyle::Lp, rs)
+                && !lpAliasIsAlreadyNullable(paramTypeFor(f.type, ApiStyle::Lp, rs)))
                 return true;
     return false;
 }
@@ -558,10 +682,16 @@ static void emitRecordStructs(QTextStream& s, const RecordSet& rs, ApiStyle styl
 {
     if (rs.isEmpty()) return;
     s << "    // Record types declared by the contract.\n";
-    for (const RecordDef& d : rs) {
-        s << "    struct " << d.name << " {\n";
-        for (const RecordField& f : d.fields)
-            s << "        " << fieldTypeFor(f, style, rs) << " " << f.name << "{};\n";
+    const QVector<int> order = recordDefinitionOrder(rs, style);
+    if (recordsNeedForwardDecls(rs, style, order))
+        for (const RecordDef& d : rs) s << "    struct " << recordCppName(rs, d.name) << ";\n";
+    for (int r : order) {
+        const RecordDef& d = rs.at(r);
+        const QStringList fieldNames = fieldCppNames(d);
+        s << "    struct " << recordCppName(rs, d.name) << " {\n";
+        for (int i = 0; i < d.fields.size(); ++i)
+            s << "        " << recordFieldCppType(d, d.fields.at(i), style, rs) << " "
+              << fieldNames.at(i) << "{};\n";
         s << "    };\n";
     }
     s << "\n";
@@ -578,20 +708,29 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
     const QString qual = className + "::";
 
     for (const RecordDef& d : rs) {
-        s << "static " << wire << " " << recToWireFn(d.name)
-          << "(const " << qual << d.name << "& v);\n";
-        s << "static " << qual << d.name << " " << recFromWireFn(d.name)
-          << "(const " << wire << "& w);\n";
+        const QString rec = qual + recordCppName(rs, d.name);
+        s << "static " << wire << " " << recToWireFn(d.name) << "(const " << rec << "& v);\n";
+        s << "static " << rec << " " << recFromWireFn(d.name) << "(const " << wire << "& w);\n";
     }
     s << "\n";
 
     for (const RecordDef& d : rs) {
+        // Field names: `m` below is the member, `f.name` the key.
+        const QString rec = qual + recordCppName(rs, d.name);
+        const QStringList members = fieldCppNames(d);
         // Encode.
-        s << "static " << wire << " " << recToWireFn(d.name)
-          << "(const " << qual << d.name << "& v) {\n";
+        s << "static " << wire << " " << recToWireFn(d.name) << "(const " << rec << "& v) {\n";
         if (style == ApiStyle::Lp) {
             s << "    nlohmann::json __j = nlohmann::json::object();\n";
-            for (const RecordField& f : d.fields) {
+            for (int i = 0; i < d.fields.size(); ++i) {
+                const RecordField& f = d.fields.at(i);
+                const QString m = "v." + members.at(i);
+                if (fieldIsBoxed(d, f, style, rs)) {
+                    // An empty box is absent, required or not: no default is built.
+                    s << "    if (" << m << ") __j[\"" << f.name << "\"] = "
+                      << toWireFor(f.type, style, rs, "(*" + m + ")") << ";\n";
+                    continue;
+                }
                 if (fieldIsWrappedOptional(f, style, rs)) {
                     // A record field is a NAMED slot, so empty is spelled by
                     // OMITTING the key — never by writing null. (A positional
@@ -600,30 +739,37 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
                     // canonicalising, not identity: a peer that sent
                     // `"f": null` gets the key back omitted, and both spellings
                     // decode to the same single empty state.
-                    s << "    if (v." << f.name << ".has_value()) __j[\"" << f.name << "\"] = "
-                      << toWireFor(f.type, style, rs, "(*v." + f.name + ")") << ";\n";
+                    s << "    if (" << m << ".has_value()) __j[\"" << f.name << "\"] = "
+                      << toWireFor(f.type, style, rs, "(*" + m + ")") << ";\n";
                     continue;
                 }
                 s << "    __j[\"" << f.name << "\"] = "
-                  << toWireFor(f.type, style, rs, "v." + f.name) << ";\n";
+                  << toWireFor(f.type, style, rs, m) << ";\n";
             }
             s << "    return __j;\n";
         } else {
             s << "    QVariantMap __m;\n";
-            for (const RecordField& f : d.fields) {
+            for (int i = 0; i < d.fields.size(); ++i) {
+                const RecordField& f = d.fields.at(i);
+                const QString m = "v." + members.at(i);
+                if (fieldIsBoxed(d, f, style, rs)) {
+                    s << "    if (" << m << ") __m.insert(QStringLiteral(\"" << f.name << "\"), "
+                      << toWireFor(f.type, style, rs, "(*" + m + ")") << ");\n";
+                    continue;
+                }
                 if (f.optional) {
                     // Same named-slot rule on the Qt surface: an INVALID
                     // QVariant is empty, and empty omits the key. Inserting it
                     // would encode `"f": null`, which is the positional
                     // spelling.
-                    s << "    if (v." << f.name << ".isValid()) __m.insert(QStringLiteral(\""
-                      << f.name << "\"), v." << f.name << ");\n";
+                    s << "    if (" << m << ".isValid()) __m.insert(QStringLiteral(\""
+                      << f.name << "\"), " << m << ");\n";
                     continue;
                 }
                 // Qt's surface type IS the wire type for non-record fields, so
                 // fromValue is what puts it in the map; records/containers
                 // already produce a QVariant-compatible value.
-                const QString v = toWireFor(f.type, style, rs, "v." + f.name);
+                const QString v = toWireFor(f.type, style, rs, m);
                 const bool isRec = recordShape(rs, f.type, nullptr) != RecordShape::None;
                 s << "    __m.insert(QStringLiteral(\"" << f.name << "\"), "
                   << (isRec ? v : "QVariant::fromValue(" + v + ")")
@@ -635,39 +781,54 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
 
         // Decode. A missing / mistyped field keeps its default rather than
         // failing the whole call — same leniency the scalar paths use.
-        s << "static " << qual << d.name << " " << recFromWireFn(d.name)
-          << "(const " << wire << "& w) {\n";
-        s << "    " << qual << d.name << " __out;\n";
+        s << "static " << rec << " " << recFromWireFn(d.name) << "(const " << wire << "& w) {\n";
+        s << "    " << rec << " __out;\n";
         if (style == ApiStyle::Lp) {
             s << "    if (!w.is_object()) return __out;\n";
-            for (const RecordField& f : d.fields) {
+            for (int i = 0; i < d.fields.size(); ++i) {
+                const RecordField& f = d.fields.at(i);
+                const QString m = "__out." + members.at(i);
                 const QString acc = "w.at(\"" + f.name + "\")";
+                if (fieldIsBoxed(d, f, style, rs)) {
+                    s << "    if (w.contains(\"" << f.name << "\") && !" << acc << ".is_null()) " << m
+                      << " = std::make_shared<" << recordCppType(rs, f.type, style, qual) << ">("
+                      << fromWireFor(f.type, style, rs, acc, qual) << ");\n";
+                    continue;
+                }
                 if (fieldIsWrappedOptional(f, style, rs)) {
                     // An absent key and an explicit null are the SAME state on
                     // decode, so both must leave the field nullopt. Testing
                     // only `contains` would decode `"f": null` through the
                     // value conversion and turn empty into a VALUE (0, "").
                     s << "    if (w.contains(\"" << f.name << "\") && !" << acc
-                      << ".is_null()) __out." << f.name << " = "
+                      << ".is_null()) " << m << " = "
                       << fromWireFor(f.type, style, rs, acc, qual) << ";\n";
                     continue;
                 }
-                s << "    if (w.contains(\"" << f.name << "\")) __out." << f.name << " = "
+                s << "    if (w.contains(\"" << f.name << "\")) " << m << " = "
                   << fromWireFor(f.type, style, rs, acc, qual) << ";\n";
             }
         } else {
             s << "    const QVariantMap __m = w.toMap();\n";
-            for (const RecordField& f : d.fields) {
+            for (int i = 0; i < d.fields.size(); ++i) {
+                const RecordField& f = d.fields.at(i);
+                const QString m = "__out." + members.at(i);
                 const QString acc = "__m.value(QStringLiteral(\"" + f.name + "\"))";
+                if (fieldIsBoxed(d, f, style, rs)) {
+                    s << "    if (!" << acc << ".isNull()) " << m << " = std::make_shared<"
+                      << recordCppType(rs, f.type, style, qual) << ">("
+                      << fromWireFor(f.type, style, rs, acc, qual) << ");\n";
+                    continue;
+                }
                 if (f.optional) {
                     // Absent and null both arrive as an INVALID QVariant — the
                     // same state, as the contract requires. Converting (a
                     // `.toString()` on an optional `tstr`) would have turned
                     // empty into "", which is a value.
-                    s << "    __out." << f.name << " = " << acc << ";\n";
+                    s << "    " << m << " = " << acc << ";\n";
                     continue;
                 }
-                s << "    __out." << f.name << " = "
+                s << "    " << m << " = "
                   << fromWireFor(f.type, style, rs, acc, qual) << ";\n";
             }
         }
@@ -676,10 +837,54 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
     }
 }
 
-QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
+// ─── Method and event names ──────────────────────────────────────────────
+//
+// A method's parameters share a scope with the wrapper's own trailing
+// parameters and with the locals and members its bodies use, so a contract
+// parameter named `timeout_ms` (or `err`, `callback`, ...) is spelled apart from
+// them, as a C++ keyword is (cpp_identifier.h). Arguments are positional, so
+// the wire never sees a parameter name: parameters are renamed once, up front.
+// A method's own name is on the wire, so its C++ spelling rides beside it.
+static const QSet<QString>& methodScopeNames(ApiStyle style)
+{
+    static const QSet<QString> qt = {"err", "timeout", "callback", "_err", "_result",
+                                     "m_client", "m_moduleName"};
+    static const QSet<QString> lp = {"err", "timeout_ms", "callback", "_args", "_err", "_r",
+                                     "m_client", "m_state"};
+    return style == ApiStyle::Qt ? qt : lp;
+}
+
+// Each declaration gains "cppName"; its parameters (under `paramsKey`) are renamed.
+static QJsonArray withCppNames(QJsonArray decls, const QString& paramsKey,
+                               const QSet<QString>& reserved)
+{
+    QStringList declNames;
+    for (const QJsonValue& d : decls) declNames << d.toObject().value("name").toString();
+    const QStringList declCpp = lidlCppNames(declNames);
+    for (int i = 0; i < decls.size(); ++i) {
+        QJsonObject d = decls.at(i).toObject();
+        d["cppName"] = declCpp.at(i);
+        QJsonArray params = d.value(paramsKey).toArray();
+        QStringList names;
+        for (const QJsonValue& p : params) names << p.toObject().value("name").toString();
+        const QStringList cpp = lidlCppNames(names, reserved);
+        for (int j = 0; j < params.size(); ++j) {
+            QJsonObject p = params.at(j).toObject();
+            p["name"] = cpp.at(j);
+            params.replace(j, p);
+        }
+        d[paramsKey] = params;
+        decls.replace(i, d);
+    }
+    return decls;
+}
+
+QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& contractMethods, ApiStyle apiStyle, const QJsonArray& contractEvents, BindMode bindMode, const QJsonArray& records)
 {
     if (apiStyle == ApiStyle::Lp)
-        return makeHeaderLp(moduleName, className, methods, events, bindMode, records);
+        return makeHeaderLp(moduleName, className, contractMethods, contractEvents, bindMode, records);
+    const QJsonArray methods = withCppNames(contractMethods, "parameters", methodScopeNames(apiStyle));
+    const QJsonArray events = withCppNames(contractEvents, "params", {});
     const RecordSet rs = parseRecords(records);
     QString h;
     QTextStream s(&h);
@@ -692,6 +897,8 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
     s << "#include <QVariantMap>\n";
     s << "#include <functional>\n";
     s << "#include <utility>\n";
+    // std::shared_ptr, only for a recursive record.
+    if (recordsBoxAny(rs, apiStyle)) s << "#include <memory>\n";
     s << "#include \"logos_types.h\"\n";
     s << "#include \"logos_api.h\"\n";
     s << "#include \"logos_api_client.h\"\n";
@@ -755,7 +962,7 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
         const QString name = o.value("name").toString();
         const QString qtRet = o.value("returnType").toString();
         const QString ret = returnTypeFor(qtRet, apiStyle, rs);
-        s << "    " << ret << " " << name << "(";
+        s << "    " << ret << " " << o.value("cppName").toString() << "(";
         QJsonArray params = o.value("parameters").toArray();
         for (int i = 0; i < params.size(); ++i) {
             QJsonObject p = params.at(i).toObject();
@@ -1010,10 +1217,12 @@ static void emitDispatchRejectionDetector(QTextStream& s)
     s << "#endif  // LOGOS_GENERATED_DISPATCH_REJECTION\n\n";
 }
 
-QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
+QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& contractMethods, ApiStyle apiStyle, const QJsonArray& contractEvents, BindMode bindMode, const QJsonArray& records)
 {
     if (apiStyle == ApiStyle::Lp)
-        return makeSourceLp(moduleName, className, headerBaseName, methods, events, bindMode, records);
+        return makeSourceLp(moduleName, className, headerBaseName, contractMethods, contractEvents, bindMode, records);
+    const QJsonArray methods = withCppNames(contractMethods, "parameters", methodScopeNames(apiStyle));
+    const QJsonArray events = withCppNames(contractEvents, "params", {});
     const RecordSet rs = parseRecords(records);
     // The rejection detector is only reachable from a method body, so a
     // contract with no invokable method must not emit it (an unused function in
@@ -1172,7 +1381,7 @@ QString makeSource(const QString& moduleName, const QString& className, const QS
         };
 
         // Signature
-        s << retQual << " " << className << "::" << name << "(";
+        s << retQual << " " << className << "::" << o.value("cppName").toString() << "(";
         for (int i = 0; i < params.size(); ++i) {
             bool byRef;
             emitParam(params.at(i).toObject(), byRef);
@@ -1441,9 +1650,11 @@ static QString lpEventAccessorName(const QString& evName)
     return QString("on") + cap;
 }
 
-QString makeHeaderLp(const QString& moduleName, const QString& className, const QJsonArray& methods, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
+QString makeHeaderLp(const QString& moduleName, const QString& className, const QJsonArray& contractMethods, const QJsonArray& contractEvents, BindMode bindMode, const QJsonArray& records)
 {
     (void)moduleName;
+    const QJsonArray methods = withCppNames(contractMethods, "parameters", methodScopeNames(ApiStyle::Lp));
+    const QJsonArray events = withCppNames(contractEvents, "params", {});
     const RecordSet rs = parseRecords(records);
     QString h;
     QTextStream s(&h);
@@ -1455,6 +1666,8 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
     // optional keeps its header byte-for-byte unchanged.
     if (recordsUseStdOptional(rs)) s << "#include <optional>\n";
     s << "#include <functional>\n";
+    // std::shared_ptr, only for a recursive record.
+    if (recordsBoxAny(rs, ApiStyle::Lp)) s << "#include <memory>\n";
     s << "#include <nlohmann/json.hpp>\n";
     s << "#include \"logos_json.h\"\n";
     s << "#include \"logos_result.h\"\n";
@@ -1563,7 +1776,7 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
             if (!params.isEmpty()) s << ", ";
         };
 
-        s << "    " << ret << " " << name << "(";
+        s << "    " << ret << " " << o.value("cppName").toString() << "(";
         emitDeclParams();
         // Trailing, defaulted, and in that order — existing call sites,
         // including ones already passing `&err` positionally, are unaffected.
@@ -1598,8 +1811,10 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
     return h;
 }
 
-QString makeSourceLp(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
+QString makeSourceLp(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& contractMethods, const QJsonArray& contractEvents, BindMode bindMode, const QJsonArray& records)
 {
+    const QJsonArray methods = withCppNames(contractMethods, "parameters", methodScopeNames(ApiStyle::Lp));
+    const QJsonArray events = withCppNames(contractEvents, "params", {});
     const RecordSet rs = parseRecords(records);
     QString c;
     QTextStream s(&c);
@@ -1719,7 +1934,7 @@ QString makeSourceLp(const QString& moduleName, const QString& className, const 
         // Sync — routes the caller's deadline to LpClient::invoke's
         // `timeout_ms` parameter, which the generated body used to leave at its
         // default (i.e. silently drop).
-        s << retQual << " " << className << "::" << name << "(";
+        s << retQual << " " << className << "::" << o.value("cppName").toString() << "(";
         emitParams();
         if (!params.isEmpty()) s << ", ";
         s << "logos::CallError* err, int timeout_ms) {\n";

@@ -112,6 +112,40 @@ Per surface:
 | legacy consumer, **positional** slot (param, return, event param) | `QVariant` (Qt) / `LogosMap` (Lp) | still flattened — see Known Limitations |
 | header-first (`impl_header_parser`) | `std::optional<T>` ↔ `?T` | `std::optional<std::optional<T>>` has no LIDL type; it collapses to `?T` and is reported on stderr |
 
+### C++ names
+
+A LIDL name becomes a C++ identifier, but the wire keeps it as written: method names,
+record field keys and event names are never renamed. Only the identifier changes, by one
+rule (`cpp_identifier.h`): a name that clashes gets `_` appended until it no longer does
+and no other name of its scope spells it. A name that does not clash never changes.
+
+A **C++ keyword** clashes everywhere (the C++20 list, alternative tokens such as `and`
+included): a record, field, method, parameter or event named `class`, `delete` or
+`default` is `class_`, `delete_`, `default_` in C++. Names derived from a LIDL name keep
+it, so `method delete` gives `delete_()`, `deleteAsync()` and `deleteAsyncResult()`, and
+`event class` gives `onClass()`. A contract-first cdylib provider's structs and impl class
+are the author's, and use the same spellings: a field `class_`, a method `delete_()`, a
+`logos_events:` entry `class_(...)`.
+
+A method **parameter** also clashes with what the wrapper declares in the same scope: its
+own `err` and deadline (`timeout_ms` on lp, `timeout` on Qt), the async `callback`, and the
+locals and members its bodies use. So `method timed(sleep_ms: int, timeout_ms: int)` takes
+`int64_t timeout_ms_` ahead of the wrapper's `int timeout_ms = 0`. A cdylib provider's
+event bodies declare `args` and call `emitEventImpl_`, so its event parameters keep off both.
+
+### Recursive records
+
+`children: [Node]` inside `Node` is fine as it is: `std::vector` / `std::map` (and `QList` /
+`QMap`) take an incomplete type. A record held **by value** cannot contain itself, though:
+`? parent: Node` as `std::optional<Node>` inside `Node`, `next: Loop` inside `Loop`, or two
+records holding each other. A field on such a cycle is a `std::shared_ptr<T>` instead
+(`std::shared_ptr<Node> parent`): empty is absent, and a copied record shares the pointee.
+By value means `T` and, on lp, `?T`; on Qt an optional field is already a `QVariant`, so only
+a required cycle gets a pointer there. The wire is unchanged, and an empty pointer omits its
+key even for a required field (a provider refuses that call). Structs are emitted after the
+records they hold by value, and all are declared first when one names a record defined
+after it. A contract with neither emits what it did.
+
 ### Client stubs (`lidl_gen_client.h/cpp`)
 
 - `lidlMakeHeader(ModuleDecl)` / `lidlMakeSource(ModuleDecl)` — typed `<Module>` client wrapper; each method (and its `…Async` twin) carries a Doxygen `///` comment generated from the method's `description`
@@ -312,6 +346,9 @@ In `tests/generator/`, alongside the wrapper-emitter tests:
 | Test file | What it tests |
 |-----------|---------------|
 | `test_make_umbrella.cpp` | The `LogosModules` aggregate: both dependency forms on both API styles, that every member's type is included, dropped nameless entries, empty deps |
+| `test_reserved_param_names.cpp` | Parameters named like the wrapper's own (`timeout_ms`, `err`, `callback`, …): spelled apart, and the lp wrapper and cdylib provider compile (`generated_code.h` runs this suite's compiler over the output) |
+| `test_keyword_names.cpp` | Records, fields, methods, parameters and events named with C++ keywords: `_` in C++, the LIDL name on the wire; the lp wrapper and the provider compile as C++17 and C++20 |
+| `test_recursive_records.cpp` | Self-, mutually- and forward-referencing records: `std::shared_ptr` on by-value cycles, definition order, forward declarations; the lp wrapper is built and round-trips a tree through the generated codec over a stubbed `lp_*` ABI |
 
 Fixture files in `tests/experimental/fixtures/`:
 - `sample_impl.h` — module with all supported type variations
@@ -351,6 +388,11 @@ Fixture files in `tests/experimental/fixtures/`:
   pins the current behaviour so closing the gap is a deliberate change.
 - **Nesting, map key types and descriptions still do not cross that boundary either** —
   the flag added for optionality is per-field, not a general widening.
+- **A recursive record cannot yet be implemented by a contract-first cdylib provider.** Its
+  structs are the author's, and the generated codec (`emitRecordCodecs`) still spells a
+  by-value cycle `T` / `std::optional<T>`, which no struct can hold. The consumers box it
+  (*Recursive records* above); the provider would need the same convention, and the
+  header-first parser a way to read `std::shared_ptr<T>` back as `T` or `?T`.
 - `lidlRecordCollidesWithBytesTag` reads *through* an optional (via `fieldValueType`), so a
   single-`_bytes`-field record is refused under both spellings. It used to read `f.type`,
   which refused `? _bytes: tstr` and let `_bytes: ?tstr` through — the same declaration,
