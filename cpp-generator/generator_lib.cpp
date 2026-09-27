@@ -1,5 +1,6 @@
 #include "generator_lib.h"
 
+#include "cpp_identifier.h"
 #include "metadata_dependencies.h"
 
 #include <QFile>
@@ -676,10 +677,46 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
     }
 }
 
-QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
+// ─── Parameter names ─────────────────────────────────────────────────────
+//
+// A method's parameters share a scope with the wrapper's own trailing
+// parameters and with the locals and members its bodies use, so a contract
+// parameter named `timeout_ms` (or `err`, `callback`, ...) is spelled apart from
+// them (cpp_identifier.h). Arguments are positional, so the wire never sees a
+// parameter name and the methods are renamed once, up front.
+static const QSet<QString>& methodScopeNames(ApiStyle style)
+{
+    static const QSet<QString> qt = {"err", "timeout", "callback", "_err", "_result",
+                                     "m_client", "m_moduleName"};
+    static const QSet<QString> lp = {"err", "timeout_ms", "callback", "_args", "_err", "_r",
+                                     "m_client", "m_state"};
+    return style == ApiStyle::Qt ? qt : lp;
+}
+
+static QJsonArray withCppParamNames(QJsonArray methods, ApiStyle style)
+{
+    for (int i = 0; i < methods.size(); ++i) {
+        QJsonObject m = methods.at(i).toObject();
+        QJsonArray params = m.value("parameters").toArray();
+        QStringList names;
+        for (const QJsonValue& p : params) names << p.toObject().value("name").toString();
+        const QStringList cpp = lidlCppNames(names, methodScopeNames(style));
+        for (int j = 0; j < params.size(); ++j) {
+            QJsonObject p = params.at(j).toObject();
+            p["name"] = cpp.at(j);
+            params.replace(j, p);
+        }
+        m["parameters"] = params;
+        methods.replace(i, m);
+    }
+    return methods;
+}
+
+QString makeHeader(const QString& moduleName, const QString& className, const QJsonArray& contractMethods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
 {
     if (apiStyle == ApiStyle::Lp)
-        return makeHeaderLp(moduleName, className, methods, events, bindMode, records);
+        return makeHeaderLp(moduleName, className, contractMethods, events, bindMode, records);
+    const QJsonArray methods = withCppParamNames(contractMethods, apiStyle);
     const RecordSet rs = parseRecords(records);
     QString h;
     QTextStream s(&h);
@@ -1010,10 +1047,11 @@ static void emitDispatchRejectionDetector(QTextStream& s)
     s << "#endif  // LOGOS_GENERATED_DISPATCH_REJECTION\n\n";
 }
 
-QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
+QString makeSource(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& contractMethods, ApiStyle apiStyle, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
 {
     if (apiStyle == ApiStyle::Lp)
-        return makeSourceLp(moduleName, className, headerBaseName, methods, events, bindMode, records);
+        return makeSourceLp(moduleName, className, headerBaseName, contractMethods, events, bindMode, records);
+    const QJsonArray methods = withCppParamNames(contractMethods, apiStyle);
     const RecordSet rs = parseRecords(records);
     // The rejection detector is only reachable from a method body, so a
     // contract with no invokable method must not emit it (an unused function in
@@ -1441,9 +1479,10 @@ static QString lpEventAccessorName(const QString& evName)
     return QString("on") + cap;
 }
 
-QString makeHeaderLp(const QString& moduleName, const QString& className, const QJsonArray& methods, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
+QString makeHeaderLp(const QString& moduleName, const QString& className, const QJsonArray& contractMethods, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
 {
     (void)moduleName;
+    const QJsonArray methods = withCppParamNames(contractMethods, ApiStyle::Lp);
     const RecordSet rs = parseRecords(records);
     QString h;
     QTextStream s(&h);
@@ -1598,8 +1637,9 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
     return h;
 }
 
-QString makeSourceLp(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& methods, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
+QString makeSourceLp(const QString& moduleName, const QString& className, const QString& headerBaseName, const QJsonArray& contractMethods, const QJsonArray& events, BindMode bindMode, const QJsonArray& records)
 {
+    const QJsonArray methods = withCppParamNames(contractMethods, ApiStyle::Lp);
     const RecordSet rs = parseRecords(records);
     QString c;
     QTextStream s(&c);

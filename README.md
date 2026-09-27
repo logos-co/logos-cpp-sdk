@@ -344,6 +344,12 @@ so the Qt and Qt-free emitters cannot drift. Anything else stays a value: a
 method may legitimately return a three-string map, and matching the shape alone
 would let user data impersonate a refusal.
 
+**Contract names in C++.** A parameter named like one of the wrapper's own
+(`err`, `timeout` / `timeout_ms`, `callback`) gets a trailing `_` in C++ only:
+`method timed(sleep_ms: int, timeout_ms: int)` is
+`timed(int64_t sleep_ms, int64_t timeout_ms_, logos::CallError* err = nullptr, int timeout_ms = 0)`.
+The wire is unchanged. The rule is in `cpp-generator/docs/project.md` (*C++ names*).
+
 ### Universal modules: LogosModuleContext
 
 Universal (codegen-driven) modules — those built from a plain `src/<name>_impl.h` header rather than a handcrafted `QObject` plugin — don't see the raw `LogosAPI` at all. The contract is **derived from that header**: the module's ordinary public methods *are* its API, with no marker of any kind (there used to be a `LOGOS_METHOD` marker under `interface: "provider"`; both are gone). `metadata.json#codegen.impl_class` / `codegen.impl_header` name the class and the header when they differ from the defaults (`<Name>Impl` in `src/<name>_impl.h`). Instead of a `LogosAPI`, the generated C-ABI export TU (`<name>_module_impl.cpp`) populates a narrow `LogosModuleContext` base class with everything an impl typically needs:

@@ -112,6 +112,19 @@ Per surface:
 | legacy consumer, **positional** slot (param, return, event param) | `QVariant` (Qt) / `LogosMap` (Lp) | still flattened — see Known Limitations |
 | header-first (`impl_header_parser`) | `std::optional<T>` ↔ `?T` | `std::optional<std::optional<T>>` has no LIDL type; it collapses to `?T` and is reported on stderr |
 
+### C++ names
+
+A LIDL name becomes a C++ identifier, but the wire keeps it as written: method names,
+record field keys and event names are never renamed. Only the identifier changes, by one
+rule (`cpp_identifier.h`): a name that clashes gets `_` appended until it no longer does
+and no other name of its scope spells it. A name that does not clash never changes.
+
+A method **parameter** clashes with what the wrapper declares in the same scope: its own
+`err` and deadline (`timeout_ms` on lp, `timeout` on Qt), the async `callback`, and the
+locals and members its bodies use. So `method timed(sleep_ms: int, timeout_ms: int)` takes
+`int64_t timeout_ms_` ahead of the wrapper's `int timeout_ms = 0`. A cdylib provider's
+event bodies declare `args` and call `emitEventImpl_`, so its event parameters keep off both.
+
 ### Client stubs (`lidl_gen_client.h/cpp`)
 
 - `lidlMakeHeader(ModuleDecl)` / `lidlMakeSource(ModuleDecl)` — typed `<Module>` client wrapper; each method (and its `…Async` twin) carries a Doxygen `///` comment generated from the method's `description`
@@ -312,6 +325,7 @@ In `tests/generator/`, alongside the wrapper-emitter tests:
 | Test file | What it tests |
 |-----------|---------------|
 | `test_make_umbrella.cpp` | The `LogosModules` aggregate: both dependency forms on both API styles, that every member's type is included, dropped nameless entries, empty deps |
+| `test_reserved_param_names.cpp` | Parameters named like the wrapper's own (`timeout_ms`, `err`, `callback`, …): spelled apart, and the lp wrapper and cdylib provider compile (`generated_code.h` runs this suite's compiler over the output) |
 
 Fixture files in `tests/experimental/fixtures/`:
 - `sample_impl.h` — module with all supported type variations

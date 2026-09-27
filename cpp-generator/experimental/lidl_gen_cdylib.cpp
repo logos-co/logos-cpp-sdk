@@ -1,4 +1,5 @@
 #include "lidl_gen_cdylib.h"
+#include "cpp_identifier.h"
 #include "lidl_emit_common.h"
 
 #include <QTextStream>
@@ -1154,6 +1155,10 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
     // modules whose events carry no binary data.
 
     for (const EventDecl& ed : module.events) {
+        // The body declares `args` and calls `emitEventImpl_`; parameters keep off both.
+        QStringList pnames;
+        for (const ParamDecl& pd : ed.params) pnames << qs(pd.name);
+        pnames = lidlCppNames(pnames, {"args", "emitEventImpl_"});
         s << "void " << implClass << "::" << ed.name << "(";
         for (int i = 0; i < ed.params.size(); ++i) {
             const QString stdType = lidlTypeToStdCdylib(ed.params[i].type, recsEv);
@@ -1169,14 +1174,15 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
                 || stdType.startsWith("std::optional")
                 || isRecord(ed.params[i].type, recsEv)
                 || stdType == "LogosMap" || stdType == "LogosList")
-                s << "const " << stdType << "& " << ed.params[i].name;
+                s << "const " << stdType << "& " << pnames.at(i);
             else
-                s << stdType << " " << ed.params[i].name;
+                s << stdType << " " << pnames.at(i);
             if (i + 1 < ed.params.size()) s << ", ";
         }
         s << ")\n{\n";
         s << "    nlohmann::json args = nlohmann::json::array();\n";
-        for (const ParamDecl& pd : ed.params) {
+        for (int i = 0; i < ed.params.size(); ++i) {
+            const ParamDecl& pd = ed.params[i];
             const QString evStd = lidlTypeToStdCdylib(pd.type, recsEv);
             // A record or a composite carrying bytes rides the generated codec,
             // exactly like a method return — otherwise an event payload would be
@@ -1192,13 +1198,13 @@ QString lidlMakeEventsSourceCdylib(const ModuleDecl& module,
                     || pd.type.kind == TypeExpr::Array || pd.type.kind == TypeExpr::Map
                     || pd.type.kind == TypeExpr::Optional)) {
                 s << "    args.push_back(logos::toJson<" << evStd << ">("
-                  << pd.name << "));\n";
+                  << pnames.at(i) << "));\n";
                 continue;
             }
             if (pd.type.kind == TypeExpr::Primitive && pd.type.name == "bstr")
-                s << "    args.push_back(logos::bytesToJson(" << pd.name << "));\n";
+                s << "    args.push_back(logos::bytesToJson(" << pnames.at(i) << "));\n";
             else
-                s << "    args.push_back(" << pd.name << ");\n";
+                s << "    args.push_back(" << pnames.at(i) << ");\n";
         }
         s << "    emitEventImpl_(\"" << ed.name << "\", &args);\n";
         s << "}\n\n";
