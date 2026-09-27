@@ -689,29 +689,18 @@ runtime takes it over its private channel once started.
 > package). The section is kept here because it is the shape a Qt host still
 > writes.
 
-The runtime supports multiple transports, selected via `LogosTransportConfig`:
+The runtime supports these transports, selected via `LogosTransportConfig`:
 
 | Protocol | Backend | Use case |
 |----------|---------|----------|
 | `LocalSocket` | Qt Remote Objects over `QLocalSocket` | In-host, module-to-module (default) |
-| `Tcp` | Boost.Asio + JSON/CBOR framing | Cross-host or container-to-host |
-| `TcpSsl` | Boost.Asio + OpenSSL + JSON/CBOR framing | Same as TCP, with TLS |
+| `QtRemotePlain` | The QtRO 2.0 wire profile, without Qt | Qt-free modules on the same wire |
+| `Inproc` | A provider in the same process | Plain runtime only |
+| `TlsTcp` | Mutual TLS 1.3 sessions (Boost.Asio + OpenSSL) | Between runtimes (peering); plain runtime only |
 
-A `LogosTransportSet` (= `std::vector<LogosTransportConfig>`) lets a single provider publish on multiple endpoints simultaneously (e.g. local socket for in-process clients + TCP+SSL for remote ones):
-
-```cpp
-LogosTransportConfig local;  // protocol = LocalSocket (default)
-
-LogosTransportConfig tls;
-tls.protocol = LogosProtocol::TcpSsl;
-tls.host     = "0.0.0.0";
-tls.port     = 7443;
-tls.caFile   = "/etc/logos/ca.pem";
-tls.certFile = "/etc/logos/server.pem";
-tls.keyFile  = "/etc/logos/server.key";
-
-LogosAPI* api = new LogosAPI("core_service", LogosTransportSet{local, tls}, this);
-```
+`Tcp` and `TcpSsl` were removed in logos-protocol 0.15, and both runtimes refuse
+them. `LogosAPI` also takes a `LogosTransportSet` (= `std::vector<LogosTransportConfig>`),
+one host per entry.
 
 For processes that want to override the process-wide default, use `LogosTransportConfigGlobal::setDefault()` once at startup before any `LogosAPI` is constructed.
 
