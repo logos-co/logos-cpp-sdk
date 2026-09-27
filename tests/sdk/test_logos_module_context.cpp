@@ -53,10 +53,12 @@ public:
     std::string seenModulePath;
     std::string seenInstanceId;
     std::string seenInstancePersistencePath;
+    std::string seenConfiguration;
 
 protected:
     void onContextReady() override {
         ++onContextReadyCalls;
+        seenConfiguration            = configuration();
         seenModulePath               = modulePath();
         seenInstanceId               = instanceId();
         seenInstancePersistencePath  = instancePersistencePath();
@@ -176,6 +178,22 @@ TEST(LogosModuleContextHelpersTest, MaybeSetContextWritesForInheritingImpl)
     EXPECT_EQ(impl.instanceId(),              "id");
     EXPECT_EQ(impl.instancePersistencePath(), "/per");
     EXPECT_EQ(impl.onContextReadyCalls, 1);
+}
+
+// The generated glue sets the configuration before the context, so the hook
+// already sees it; an impl that does not inherit the context compiles unchanged.
+TEST(LogosModuleContextHelpersTest, TheConfigurationIsSetBeforeTheContextHookFires)
+{
+    ContextInherit impl;
+    EXPECT_TRUE(impl.configuration().empty());
+    _logos_codegen_::maybeSetConfiguration(impl, R"({"endpoint":"https://example.org"})");
+    _logos_codegen_::maybeSetContext(impl, "/p", "id", "/per");
+    EXPECT_EQ(impl.seenConfiguration, R"({"endpoint":"https://example.org"})");
+    EXPECT_EQ(impl.configuration(), impl.seenConfiguration);
+
+    NonInheritingImpl plain;
+    _logos_codegen_::maybeSetConfiguration(plain, "{}");
+    EXPECT_EQ(plain.touched, 0);
 }
 
 TEST(LogosModuleContextHelpersTest, MaybeSetContextNoOpForNonInheritingImpl)

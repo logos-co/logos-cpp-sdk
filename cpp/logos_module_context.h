@@ -137,6 +137,11 @@ public:
     // fallback for the path getters.
     bool isContextReady() const { return m_contextReady; }
 
+    // This module's configuration: the one JSON document the host delivered at
+    // startup, set before onContextReady() fires. Empty when none was given.
+    // Configuration never carries authority; grants come from the access policy.
+    const std::string& configuration() const { return m_configuration; }
+
     // Typed access to this module's per-build `LogosModules` aggregate,
     // which the codegen emits in `generated_code/logos_sdk.h`. It owns
     // one strongly-typed client wrapper per entry in `metadata.json`'s
@@ -191,6 +196,11 @@ public:
     // onContextReady() fires.
     void _logosCoreSetModuleName_(std::string moduleName) {
         m_moduleName = std::move(moduleName);
+    }
+
+    // Framework-only — sets configuration(), before the context setter.
+    void _logosCoreSetConfiguration_(std::string configuration) {
+        m_configuration = std::move(configuration);
     }
 
     // Framework-only — sets the typed `LogosModules` pointer that
@@ -289,6 +299,7 @@ private:
     std::string m_modulePath;
     std::string m_instanceId;
     std::string m_instancePersistencePath;
+    std::string m_configuration;
     // Tracks whether the framework has called `_logosCoreSetContext_`
     // at least once. Read by `isContextReady()`.
     bool m_contextReady = false;
@@ -334,6 +345,19 @@ inline auto maybeSetModuleName(T& impl, std::string moduleName)
 
 template<class T>
 inline auto maybeSetModuleName(T&, std::string)
+    -> std::enable_if_t<!std::is_base_of_v<LogosModuleContext, T>>
+{
+}
+
+template<class T>
+inline auto maybeSetConfiguration(T& impl, std::string configuration)
+    -> std::enable_if_t<std::is_base_of_v<LogosModuleContext, T>>
+{
+    static_cast<LogosModuleContext&>(impl)._logosCoreSetConfiguration_(std::move(configuration));
+}
+
+template<class T>
+inline auto maybeSetConfiguration(T&, std::string)
     -> std::enable_if_t<!std::is_base_of_v<LogosModuleContext, T>>
 {
 }
