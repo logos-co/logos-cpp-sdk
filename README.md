@@ -351,6 +351,12 @@ is `delete_(const std::string& class_, int64_t timeout_ms_, logos::CallError* er
 still called `"delete"` on the wire, and its async twins stay `deleteAsync` /
 `deleteAsyncResult`. The rule is in `cpp-generator/docs/project.md` (*C++ names*).
 
+**Recursive records.** A record field that would hold its own record by value
+(`type Node { ? parent: Node }`, or two records holding each other) is a
+`std::shared_ptr<T>` in C++: `node.parent->value`, empty when absent. Lists and
+maps of a record (`children: [Node]`) stay `std::vector` / `std::map`. See
+*Recursive records* in `cpp-generator/docs/project.md`.
+
 ### Universal modules: LogosModuleContext
 
 Universal (codegen-driven) modules — those built from a plain `src/<name>_impl.h` header rather than a handcrafted `QObject` plugin — don't see the raw `LogosAPI` at all. The contract is **derived from that header**: the module's ordinary public methods *are* its API, with no marker of any kind (there used to be a `LOGOS_METHOD` marker under `interface: "provider"`; both are gone). `metadata.json#codegen.impl_class` / `codegen.impl_header` name the class and the header when they differ from the defaults (`<Name>Impl` in `src/<name>_impl.h`). Instead of a `LogosAPI`, the generated C-ABI export TU (`<name>_module_impl.cpp`) populates a narrow `LogosModuleContext` base class with everything an impl typically needs:

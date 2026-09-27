@@ -9,6 +9,8 @@
 #include <QSet>
 #include <QStringList>
 
+#include <functional>
+
 bool parseApiStyleFlag(const QStringList& args, ApiStyle& outStyle, QTextStream& err)
 {
     QString apiVal;
@@ -548,6 +550,110 @@ static QString fieldTypeFor(const RecordField& f, ApiStyle style, const RecordSe
     return "std::optional<" + value + ">";
 }
 
+// ─── Recursive records ───────────────────────────────────────────────────
+//
+// A struct cannot hold itself: `Node { ? parent: Node }` spelled
+// std::optional<Node> inside Node is an incomplete type, and so is any cycle of
+// records held by value (`Loop { next: Loop }`, or two records holding each
+// other). A field on such a cycle is held through std::shared_ptr<T> instead.
+// std::vector / std::map / QList / QMap take an incomplete T, so `[Node]` stays.
+// A struct is defined after those it holds by value, and all are declared first
+// when one names a struct defined after it.
+
+// The record a field holds by value, or empty: `T`, and `?T` on the lp surface
+// (the Qt one spells an optional field QVariant).
+static QString valueFieldRecord(const RecordField& f, ApiStyle style, const RecordSet& rs)
+{
+    QString elem;
+    if (recordShape(rs, f.type, &elem) != RecordShape::Scalar) return QString();
+    return (f.optional && style == ApiStyle::Qt) ? QString() : elem;
+}
+
+// Whether record `from` holds record `to` by value, directly or through others.
+static bool holdsByValue(const RecordSet& rs, ApiStyle style, const QString& from, const QString& to)
+{
+    QSet<QString> seen;
+    QStringList pending{from};
+    while (!pending.isEmpty()) {
+        const QString cur = pending.takeLast();
+        if (cur == to) return true;
+        if (seen.contains(cur)) continue;
+        seen.insert(cur);
+        for (const RecordDef& d : rs) {
+            if (d.name != cur) continue;
+            for (const RecordField& f : d.fields) {
+                const QString held = valueFieldRecord(f, style, rs);
+                if (!held.isEmpty()) pending << held;
+            }
+        }
+    }
+    return false;
+}
+
+// A field whose record, held by value, would hold the record it belongs to.
+static bool fieldIsBoxed(const RecordDef& owner, const RecordField& f, ApiStyle style,
+                         const RecordSet& rs)
+{
+    const QString held = valueFieldRecord(f, style, rs);
+    return !held.isEmpty() && holdsByValue(rs, style, held, owner.name);
+}
+
+static QString recordFieldCppType(const RecordDef& owner, const RecordField& f, ApiStyle style,
+                                  const RecordSet& rs)
+{
+    if (fieldIsBoxed(owner, f, style, rs))
+        return "std::shared_ptr<" + recordCppType(rs, f.type, style, QString()) + ">";
+    return fieldTypeFor(f, style, rs);
+}
+
+static bool recordsBoxAny(const RecordSet& rs, ApiStyle style)
+{
+    for (const RecordDef& d : rs)
+        for (const RecordField& f : d.fields)
+            if (fieldIsBoxed(d, f, style, rs)) return true;
+    return false;
+}
+
+// Declaration order, except that a struct follows every struct it holds by value.
+// The fields left unboxed form no cycle, so this always terminates.
+static QVector<int> recordDefinitionOrder(const RecordSet& rs, ApiStyle style)
+{
+    QVector<int> order;
+    QVector<bool> placed(rs.size(), false);
+    std::function<void(int)> place = [&](int i) {
+        if (placed[i]) return;
+        placed[i] = true;
+        for (const RecordField& f : rs[i].fields) {
+            const QString held = valueFieldRecord(f, style, rs);
+            if (held.isEmpty() || fieldIsBoxed(rs[i], f, style, rs)) continue;
+            for (int j = 0; j < rs.size(); ++j)
+                if (rs[j].name == held) { place(j); break; }
+        }
+        order << i;
+    };
+    for (int i = 0; i < rs.size(); ++i) place(i);
+    return order;
+}
+
+// Whether, in `order`, a struct's fields name a record defined after it.
+static bool recordsNeedForwardDecls(const RecordSet& rs, ApiStyle style, const QVector<int>& order)
+{
+    static const QRegularExpression identifier("[A-Za-z_][A-Za-z0-9_]*");
+    QSet<QString> records, defined;
+    for (const RecordDef& d : rs) records << recordCppName(rs, d.name);
+    for (int i : order) {
+        defined << recordCppName(rs, rs[i].name);
+        for (const RecordField& f : rs[i].fields) {
+            auto words = identifier.globalMatch(recordFieldCppType(rs[i], f, style, rs));
+            while (words.hasNext()) {
+                const QString word = words.next().captured();
+                if (records.contains(word) && !defined.contains(word)) return true;
+            }
+        }
+    }
+    return false;
+}
+
 // True when some field actually materialises a std::optional on the Lp surface
 // — gates the generated `#include <optional>`, so a contract with no optional
 // (or one whose only optionals are untyped-JSON aliases) keeps its header
@@ -556,7 +662,8 @@ static bool recordsUseStdOptional(const RecordSet& rs)
 {
     for (const RecordDef& d : rs)
         for (const RecordField& f : d.fields)
-            if (f.optional && !lpAliasIsAlreadyNullable(paramTypeFor(f.type, ApiStyle::Lp, rs)))
+            if (f.optional && !fieldIsBoxed(d, f, ApiStyle::Lp, rs)
+                && !lpAliasIsAlreadyNullable(paramTypeFor(f.type, ApiStyle::Lp, rs)))
                 return true;
     return false;
 }
@@ -575,12 +682,16 @@ static void emitRecordStructs(QTextStream& s, const RecordSet& rs, ApiStyle styl
 {
     if (rs.isEmpty()) return;
     s << "    // Record types declared by the contract.\n";
-    for (const RecordDef& d : rs) {
+    const QVector<int> order = recordDefinitionOrder(rs, style);
+    if (recordsNeedForwardDecls(rs, style, order))
+        for (const RecordDef& d : rs) s << "    struct " << recordCppName(rs, d.name) << ";\n";
+    for (int r : order) {
+        const RecordDef& d = rs.at(r);
         const QStringList fieldNames = fieldCppNames(d);
         s << "    struct " << recordCppName(rs, d.name) << " {\n";
         for (int i = 0; i < d.fields.size(); ++i)
-            s << "        " << fieldTypeFor(d.fields.at(i), style, rs) << " " << fieldNames.at(i)
-              << "{};\n";
+            s << "        " << recordFieldCppType(d, d.fields.at(i), style, rs) << " "
+              << fieldNames.at(i) << "{};\n";
         s << "    };\n";
     }
     s << "\n";
@@ -614,6 +725,12 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
             for (int i = 0; i < d.fields.size(); ++i) {
                 const RecordField& f = d.fields.at(i);
                 const QString m = "v." + members.at(i);
+                if (fieldIsBoxed(d, f, style, rs)) {
+                    // An empty box is absent, required or not: no default is built.
+                    s << "    if (" << m << ") __j[\"" << f.name << "\"] = "
+                      << toWireFor(f.type, style, rs, "(*" + m + ")") << ";\n";
+                    continue;
+                }
                 if (fieldIsWrappedOptional(f, style, rs)) {
                     // A record field is a NAMED slot, so empty is spelled by
                     // OMITTING the key — never by writing null. (A positional
@@ -635,6 +752,11 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
             for (int i = 0; i < d.fields.size(); ++i) {
                 const RecordField& f = d.fields.at(i);
                 const QString m = "v." + members.at(i);
+                if (fieldIsBoxed(d, f, style, rs)) {
+                    s << "    if (" << m << ") __m.insert(QStringLiteral(\"" << f.name << "\"), "
+                      << toWireFor(f.type, style, rs, "(*" + m + ")") << ");\n";
+                    continue;
+                }
                 if (f.optional) {
                     // Same named-slot rule on the Qt surface: an INVALID
                     // QVariant is empty, and empty omits the key. Inserting it
@@ -667,6 +789,12 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
                 const RecordField& f = d.fields.at(i);
                 const QString m = "__out." + members.at(i);
                 const QString acc = "w.at(\"" + f.name + "\")";
+                if (fieldIsBoxed(d, f, style, rs)) {
+                    s << "    if (w.contains(\"" << f.name << "\") && !" << acc << ".is_null()) " << m
+                      << " = std::make_shared<" << recordCppType(rs, f.type, style, qual) << ">("
+                      << fromWireFor(f.type, style, rs, acc, qual) << ");\n";
+                    continue;
+                }
                 if (fieldIsWrappedOptional(f, style, rs)) {
                     // An absent key and an explicit null are the SAME state on
                     // decode, so both must leave the field nullopt. Testing
@@ -686,6 +814,12 @@ static void emitRecordConversions(QTextStream& s, const RecordSet& rs, ApiStyle 
                 const RecordField& f = d.fields.at(i);
                 const QString m = "__out." + members.at(i);
                 const QString acc = "__m.value(QStringLiteral(\"" + f.name + "\"))";
+                if (fieldIsBoxed(d, f, style, rs)) {
+                    s << "    if (!" << acc << ".isNull()) " << m << " = std::make_shared<"
+                      << recordCppType(rs, f.type, style, qual) << ">("
+                      << fromWireFor(f.type, style, rs, acc, qual) << ");\n";
+                    continue;
+                }
                 if (f.optional) {
                     // Absent and null both arrive as an INVALID QVariant — the
                     // same state, as the contract requires. Converting (a
@@ -763,6 +897,8 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
     s << "#include <QVariantMap>\n";
     s << "#include <functional>\n";
     s << "#include <utility>\n";
+    // std::shared_ptr, only for a recursive record.
+    if (recordsBoxAny(rs, apiStyle)) s << "#include <memory>\n";
     s << "#include \"logos_types.h\"\n";
     s << "#include \"logos_api.h\"\n";
     s << "#include \"logos_api_client.h\"\n";
@@ -1530,6 +1666,8 @@ QString makeHeaderLp(const QString& moduleName, const QString& className, const 
     // optional keeps its header byte-for-byte unchanged.
     if (recordsUseStdOptional(rs)) s << "#include <optional>\n";
     s << "#include <functional>\n";
+    // std::shared_ptr, only for a recursive record.
+    if (recordsBoxAny(rs, ApiStyle::Lp)) s << "#include <memory>\n";
     s << "#include <nlohmann/json.hpp>\n";
     s << "#include \"logos_json.h\"\n";
     s << "#include \"logos_result.h\"\n";

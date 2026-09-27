@@ -28,6 +28,7 @@ add_executable(generator_tests
     # Generate from a small contract and compile the result (generated_code.h).
     test_reserved_param_names.cpp
     test_keyword_names.cpp
+    test_recursive_records.cpp
 )
 
 target_include_directories(generator_tests PRIVATE
