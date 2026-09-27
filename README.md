@@ -423,6 +423,7 @@ Available getters:
 | `moduleName()` | This module's own registry name — the name other modules address it by, and the `origin` it authenticates as. The typed wrappers bake their origin in at codegen time; a by-name call has to state it. |
 | `instanceId()` | Stable per-instance ID assigned by the host. Two side-by-side instances of the same module get distinct IDs. |
 | `instancePersistencePath()` | Per-instance writable data directory the host owns the lifecycle of. The canonical place for module state (config, caches, small databases). Wiped on uninstall; survives upgrades. |
+| `configuration()` | This module's configuration: the one JSON document the host delivered at startup (from its `module_config`), as text. Set *before* `onContextReady()` fires; empty when none was given. It never carries authority: what a caller may call comes from the access policy. |
 | `isContextReady()` | True once the framework has populated the getters above. Flipped *before* `onContextReady()` fires, so helpers that may run earlier (e.g. during construction in tests that bypass the framework) can guard on it. |
 | `modules()` | The module's flat `LogosModules` aggregate — one accessor per `metadata.json#dependencies` entry, plus a `bind_<name>(provider)` factory per interface dependency and — on the `lp` surface universal modules get — an untyped `dynamic(target)` escape hatch returning a `logos::LpClient` (the runtime's core manager is deliberately not there; apps that need to manage the core do so through `logos::host::LogosCore`, over core_service). `LogosModules` is forward-declared in the SDK header and made complete by the impl's `#include "logos_sdk.h"`, so the call site just writes `modules().some_dep.someMethod(...)`. Each accessor's wrapper class signatures use the type surface picked at THIS module's build time (see "API style" below). |
 
@@ -472,7 +473,7 @@ The two carry the same values; the `lp` wrapper marshals them over the logos-pro
 
 All getters return empty / null values when the module is loaded outside a host that provisions a context (CLI tests, unit tests using the impl directly). The `onContextReady()` hook still fires once at framework load time; tests that bypass the framework can call `_logosCoreSetContext_` / `_logosCoreSetLogosModulesPtr_` directly to simulate.
 
-Codegen does NOT require inheritance — modules that don't inherit `LogosModuleContext` compile unchanged. The generated export TU routes every wire-up through SFINAE'd helpers (`_logos_codegen_::maybeSetModuleName` / `maybeSetContext` / `maybeSetLogosModules` / `maybeSetEmitEvent`), called from a one-shot latch that the first `logos_module_dispatch` / `logos_module_set_context` / `logos_module_set_emit_callback` trips; the non-inheriting overloads collapse to no-ops.
+Codegen does NOT require inheritance — modules that don't inherit `LogosModuleContext` compile unchanged. The generated export TU routes every wire-up through SFINAE'd helpers (`_logos_codegen_::maybeSetModuleName` / `maybeSetConfiguration` / `maybeSetContext` / `maybeSetLogosModules` / `maybeSetEmitEvent`), called from a one-shot latch that the first `logos_module_dispatch` / `logos_module_set_context` / `logos_module_set_emit_callback` trips; the non-inheriting overloads collapse to no-ops.
 
 #### Events: `logos_events:`
 
@@ -654,7 +655,11 @@ liblogos. Everything in its `Config` is applied before `start()`:
 - `modulesDirs` and `bundledModulesDirs`. A reserved module name resolves only
   from the bundled directories, and only their modules may run in-process.
 - `placementPolicyJson`, `packageConfigJson`, `accessPolicyJson` and
-  `moduleTransports`.
+  `moduleTransports`. A refused access policy (malformed, or an unknown mode)
+  throws like any other refused setting.
+- `moduleConfigs`: module name → that module's configuration, one JSON
+  document delivered to it before `onContextReady()` (`configuration()`). A
+  later value for a module replaces it whole.
 - `shellName`, the host's own identity (`basecamp`, `standalone`, ...). It is
   required: construction throws without one.
 - `separateProcess`, on by default: `start()` spawns the runtime as liblogos'

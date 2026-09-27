@@ -100,8 +100,9 @@ char*  logos_core_process_module(const char* module_path);
 void   logos_core_set_persistence_base_path(const char* path);
 void   logos_core_set_module_transports(const char* module_name,
                                         const char* transport_set_json);
-void   logos_core_set_access_policy(const char* policy_json);
 // Protected input, before logos_core_start(); each returns 0, or -1 when refused.
+int    logos_core_set_access_policy(const char* policy_json);
+int    logos_core_set_module_config(const char* config_json);
 int    logos_core_set_bundled_modules_dirs(const char* const* dirs);
 int    logos_core_set_placement_policy(const char* policy_json);
 int    logos_core_set_shell_identity(const char* name);
@@ -299,9 +300,13 @@ public:
         std::string persistenceBasePath;
 
         // nullopt ⇒ install no policy at all, which is NOT the same as an empty
-        // policy: liblogos treats "no policy" as unrestricted and only enforces
-        // when a policy with mode "enforce" is present.
+        // policy: liblogos treats "no policy" as unrestricted, and refuses a
+        // malformed one (the constructor or start() then throws).
         std::optional<std::string> accessPolicyJson;
+
+        // module name → that module's configuration, one complete JSON document,
+        // delivered to it at startup. Configuration never carries authority.
+        std::map<std::string, nlohmann::json> moduleConfigs;
 
         // module name → JSON array of LogosTransportConfig. Registered before
         // start(), which is what capability_module requires; user modules only
@@ -349,7 +354,11 @@ public:
         for (const auto& entry : config.moduleTransports)
             logos_core_set_module_transports(entry.first.c_str(), entry.second.c_str());
         if (config.accessPolicyJson.has_value())
-            logos_core_set_access_policy(config.accessPolicyJson->c_str());
+            require(logos_core_set_access_policy(config.accessPolicyJson->c_str()),
+                    "the access policy");
+        if (!config.moduleConfigs.empty())
+            require(logos_core_set_module_config(moduleConfigDocument(config).dump().c_str()),
+                    "the module configuration");
         if (!config.bundledModulesDirs.empty()) {
             std::vector<const char*> dirs;
             for (const std::string& dir : config.bundledModulesDirs) dirs.push_back(dir.c_str());
@@ -600,6 +609,13 @@ private:
         throw std::invalid_argument(std::string("logos::host::LogosCore: liblogos refused ") + what);
     }
 
+    static nlohmann::json moduleConfigDocument(const Config& config)
+    {
+        nlohmann::json document = nlohmann::json::object();
+        for (const auto& entry : config.moduleConfigs) document[entry.first] = entry.second;
+        return document;
+    }
+
     // What logos_runtime_spawn takes: the settings the setters would.
     static nlohmann::json runtimeConfig(const Config& config)
     {
@@ -614,6 +630,7 @@ private:
             doc["module_transports"] = transports;
         }
         if (config.accessPolicyJson) doc["access_policy"] = *config.accessPolicyJson;
+        if (!config.moduleConfigs.empty()) doc["module_config"] = moduleConfigDocument(config);
         if (config.placementPolicyJson) doc["placement_policy"] = *config.placementPolicyJson;
         if (config.packageConfigJson) doc["package_config"] = *config.packageConfigJson;
         return doc;
