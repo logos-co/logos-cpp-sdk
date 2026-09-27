@@ -48,8 +48,10 @@ else()
     message(FATAL_ERROR "logos_protocol.h not found under LOGOS_PROTOCOL_ROOT=${LOGOS_PROTOCOL_ROOT}")
 endif()
 get_target_property(_json_include nlohmann_json::nlohmann_json INTERFACE_INCLUDE_DIRECTORIES)
+# nix passes a store path: CI runs ./result/bin/generator_tests, after the build dir is gone.
+set(LOGOS_TEST_SDK_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../../cpp" CACHE PATH "SDK headers for the compile probes")
 string(JOIN "|" _compile_includes
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../cpp" "${_protocol_include}" ${_json_include})
+    "${LOGOS_TEST_SDK_INCLUDE}" "${_protocol_include}" ${_json_include})
 target_compile_definitions(generator_tests PRIVATE
     LOGOS_TEST_CXX="${CMAKE_CXX_COMPILER}"
     LOGOS_TEST_INCLUDES="${_compile_includes}"
