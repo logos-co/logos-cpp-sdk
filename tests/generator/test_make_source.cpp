@@ -314,8 +314,8 @@ TEST(MakeSourceTest, NonInvokableSkipped)
 // not against the single literal "dispatch_failed" it once was. Providers have
 // emitted "invalid_args" for an arity error all along and no detector matched
 // it, so a missing argument reached a typed consumer as a successful call
-// returning a map. "unknown_method" is in the set before anything emits it: a
-// detector can be widened compatibly on its own, a provider code cannot.
+// returning a map. "unknown_method" joined the set before the cdylib dispatch
+// started emitting it, so no consumer ever received it as data.
 
 TEST(MakeSourceTest, QtEmitsRejectionDetector)
 {

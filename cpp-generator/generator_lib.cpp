@@ -859,16 +859,12 @@ QString makeHeader(const QString& moduleName, const QString& className, const QJ
 //                       detected by nobody: `logosctl call m isPositive` with
 //                       the argument missing exited 0 with status "ok" and the
 //                       refusal object as its RESULT.
-//   "unknown_method"  — NOT emitted by any provider yet. Listed now on purpose.
-//                       logos_protocol.h records that an unknown method is
-//                       currently answered with a bare null, indistinguishable
-//                       from a legitimate null return, and that closing it
-//                       needs a provider-contract change across the SDKs. The
-//                       detector has to be widened FIRST: widening is
-//                       backwards-compatible on its own (nothing emits the code,
-//                       so nothing changes), whereas a new provider code shipped
-//                       against old detectors would arrive at consumers as DATA
-//                       — the same silent-success bug, freshly minted.
+//   "unknown_method"  — no method by that NAME. Emitted by the generated cdylib
+//                       dispatch, logos-rust-sdk `args::unknown_method` and the
+//                       Qt host glue; it used to be a bare null, which a typed
+//                       caller read as the return type's default. The detector
+//                       was widened BEFORE any provider emitted it, so a module
+//                       rebuilt with the code never reaches a consumer as DATA.
 //
 // WHY THIS IS A PER-REPO CONSTANT AND NOT A SHARED ONE. There are five copies of
 // this detector: the two emitted below, logos-qt-sdk's byte-identical

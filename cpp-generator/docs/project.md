@@ -374,9 +374,10 @@ Fixture files in `tests/experimental/fixtures/`:
   the arity code was found to be live and undetected — `experimental/lidl_gen_cdylib.cpp`
   and logos-rust-sdk's `args::invalid_args` have both emitted `invalid_args` all along,
   so a missing argument reached a typed consumer as a *successful* call returning a
-  three-key map. `unknown_method` is in the set before any provider emits it: widening a
-  detector is backwards-compatible on its own, whereas a new provider code shipped against
-  narrow detectors would arrive as data. The set stays CLOSED — a method may legitimately
+  three-key map. `unknown_method` (no method by that name) joined the set before any
+  provider emitted it, so the generated cdylib dispatch could start answering it without
+  ever reaching a consumer as data; it replaced a bare null that a typed caller read as the
+  return type's default. The set stays CLOSED — a method may legitimately
   return a three-string map, so matching the shape alone would let user data impersonate a
   refusal.
 

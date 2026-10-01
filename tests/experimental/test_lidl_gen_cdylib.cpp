@@ -538,6 +538,31 @@ TEST(LidlGenCdylib, WrongArgumentCountReportsInvalidArgs)
     EXPECT_FALSE(src.contains("expected at most 2 arguments")) << src.toStdString();
 }
 
+// An unknown method NAME is refused like a wrong count. It used to fall through
+// to `return nullptr`, which reached a typed caller as a default with an ok error.
+TEST(LidlGenCdylib, UnknownMethodReportsUnknownMethod)
+{
+    ModuleDecl m;
+    m.name = "o_module";
+    m.methods.push_back(method("ping", prim("tstr"), {}));
+
+    const QString src = lidlMakeModuleImplExports(m, "OImpl", "o_impl.h");
+    const int begin = src.indexOf("char* logos_module_dispatch(");
+    const int end = src.indexOf("char* logos_module_get_methods(", begin);
+    ASSERT_GE(begin, 0) << src.toStdString();
+    ASSERT_GT(end, begin) << src.toStdString();
+    const QString dispatch = src.mid(begin, end - begin);
+
+    EXPECT_TRUE(dispatch.contains("{\"code\", \"unknown_method\"}")) << dispatch.toStdString();
+    EXPECT_TRUE(dispatch.contains("{\"message\", \"unknown method '\" + m + \"'\"}"))
+        << dispatch.toStdString();
+    EXPECT_TRUE(dispatch.contains("{\"origin\", \"o_module\"}")) << dispatch.toStdString();
+    EXPECT_FALSE(dispatch.contains("// unknown method")) << dispatch.toStdString();
+    // The refusal is the fall-through, reached only after every method arm.
+    EXPECT_LT(dispatch.indexOf("lidlImpl().ping()"), dispatch.indexOf("\"unknown_method\""))
+        << dispatch.toStdString();
+}
+
 // A trailing optional makes the accepted arity a RANGE, and the upper bound is
 // the declared parameter count, not the required one — otherwise supplying the
 // optional would be rejected as an overflow.

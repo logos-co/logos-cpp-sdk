@@ -286,8 +286,8 @@ TEST(AsyncResult, LpDispatchRejectionDetectorMatchesTheClosedCodeSet)
     // "invalid_args" is the code that was LIVE and undetected: the cdylib
     // dispatch (experimental/lidl_gen_cdylib.cpp) and logos-rust-sdk's
     // args::invalid_args both answer an arity error with it, and a consumer
-    // decoded it as a three-key map. "unknown_method" is inert until providers
-    // emit it; it is here so the detector is ready before they do.
+    // decoded it as a three-key map. "unknown_method" is what an unknown method
+    // NAME answers; before that it was a bare null the wrapper decoded as 0.
 }
 
 TEST(AsyncResult, LpDispatchRejectionDetectorMatchesNoOtherCode)
