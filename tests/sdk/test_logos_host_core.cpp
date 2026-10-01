@@ -53,6 +53,8 @@ struct CoreStub {
     std::string optionalReport = "[]";
     int  lastUnloadWithDependents = -1;
     bool loadSucceeds = true;
+    LogosCoreTokenListener tokenListener = nullptr;
+    void* tokenListenerData = nullptr;
 };
 
 CoreStub* g = nullptr;
@@ -104,6 +106,12 @@ int logos_core_unload_module(const char*, bool withDepdts) { g->lastUnloadWithDe
 char* logos_core_get_modules_info()               { return dupC("[]"); }
 char* logos_core_process_module(const char*)      { return dupC("processed"); }
 char* logos_core_get_token(const char*)           { return g->tokenPresent ? dupC("tok-123") : nullptr; }
+void logos_core_set_token_listener(LogosCoreTokenListener l, void* d)
+{
+    g->tokenListener = l;
+    g->tokenListenerData = d;
+    g->callOrder.push_back(l ? "token_listener" : "token_listener_removed");
+}
 char* logos_core_get_module_stats()               { return g->statsJson.empty() ? nullptr : dupC(g->statsJson); }
 }
 
@@ -160,6 +168,31 @@ TEST_F(HostCoreTest, AbsentOptionalSettingsAreNotPushedAtAll)
     EXPECT_FALSE(stub.accessPolicySet);
     EXPECT_TRUE(stub.modulesDirs.empty());
     EXPECT_TRUE(stub.persistenceBasePath.empty());
+}
+
+TEST_F(HostCoreTest, TokenListenerIsInstalledBeforeStartAndRemovedBeforeCleanup)
+{
+    std::vector<std::pair<std::string, std::string>> seen;
+    LogosCore::Config cfg;
+    cfg.tokenListener = [&](const std::string& key, const std::string& token) {
+        seen.emplace_back(key, token);
+    };
+    {
+        LogosCore core(0, nullptr, std::move(cfg));
+        ASSERT_NE(stub.tokenListener, nullptr);
+        stub.tokenListener("capability_module", "tok-1", stub.tokenListenerData);
+        core.start();
+    }
+    EXPECT_EQ(seen, (std::vector<std::pair<std::string, std::string>>{
+        {"capability_module", "tok-1"}}));
+    EXPECT_EQ(stub.callOrder, (std::vector<std::string>{
+        "init", "token_listener", "start", "token_listener_removed", "cleanup"}));
+}
+
+TEST_F(HostCoreTest, NoTokenListenerTouchesNothing)
+{
+    { LogosCore core(0, nullptr, emptyConfig()); }
+    EXPECT_EQ(stub.callOrder, (std::vector<std::string>{"init", "cleanup"}));
 }
 
 TEST_F(HostCoreTest, EmptyAccessPolicyStringIsStillInstalled)
