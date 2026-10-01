@@ -920,7 +920,12 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     for (const MethodDecl& md : module.methods)
         if (!isIdentity(md)) emitMethod(md);
     emitCatch();
-    s << "    return nullptr;  // unknown method\n";
+    // Refused, not NULL: the Qt glue turns NULL into an empty reply, which a
+    // caller cannot tell from a method that returned null.
+    s << "    nlohmann::json unknown{{\"code\", \"unknown_method\"},\n";
+    s << "                           {\"message\", \"unknown method '\" + m + \"'\"},\n";
+    s << "                           {\"origin\", \"" << module.name << "\"}};\n";
+    s << "    return lidlStrdup(unknown.dump());\n";
     s << "}\n\n";
 
     s << "char* logos_module_get_methods(void)\n{\n";
