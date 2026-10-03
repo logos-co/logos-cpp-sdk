@@ -31,15 +31,16 @@
         "nixpkgs-windows": "nixpkgs-windows"
       },
       "locked": {
-        "lastModified": 1786399295,
-        "narHash": "sha256-Bl1A0UgsIXioZw5uEW8Jl5u7FfZcFMnpYlpsdezFwK0=",
+        "lastModified": 1790472269,
+        "narHash": "sha256-hnPJ9oTYSAoeb84rMwU0jC58/BlJ3vokquZYdaBqB0g=",
         "owner": "logos-co",
         "repo": "logos-nix",
-        "rev": "6e0f4a7120fced10829b0b3a698ff619a11d4605",
+        "rev": "63e6471b421593bafbaae8631f0dc2dce0860036",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
+        "ref": "feat/standalone-apps",
         "repo": "logos-nix",
         "type": "github"
       }
@@ -56,16 +57,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1791031588,
-        "narHash": "sha256-ica+yx0KcFi31E16RhS2aCzyRvaodw60OLf7GUzFNJE=",
+        "lastModified": 1791037902,
+        "narHash": "sha256-dySjzpLbi+9Jxdf/elZ6TATYJRKJRoeNR0IG8dUOY+M=",
         "owner": "logos-co",
         "repo": "logos-protocol",
-        "rev": "7a68a268a24e24ec358818ddd2efe0ae9e3eb0be",
+        "rev": "be1ffb64ecb5fdb6ff6c3375ece2923d9de008d8",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "feat/peering",
+        "ref": "feat/standalone-apps",
         "repo": "logos-protocol",
         "type": "github"
       }
