@@ -193,8 +193,8 @@ so the two run the same single implementation.
 - Assumes module wrapper files already exist in the output directory
 - Generates: `logos_sdk.h`, `logos_sdk.cpp`. There is **no** `core_manager_api.*`
   — the runtime's core manager was never a `LogosModules` member, and the
-  generator emits no wrapper for it; apps that need to manage the core use
-  liblogos' C API
+  generator emits no wrapper for it; apps that manage the core do so through
+  `logos::host::LogosCore` (below), over core_service
 - The umbrella headers will include references to all modules listed in the metadata's `dependencies` array
 - For each dependency (e.g., `"waku_module"`), it will:
   - Include `waku_module_api.h` in the header
@@ -424,7 +424,7 @@ Available getters:
 | `instanceId()` | Stable per-instance ID assigned by the host. Two side-by-side instances of the same module get distinct IDs. |
 | `instancePersistencePath()` | Per-instance writable data directory the host owns the lifecycle of. The canonical place for module state (config, caches, small databases). Wiped on uninstall; survives upgrades. |
 | `isContextReady()` | True once the framework has populated the getters above. Flipped *before* `onContextReady()` fires, so helpers that may run earlier (e.g. during construction in tests that bypass the framework) can guard on it. |
-| `modules()` | The module's flat `LogosModules` aggregate — one accessor per `metadata.json#dependencies` entry, plus a `bind_<name>(provider)` factory per interface dependency and — on the `lp` surface universal modules get — an untyped `dynamic(target)` escape hatch returning a `logos::LpClient` (the runtime's core manager is deliberately not there; apps that need to manage the core do so via liblogos' C API). `LogosModules` is forward-declared in the SDK header and made complete by the impl's `#include "logos_sdk.h"`, so the call site just writes `modules().some_dep.someMethod(...)`. Each accessor's wrapper class signatures use the type surface picked at THIS module's build time (see "API style" below). |
+| `modules()` | The module's flat `LogosModules` aggregate — one accessor per `metadata.json#dependencies` entry, plus a `bind_<name>(provider)` factory per interface dependency and — on the `lp` surface universal modules get — an untyped `dynamic(target)` escape hatch returning a `logos::LpClient` (the runtime's core manager is deliberately not there; apps that need to manage the core do so through `logos::host::LogosCore`, over core_service). `LogosModules` is forward-declared in the SDK header and made complete by the impl's `#include "logos_sdk.h"`, so the call site just writes `modules().some_dep.someMethod(...)`. Each accessor's wrapper class signatures use the type surface picked at THIS module's build time (see "API style" below). |
 
 #### API style: Qt vs std
 
@@ -655,16 +655,22 @@ liblogos. Everything in its `Config` is applied before `start()`:
   from the bundled directories, and only their modules may run in-process.
 - `placementPolicyJson`, `packageConfigJson`, `accessPolicyJson` and
   `moduleTransports`.
-- `shellName`, the host's own identity (`basecamp`, `standalone`, ...).
+- `shellName`, the host's own identity (`basecamp`, `standalone`, ...). It is
+  required: construction throws without one.
 
-When capability_module runs in-process, `start()` takes the shell binding. Module
-lifecycle then goes through `core_service` (its contract ships as
-`share/logos/core_service.lidl`) as that identity: `loadModule`, `unloadModule`
-and `refreshModules`. `admitConsumer(name)` returns a credential for one of the
-host's UI plugins, and `retireConsumer(name)` ends it. `shellCredential()` is the
-host's own, for a `LogosAPI` that should call as the shell. Without the
-authority, the C API serves the same methods as before. `tokenListener` is
-deprecated: once capability_module is the authority, core saves no tokens.
+`start()` boots the runtime and takes the shell binding; it throws when there is
+none, which means capability_module, the token authority, did not run in-process
+and nothing can load. Every call then goes through `core_service` (its contract
+ships as `share/logos/core_service.lidl`) as the shell:
+- lifecycle: `loadModule`, `unloadModule`, `refreshModules`;
+- queries: `knownModules`, `loadedModules`, `dependencies`, `dependents`,
+  `optionalDependencies`, `modulesInfoJson`, `optionalLoadReportJson`, `stats`
+  and `allStats`;
+- consumers: `admitConsumer(name)` returns a credential for one of the host's UI
+  plugins, and `retireConsumer(name)` ends it.
+
+`shellCredential()` is the host's own, for a `LogosAPI` that should call as the
+shell. `processModule` is the one call left on liblogos' C API.
 
 ### Transports
 
