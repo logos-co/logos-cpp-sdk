@@ -52,6 +52,14 @@ struct CoreStub {
     // core_service over the binding: each call, and a canned answer per method.
     std::vector<std::pair<std::string, std::string>> coreServiceCalls; // (method, args)
     std::map<std::string, std::string> answers;
+
+    // The runtime in a process of its own.
+    std::vector<std::string> spawnedWith;   // each configuration spawned
+    std::string spawnError;                 // non-empty: the spawn fails so
+    int stops = 0;
+    logos_runtime_exit_cb onExit = nullptr;
+    void* onExitData = nullptr;
+    std::vector<std::string> processedThere;
 };
 
 CoreStub* g = nullptr;
@@ -124,17 +132,52 @@ logos_consumer_subscription* logos_consumer_subscribe(logos_consumer*, const cha
 void logos_consumer_unsubscribe(logos_consumer_subscription*) {}
 void logos_consumer_string_free(char* value) { std::free(value); }
 void logos_consumer_release(logos_consumer*) { ++g->bindingReleases; g->callOrder.push_back("release_binding"); }
+
+char* mallocC(const std::string& s)
+{
+    char* r = static_cast<char*>(std::malloc(s.size() + 1));
+    std::memcpy(r, s.c_str(), s.size() + 1);
+    return r;
+}
+
+char gRuntimeTag;
+logos_runtime* logos_runtime_spawn(const char* config, char** error)
+{
+    g->callOrder.push_back("spawn");
+    g->spawnedWith.emplace_back(config ? config : "");
+    if (!g->spawnError.empty()) {
+        *error = mallocC(g->spawnError);
+        return nullptr;
+    }
+    return reinterpret_cast<logos_runtime*>(&gRuntimeTag);
+}
+logos_consumer* logos_runtime_binding(logos_runtime*)
+{
+    return reinterpret_cast<logos_consumer*>(&gBindingTag);
+}
+char* logos_runtime_process_module(logos_runtime*, const char* path)
+{
+    g->processedThere.emplace_back(path);
+    return mallocC("processed-there");
+}
+void logos_runtime_on_exit(logos_runtime*, logos_runtime_exit_cb cb, void* data)
+{
+    g->onExit = cb;
+    g->onExitData = data;
+}
+void logos_runtime_stop(logos_runtime*) { ++g->stops; g->callOrder.push_back("stop"); }
 }
 
 namespace {
 
 using logos::host::LogosCore;
 
-// The least a host can pass: its shell name.
+// The least a host can pass: its shell name. Most cases run the runtime here.
 LogosCore::Config minimalConfig()
 {
     LogosCore::Config cfg;
     cfg.shellName = "test_shell";
+    cfg.separateProcess = false;
     return cfg;
 }
 
@@ -145,6 +188,15 @@ LogosCore::Config shellConfig()
     cfg.placementPolicyJson = std::string(R"({"default":"subprocess"})");
     cfg.packageConfigJson = std::string(R"({"user_modules_dir":"/u/modules"})");
     cfg.shellName = "basecamp";
+    cfg.separateProcess = false;
+    return cfg;
+}
+
+// The same, with the runtime in a process of its own.
+LogosCore::Config separateConfig()
+{
+    LogosCore::Config cfg = shellConfig();
+    cfg.separateProcess = true;
     return cfg;
 }
 
@@ -442,6 +494,87 @@ TEST_F(HostCoreTest, ConsumersAreAdmittedThroughCoreService)
     EXPECT_TRUE(core.retireConsumer("my_ui"));
     ASSERT_EQ(stub.coreServiceCalls.size(), 2u);
     EXPECT_EQ(stub.coreServiceCalls[0].second, R"(["my_ui","presentation"])");
+}
+
+// ── the runtime in a process of its own ─────────────────────────────────────
+
+TEST_F(HostCoreTest, TheRuntimeRunsInAProcessOfItsOwnByDefault)
+{
+    LogosCore::Config cfg;
+    EXPECT_TRUE(cfg.separateProcess);
+}
+
+TEST_F(HostCoreTest, StartSpawnsTheRuntimeWithEverySetting)
+{
+    LogosCore::Config cfg = separateConfig();
+    cfg.modulesDirs = {"/one"};
+    cfg.persistenceBasePath = "/persist";
+    cfg.accessPolicyJson = std::string(R"({"mode":"enforce"})");
+    cfg.moduleTransports = {{"mod_a", "[]"}};
+    stub.answers = {{"loadModule", R"({"status":"ok"})"}};
+    {
+        LogosCore core(0, nullptr, std::move(cfg));
+        EXPECT_TRUE(core.separateProcess());
+        EXPECT_TRUE(stub.callOrder.empty()) << "nothing is configured in this process";
+        core.start();
+        ASSERT_EQ(stub.spawnedWith.size(), 1u);
+        EXPECT_EQ(nlohmann::json::parse(stub.spawnedWith.front()), (nlohmann::json{
+            {"shell", "basecamp"},
+            {"modules_dirs", {"/one"}},
+            {"bundled_modules_dirs", {"/app/modules", "/app/modules-pkg"}},
+            {"persistence_base_path", "/persist"},
+            {"module_transports", {{"mod_a", "[]"}}},
+            {"access_policy", R"({"mode":"enforce"})"},
+            {"placement_policy", R"({"default":"subprocess"})"},
+            {"package_config", R"({"user_modules_dir":"/u/modules"})"},
+        }));
+        EXPECT_TRUE(core.shellBound());
+        EXPECT_TRUE(core.loadModule("alpha")) << "the same core_service calls, over its binding";
+        EXPECT_EQ(core.shellCredential().value_or(""), "shell-cr");
+    }
+    EXPECT_EQ(stub.stops, 1);
+    EXPECT_EQ(stub.cleanupCalls, 0) << "nothing ran here to clean up";
+    EXPECT_EQ(stub.bindingReleases, 0) << "the runtime's handle owns its binding";
+    EXPECT_EQ(stub.startCalls, 0);
+    EXPECT_EQ(stub.initCalls, 0);
+}
+
+TEST_F(HostCoreTest, AFailedSpawnThrowsWithItsReason)
+{
+    stub.spawnError = "there is no token authority";
+    {
+        LogosCore core(0, nullptr, separateConfig());
+        try {
+            core.start();
+            ADD_FAILURE() << "start() did not throw";
+        } catch (const std::runtime_error& e) {
+            EXPECT_NE(std::string(e.what()).find("no token authority"), std::string::npos) << e.what();
+        }
+        EXPECT_FALSE(core.shellBound());
+        EXPECT_FALSE(core.loadModule("alpha"));
+    }
+    EXPECT_EQ(stub.stops, 0);
+    EXPECT_EQ(stub.cleanupCalls, 0);
+}
+
+TEST_F(HostCoreTest, AModuleFileIsProcessedByTheRuntime)
+{
+    LogosCore core(0, nullptr, separateConfig());
+    EXPECT_FALSE(core.processModule("/x.dylib").has_value()) << "nothing runs before start()";
+    core.start();
+    EXPECT_EQ(core.processModule("/x.dylib").value_or(""), "processed-there");
+    EXPECT_EQ(stub.processedThere, (std::vector<std::string>{"/x.dylib"}));
+}
+
+TEST_F(HostCoreTest, TheRuntimesExitReachesTheHost)
+{
+    std::vector<std::string> reasons;
+    LogosCore core(0, nullptr, separateConfig());
+    core.onRuntimeExit([&](const std::string& reason) { reasons.push_back(reason); });
+    core.start();
+    ASSERT_NE(stub.onExit, nullptr);
+    stub.onExit("the runtime died on signal 9", stub.onExitData);
+    EXPECT_EQ(reasons, (std::vector<std::string>{"the runtime died on signal 9"}));
 }
 
 } // namespace

@@ -657,10 +657,16 @@ liblogos. Everything in its `Config` is applied before `start()`:
   `moduleTransports`.
 - `shellName`, the host's own identity (`basecamp`, `standalone`, ...). It is
   required: construction throws without one.
+- `separateProcess`, on by default: `start()` spawns the runtime as liblogos'
+  `bin/logos_runtime` (`logos_runtime_spawn`), so the token authority and every
+  module's credential stay out of the host's process. Off, the runtime runs in
+  the host's process (tests, single-process deployments).
 
 `start()` boots the runtime and takes the shell binding; it throws when there is
 none, which means capability_module, the token authority, did not run in-process
-and nothing can load. Every call then goes through `core_service` (its contract
+and nothing can load, or when a separate runtime did not start (with its
+reason). `onRuntimeExit(callback)` hears of a separate runtime that exits
+before the host stops it. Every call then goes through `core_service` (its contract
 ships as `share/logos/core_service.lidl`) as the shell:
 - lifecycle: `loadModule`, `unloadModule`, `refreshModules`;
 - queries: `knownModules`, `loadedModules`, `dependencies`, `dependents`,
@@ -670,7 +676,8 @@ ships as `share/logos/core_service.lidl`) as the shell:
   plugins, and `retireConsumer(name)` ends it.
 
 `shellCredential()` is the host's own, for a `LogosAPI` that should call as the
-shell. `processModule` is the one call left on liblogos' C API.
+shell. `processModule` is the one call left on liblogos' C API; a separate
+runtime takes it over its private channel once started.
 
 ### Transports
 
