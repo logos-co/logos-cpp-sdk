@@ -17,8 +17,8 @@
   buildInputs = [
     pkgs.qt6.qtbase
     pkgs.qt6.qtremoteobjects
-    pkgs.boost                # Boost.Asio for plain-C++ TCP transports
-    pkgs.openssl              # TLS for TcpSsl
+    pkgs.boost                # Boost.Asio for the plain runtime's sockets
+    pkgs.openssl              # TLS for tls_tcp sessions
     pkgs.nlohmann_json        # Wire message JSON codec
   ];
 
