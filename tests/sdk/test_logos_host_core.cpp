@@ -34,6 +34,8 @@ struct CoreStub {
     std::string persistenceBasePath;
     std::string accessPolicy;
     bool accessPolicySet = false;
+    std::string moduleConfig;
+    int refusePolicy = 0;
     std::vector<std::pair<std::string, std::string>> transports;
     // Records the ORDER in which the C API was touched, so the ordering
     // contract ("all config strictly before start") can be asserted rather
@@ -86,7 +88,8 @@ void logos_core_start()                           { ++g->startCalls;   g->callOr
 void logos_core_cleanup()                         { ++g->cleanupCalls; g->callOrder.push_back("cleanup"); }
 void logos_core_add_modules_dir(const char* d)    { g->modulesDirs.emplace_back(d); g->callOrder.push_back("add_dir"); }
 void logos_core_set_persistence_base_path(const char* p) { g->persistenceBasePath = p; g->callOrder.push_back("persistence"); }
-void logos_core_set_access_policy(const char* p)  { g->accessPolicySet = true; g->accessPolicy = p ? p : ""; g->callOrder.push_back("policy"); }
+int logos_core_set_access_policy(const char* p)   { g->accessPolicySet = true; g->accessPolicy = p ? p : ""; g->callOrder.push_back("policy"); return g->refusePolicy; }
+int logos_core_set_module_config(const char* c)   { g->moduleConfig = c; g->callOrder.push_back("module_config"); return g->refuseSetters; }
 void logos_core_set_module_transports(const char* m, const char* j) { g->transports.emplace_back(m, j); g->callOrder.push_back("transports"); }
 char* logos_core_process_module(const char*)      { return g->processReturnsNull ? nullptr : dupC("processed"); }
 
@@ -254,6 +257,35 @@ TEST_F(HostCoreTest, AbsentOptionalSettingsAreNotPushedAtAll)
     EXPECT_TRUE(stub.modulesDirs.empty());
     EXPECT_TRUE(stub.persistenceBasePath.empty());
     EXPECT_EQ(stub.callOrder, (std::vector<std::string>{"init", "shell", "cleanup"}));
+}
+
+// A refused policy is a configuration error like any other protected input.
+TEST_F(HostCoreTest, ARefusedAccessPolicyThrowsAfterCleaningUp)
+{
+    stub.refusePolicy = -1;
+    LogosCore::Config cfg = minimalConfig();
+    cfg.accessPolicyJson = std::string(R"({"version":2,"mode":"sometimes"})");
+    EXPECT_THROW(LogosCore(0, nullptr, std::move(cfg)), std::invalid_argument);
+    EXPECT_EQ(stub.cleanupCalls, 1);
+}
+
+TEST_F(HostCoreTest, ModuleConfigsAreOneDocumentKeyedByModule)
+{
+    LogosCore::Config cfg = minimalConfig();
+    cfg.moduleConfigs["peering_module"] = {{"listen", "127.0.0.1:0"}};
+    cfg.moduleConfigs["my_module"] = {{"endpoint", "https://example.org"}};
+    { LogosCore core(0, nullptr, std::move(cfg)); }
+    EXPECT_EQ(nlohmann::json::parse(stub.moduleConfig), (nlohmann::json{
+        {"my_module", {{"endpoint", "https://example.org"}}},
+        {"peering_module", {{"listen", "127.0.0.1:0"}}},
+    }));
+    EXPECT_EQ(stub.callOrder, (std::vector<std::string>{"init", "module_config", "shell", "cleanup"}));
+
+    stub = CoreStub{};
+    stub.refuseSetters = -1;
+    LogosCore::Config refused = minimalConfig();
+    refused.moduleConfigs["my_module"] = nlohmann::json::object();
+    EXPECT_THROW(LogosCore(0, nullptr, std::move(refused)), std::invalid_argument);
 }
 
 TEST_F(HostCoreTest, EmptyAccessPolicyStringIsStillInstalled)
@@ -511,6 +543,7 @@ TEST_F(HostCoreTest, StartSpawnsTheRuntimeWithEverySetting)
     cfg.persistenceBasePath = "/persist";
     cfg.accessPolicyJson = std::string(R"({"mode":"enforce"})");
     cfg.moduleTransports = {{"mod_a", "[]"}};
+    cfg.moduleConfigs["mod_a"] = {{"k", 1}};
     stub.answers = {{"loadModule", R"({"status":"ok"})"}};
     {
         LogosCore core(0, nullptr, std::move(cfg));
@@ -525,6 +558,7 @@ TEST_F(HostCoreTest, StartSpawnsTheRuntimeWithEverySetting)
             {"persistence_base_path", "/persist"},
             {"module_transports", {{"mod_a", "[]"}}},
             {"access_policy", R"({"mode":"enforce"})"},
+            {"module_config", {{"mod_a", {{"k", 1}}}}},
             {"placement_policy", R"({"default":"subprocess"})"},
             {"package_config", R"({"user_modules_dir":"/u/modules"})"},
         }));

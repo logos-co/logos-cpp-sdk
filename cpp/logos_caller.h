@@ -89,6 +89,9 @@ struct LogosCaller {
     std::string instance;   // Module, optional (rule 6)
     std::string parent;     // Derived
     std::string leaf;       // Derived
+    // The runtime checked this call against a method-list grant: "scoped":true in
+    // the document. False for a "*" grant, a list-form rule, or any bad document.
+    bool scoped = false;
 
     bool isUnknown() const { return kind == CallerKind::Unknown; }
     bool isHost() const { return kind == CallerKind::Host; }
@@ -171,6 +174,8 @@ LOGOS_CALLER_LOCAL inline LogosCaller parseCaller(const std::string& json)
     };
 
     const std::string kind = kindIt->get<std::string>();
+    const auto scopedIt = doc.find("scoped");
+    caller.scoped = scopedIt != doc.end() && scopedIt->is_boolean() && scopedIt->get<bool>();
 
     if (kind == "unknown") {
         return caller;

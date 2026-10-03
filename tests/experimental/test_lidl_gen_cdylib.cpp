@@ -1150,6 +1150,25 @@ TEST(LidlGenCdylib, PublishedTypesSpellMapsAndOptionals)
     EXPECT_TRUE(opts.contains("{\"type\", \"? tstr\"}")) << opts.toStdString();
 }
 
+// The host's configuration reaches the impl before the context hook: the optional
+// export stores it under the context lock, refuses late, and the latch sets it first.
+TEST(LidlGenCdylib, TheConfigurationExportIsOptionalAndLandsBeforeTheContext)
+{
+    const QString src = implExportsFor(moduleWithMethod(method("m", prim("bool"), {})));
+    const QString guard =
+        "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && (LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+        "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && LOGOS_PROTOCOL_VERSION_MINOR >= 13))\n";
+    EXPECT_TRUE(src.contains(guard + "LOGOS_MODULE_IMPL_EXPORT int logos_module_set_configuration("
+                                     "const char* configuration_json)"))
+        << src.toStdString();
+    EXPECT_TRUE(src.contains("if (g_hookFired.load(std::memory_order_acquire)) return -1;"));
+    EXPECT_TRUE(src.contains("parse(configuration_json, nullptr, false).is_discarded()) return -1;"));
+    const int configuration = src.indexOf("maybeSetConfiguration(lidlImpl()");
+    const int context = src.indexOf("maybeSetContext(lidlImpl()");
+    ASSERT_GE(configuration, 0);
+    EXPECT_LT(configuration, context) << "the configuration must be set before the context hook";
+}
+
 // A host that loads the image in-process hands it a runtime delegate through
 // this export. Guarded MAJOR-aware on 0.13 so unifdef can resolve it.
 TEST(LidlGenCdylib, TheRuntimeDelegateExportIsGuardedOnProtocol013)

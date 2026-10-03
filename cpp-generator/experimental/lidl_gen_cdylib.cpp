@@ -707,6 +707,8 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "std::mutex g_ctxMutex;\n";
     s << "bool g_ctxStored = false;\n";
     s << "std::string g_ctxPath, g_ctxId, g_ctxPersist;\n";
+    // The host's configuration document (logos_module_set_configuration), under g_ctxMutex.
+    s << "std::string g_configuration;\n";
     s << "std::atomic<bool> g_hookFired{false};\n\n";
 
     s << "char* lidlStrdup(const std::string& str)\n{\n";
@@ -775,13 +777,21 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "        std::lock_guard<std::mutex> lock(g_emitMutex);\n";
     s << "        if (!g_emitCb) return;\n";
     s << "    }\n";
-    s << "    g_hookFired.store(true, std::memory_order_release);\n";
+    // Fired once, under the lock a late configuration takes, so none is lost.
+    s << "    std::string configuration;\n";
+    s << "    {\n";
+    s << "        std::lock_guard<std::mutex> lock(g_ctxMutex);\n";
+    s << "        if (g_hookFired.load(std::memory_order_acquire)) return;\n";
+    s << "        g_hookFired.store(true, std::memory_order_release);\n";
+    s << "        configuration = g_configuration;\n";
+    s << "    }\n";
     // modules() was already wired by lidlEnsureModulesWired() above (before this
     // context-gated early return), so onContextReady can safely call
     // modules().<dep>... / subscribe to dependency events from the hook.
     // The module's own registry name, which the generator knows statically.
     // Set BEFORE the context so moduleName() is live inside onContextReady().
     s << "    _logos_codegen_::maybeSetModuleName(lidlImpl(), \"" << module.name << "\");\n";
+    s << "    _logos_codegen_::maybeSetConfiguration(lidlImpl(), std::move(configuration));\n";
     s << "    _logos_codegen_::maybeSetContext(lidlImpl(), path, id, persist);\n";
     s << "}\n\n";
 
@@ -1131,6 +1141,22 @@ QString lidlMakeModuleImplExports(const ModuleDecl& module,
     s << "LOGOS_MODULE_IMPL_EXPORT int logos_module_set_runtime_delegate("
          "const lp_runtime_delegate_v1* delegate)\n{\n";
     s << "    return lp_runtime_install_delegate(delegate);\n}\n";
+    s << "#endif\n\n";
+
+    // OPTIONAL like the delegate: the host's configuration document, before the
+    // context. It calls no lp_*, refuses JSON it cannot parse, and refuses late.
+    s << "#if defined(LOGOS_PROTOCOL_VERSION_MINOR) && "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR > 0 || "
+         "(LOGOS_PROTOCOL_VERSION_MAJOR == 0 && "
+         "LOGOS_PROTOCOL_VERSION_MINOR >= 13))\n";
+    s << "LOGOS_MODULE_IMPL_EXPORT int logos_module_set_configuration("
+         "const char* configuration_json)\n{\n";
+    s << "    if (!configuration_json) return -1;\n";
+    s << "    if (nlohmann::json::parse(configuration_json, nullptr, false).is_discarded()) return -1;\n";
+    s << "    std::lock_guard<std::mutex> lock(g_ctxMutex);\n";
+    s << "    if (g_hookFired.load(std::memory_order_acquire)) return -1;\n";
+    s << "    g_configuration = configuration_json;\n";
+    s << "    return 0;\n}\n";
     s << "#endif\n\n";
 
     s << "} // extern \"C\"\n";

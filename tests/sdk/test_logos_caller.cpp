@@ -289,6 +289,20 @@ TEST_F(CallerScope, AnOptionalFieldOfTheWrongTypeIsDroppedNotFatal)
 
 // ── The ambient accessor: push, pop, nesting, threads ───────────────────────
 
+// "scoped" is read only as a boolean true, on any arm that parses; a failed arm
+// resets it with everything else.
+TEST_F(CallerScope, ScopedIsReadOnlyFromABooleanTrue)
+{
+    EXPECT_TRUE(parseCaller(R"({"kind":"module","name":"a","scoped":true})").scoped);
+    EXPECT_TRUE(parseCaller(R"({"kind":"operator","name":"ops","scoped":true})").scoped);
+    EXPECT_TRUE(parseCaller(R"({"kind":"unknown","scoped":true})").scoped);
+    EXPECT_FALSE(parseCaller(R"({"kind":"module","name":"a"})").scoped);
+    EXPECT_FALSE(parseCaller(R"({"kind":"module","name":"a","scoped":"true"})").scoped);
+    EXPECT_FALSE(parseCaller(R"({"kind":"module","name":"a","scoped":1})").scoped);
+    EXPECT_FALSE(parseCaller(R"({"kind":"module","scoped":true})").scoped) << "a failed arm";
+    EXPECT_FALSE(parseCaller(R"({"kind":"future","name":"a","scoped":true})").scoped);
+}
+
 TEST_F(CallerScope, OutsideADispatchTheCallerIsUnknown)
 {
     // A worker thread, a timer, a context hook and an event emission all land
