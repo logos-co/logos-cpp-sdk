@@ -46,4 +46,13 @@ QJsonArray moduleEventsToJson(const ModuleDecl& mod);
 void noteOptionalPositionalSlots(const ModuleDecl& mod, const QString& where,
                                  QTextStream& err);
 
+// `--typed-collections`: gives every slot the flat names collapse to
+// LogosList / LogosMap — [T] other than [tstr], {tstr: T}, ?T — its typed std
+// spelling (lidlTypeToStdCdylib), as "stdType" ("returnStdType" on a method).
+// Records in it are qualified with `recordQual` ("Weather::"). Record-shaped
+// slots (Rec, [Rec], {tstr: Rec}) keep the record path and get no key.
+void annotateTypedCollections(const ModuleDecl& mod, const QString& recordQual,
+                              QJsonArray& methods, QJsonArray& events,
+                              QJsonArray& records);
+
 #endif // LIDL_TO_JSON_H

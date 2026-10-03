@@ -1,7 +1,7 @@
 {
   description = "Logos C++ SDK";
 
-  inputs.logos-nix.url = "github:logos-co/logos-nix";
+  inputs.logos-nix.url = "github:logos-co/logos-nix/feat/standalone-apps";
   inputs.nixpkgs.follows = "logos-nix/nixpkgs";
   # The protocol layer (transports, token exchange, lp_* C ABI). Follows our
   # logos-nix so both repos resolve the identical nixpkgs/Qt pin — the QRO
@@ -19,7 +19,7 @@
   #
   # On protocol 0.14's branch (logos-protocol#99, on #98 and #97) until they
   # merge; back to master then.
-  inputs.logos-protocol.url = "github:logos-co/logos-protocol/feat/peering";
+  inputs.logos-protocol.url = "github:logos-co/logos-protocol/feat/standalone-apps";
   inputs.logos-protocol.inputs.logos-nix.follows = "logos-nix";
   # The canonical, language-neutral LIDL frontend (lexer/parser/AST/serializer/
   # validator) the code generator links. Follows our logos-nix so it resolves
@@ -37,6 +37,29 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
         pkgs = import nixpkgs { inherit system; };
       });
+
+      # The Qt-free SDK for Android (pseudo-system aarch64-android): the headers
+      # and CMake package a plain module builds against. No generator: it runs
+      # on the build platform, from packages.<buildSystem>.logos-cpp-bin.
+      androidPackages = pkgs:
+        let
+          common = import ./nix/default.nix { inherit pkgs; qt = false; };
+          src = ./.;
+          lib = import ./nix/lib.nix { inherit pkgs common src logos-protocol; };
+          include = import ./nix/include.nix { inherit pkgs common src logos-protocol; };
+          # The headers need nlohmann_json alone; transports come from logos-protocol.
+          sdk = pkgs.symlinkJoin {
+            name = "logos-cpp-sdk";
+            paths = [ lib include ];
+            propagatedBuildInputs = [ pkgs.nlohmann_json ];
+          };
+        in
+        {
+          logos-cpp-lib = lib;
+          logos-cpp-include = include;
+          logos-cpp-sdk = sdk;
+          default = sdk;
+        };
     in
     {
       packages = forAllTargets ({ pkgs, ... }: 
@@ -79,7 +102,33 @@
           # Default package
           default = sdk;
         }
-      );
+      ) // {
+        aarch64-android = androidPackages logos-nix.lib.mobileTargets.aarch64-android.pkgs;
+      };
+
+      # Typed Qt-free clients for an app: `<name>_api.{h,cpp}` per contract, no
+      # umbrella. `lidls` maps a module name to its .lidl, or to a directory
+      # holding `<name>.lidl` (a module's packages.<sys>.lidl). The app compiles
+      # them and links the plain protocol image liblogos links.
+      lib.mkClients = { system, lidls, typedCollections ? false }:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          flag = nixpkgs.lib.optionalString typedCollections "--typed-collections";
+        in
+        pkgs.runCommand "logos-cpp-clients" {
+          nativeBuildInputs = [ self.packages.${system}.logos-cpp-bin ];
+        } ''
+          mkdir -p $out
+          ${nixpkgs.lib.concatMapStrings (name: ''
+            src=${lidls.${name}}
+            if [ -d "$src" ]; then src="$src/${name}.lidl"; fi
+            logos-cpp-generator --lidl "$src" --api-style lp ${flag} --output-dir $out
+            if [ ! -f $out/${name}_api.h ]; then
+              echo "mkClients: $src does not declare module ${name}" >&2
+              exit 1
+            fi
+          '') (builtins.attrNames lidls)}
+        '';
 
       checks = forAllSystems ({ pkgs }:
         let
@@ -103,6 +152,29 @@
             inherit pkgs common src generator;
             module-impl-abi = logos-protocol.packages.${pkgs.system}.module-impl-abi;
           };
+          # logos_generate_clients() from the installed package, as an app uses it.
+          clients-cmake = import ./nix/tests-clients-cmake.nix {
+            inherit pkgs common src;
+            sdk = self.packages.${pkgs.system}.logos-cpp-sdk;
+            protocolPlain = logos-protocol.packages.${pkgs.system}.logos-protocol-plain;
+          };
+          # lib.mkClients over tests/clients' fixture, from a file and from a
+          # directory, with and without typed collections.
+          mk-clients =
+            let
+              probe = ./tests/clients/typed_probe.lidl;
+              mk = args: self.lib.mkClients ({ system = pkgs.system; } // args);
+            in
+            import ./nix/tests-mk-clients.nix {
+              inherit pkgs common;
+              plain = mk { lidls.typed_probe = probe; };
+              typed = mk { lidls.typed_probe = probe; typedCollections = true; };
+              fromDir = mk {
+                lidls.typed_probe = pkgs.runCommand "typed-probe-lidl" { } ''
+                  mkdir -p $out && cp ${probe} $out/typed_probe.lidl
+                '';
+              };
+            };
         }
       );
 

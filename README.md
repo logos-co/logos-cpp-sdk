@@ -100,15 +100,21 @@ nix build '.#tests'
 
 # Run the built binary against its retired/renamed CLI flags
 nix build '.#checks.<system>.generator-cli'
+
+# lib.mkClients over the client-mode fixture
+nix build '.#checks.<system>.mk-clients'
 ```
 
-The three test binaries are available in `result/bin/` and can be re-run with
+The test binaries are available in `result/bin/` and can be re-run with
 filters:
 
 ```bash
 ./result/bin/sdk_tests --gtest_filter="LogosModuleContextTest.*"
 ./result/bin/generator_tests --gtest_filter="*PascalCase*"
 ./result/bin/experimental_tests --gtest_filter="*Cdylib*"
+# The client mode's output, compiled and round-tripped over stubbed lp_* calls
+./result/bin/plain_client_tests
+./result/bin/typed_client_tests
 ```
 
 ### Manual Build
@@ -173,12 +179,56 @@ logos-cpp-generator --metadata /path/to/metadata.json --umbrella --output-dir /c
 `LogosModule.cmake`, `buildPlugin.nix` and `buildHeaders.nix` all pass today),
 so the two run the same single implementation.
 
+#### Clients for an app
+
+A program that is not a module (an app that embeds liblogos through
+`logos::host::LogosCore`, a test) gets one Qt-free client per contract:
+
+```bash
+# <module>_api.h / <module>_api.cpp, named after the contract's module. No umbrella.
+logos-cpp-generator --lidl blockchain_module.lidl --api-style lp --output-dir ./clients
+
+# The same, with [T], {tstr: T} and ?T typed as std::vector / std::map / std::optional
+logos-cpp-generator --lidl blockchain_module.lidl --api-style lp --typed-collections \
+  --output-dir ./clients
+```
+
+The client is the wrapper the umbrella emits for `--dep blockchain_module=…`,
+byte for byte: `explicit BlockchainModule(const std::string& origin)`, the three
+call surfaces below, typed `on<Event>` subscriptions. The app compiles the pair
+against logos-protocol's headers, links the plain protocol image from liblogos'
+own lib output, and builds the client with its shell name as the origin:
+`LogosCore::client<T>()` does (see *Consuming the SDK*).
+
+Without `--typed-collections`, collections and positional `?T` are `LogosList` /
+`LogosMap`, as on every module's wrappers. With it they are typed and cross the
+wire through logos-protocol's codec (`logos_codec.h`); a reply of the wrong shape
+decodes to the default value, as every decode on this surface does. Scalars,
+`[tstr]`, `any`, records, `[Rec]` and `{tstr: Rec}` are unchanged. The flag is
+refused in every other mode, so no module build can reach it.
+
+CMake, from the SDK's package, runs the generator at build time:
+
+```cmake
+find_package(logos-cpp-sdk REQUIRED)
+add_executable(my_app main.cpp)
+logos_generate_clients(TARGET my_app LIDL contracts/blockchain_module.lidl TYPED_COLLECTIONS)
+```
+
+Nix: `logos-cpp-sdk.lib.mkClients { system; lidls.blockchain_module = <.lidl, or a
+module's packages.<sys>.lidl>; typedCollections = true; }` is a directory of the
+pairs.
+
 #### Options
 
 **`--output-dir /path/to/output`**
 - **Default:** If not specified, generated files are placed in `logos-cpp-sdk/cpp/generated/`
 - **Custom:** Specify any directory for the generated files
 - The output directory will be created automatically if it doesn't exist
+
+**`--typed-collections`**
+- Only with `--lidl <contract> --api-style lp` (see *Clients for an app*); refused
+  anywhere else
 
 **`--module-only`**
 - On the **plugin** path (`logos-cpp-generator /path/to/plugin.dylib`) it is
@@ -254,6 +304,10 @@ so the two run the same single implementation.
 
 **With `--from-header <impl.h> --backend cdylib`:** the same three, plus the
 derived `<name>.lidl`. `--header-to-lidl` emits only the `.lidl`.
+
+**With `--lidl <contract> --api-style lp`:** `<name>_api.h` and `<name>_api.cpp`
+alone. Without `--api-style` (or with `qt`), `--lidl` still emits the Qt client
+stubs, `metadata.json` and, unless `--module-only`, their umbrella.
 
 #### Typical Workflow
 
@@ -678,6 +732,13 @@ ships as `share/logos/core_service.lidl`) as the shell:
 `shellCredential()` is the host's own, for a `LogosAPI` that should call as the
 shell. `processModule` is the one call left on liblogos' C API; a separate
 runtime takes it over its private channel once started.
+
+`shellName()` is `Config::shellName`, and `client<T>()` builds a generated
+Qt-free client (see *Clients for an app*) with it as the origin, so the client
+calls as the shell: `auto chain = core.client<BlockchainModule>();`. Its calls
+work once `start()` has returned, and only if the host links the plain protocol
+image from liblogos' lib output, which holds the shell's credential. The binding
+itself (`shellBinding()`) also takes `logos_consumer_call_async`.
 
 ### Transports
 

@@ -129,6 +129,17 @@ int logos_consumer_call(logos_consumer* consumer, const char* target, const char
     *err = nullptr;
     return 0;
 }
+// Spelled exactly as liblogos' logos_core.h declares it, so a drift in the
+// header's mirror is a conflicting-declaration error here.
+int logos_consumer_call_async(logos_consumer* consumer, const char* target, const char* method,
+                              const char* args_json, int, logos_consumer_result_cb cb,
+                              void* user_data)
+{
+    if (consumer != reinterpret_cast<logos_consumer*>(&gBindingTag) || !cb) return -1;
+    g->coreServiceCalls.emplace_back(std::string(target) + "." + method, args_json);
+    cb(1, "\"async-answer\"", user_data);
+    return 0;
+}
 logos_consumer_subscription* logos_consumer_subscribe(logos_consumer*, const char*, const char*,
                                                       logos_consumer_event_cb, void*) { return nullptr; }
 void logos_consumer_unsubscribe(logos_consumer_subscription*) {}
@@ -580,6 +591,51 @@ TEST_F(HostCoreTest, TheRuntimesExitReachesTheHost)
     ASSERT_NE(stub.onExit, nullptr);
     stub.onExit("the runtime died on signal 9", stub.onExitData);
     EXPECT_EQ(reasons, (std::vector<std::string>{"the runtime died on signal 9"}));
+}
+
+// ── clients acting as the shell ─────────────────────────────────────────────
+
+// The shape of a generated lp client: constructed from its origin, and neither
+// copyable nor movable (it owns an lp_client), so client<T>() must build it in
+// place.
+struct ProbeClient {
+    explicit ProbeClient(const std::string& o) : origin(o) {}
+    ProbeClient(const ProbeClient&) = delete;
+    ProbeClient& operator=(const ProbeClient&) = delete;
+    std::string origin;
+};
+
+TEST_F(HostCoreTest, AClientCallsAsTheShell)
+{
+    LogosCore core(0, nullptr, shellConfig());
+    EXPECT_EQ(core.shellName(), "basecamp");
+    const ProbeClient probe = core.client<ProbeClient>();
+    EXPECT_EQ(probe.origin, "basecamp");
+}
+
+TEST_F(HostCoreTest, TheShellNameIsKeptWhenTheRuntimeRunsApart)
+{
+    LogosCore core(0, nullptr, separateConfig());
+    core.start();
+    EXPECT_EQ(core.shellName(), "basecamp");
+    EXPECT_EQ(core.client<ProbeClient>().origin, "basecamp");
+}
+
+TEST_F(HostCoreTest, TheBindingAlsoCallsAsynchronously)
+{
+    LogosCore core(0, nullptr, separateConfig());
+    core.start();
+    std::string answer;
+    const int status = logos_consumer_call_async(
+        core.shellBinding(), "core_service", "listModules", "[\"all\"]", 1000,
+        [](int ok, const char* json, void* ud) {
+            if (ok && json) *static_cast<std::string*>(ud) = json;
+        },
+        &answer);
+    EXPECT_EQ(status, 0);
+    EXPECT_EQ(answer, "\"async-answer\"");
+    ASSERT_EQ(stub.coreServiceCalls.size(), 1u);
+    EXPECT_EQ(stub.coreServiceCalls[0].first, "core_service.listModules");
 }
 
 } // namespace

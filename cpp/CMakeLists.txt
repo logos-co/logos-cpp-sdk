@@ -103,6 +103,8 @@ write_basic_package_version_file(
 install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/logos-cpp-sdkConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/logos-cpp-sdkConfigVersion.cmake"
+    # logos_generate_clients(), for apps; the config includes it.
+    LogosGenerateClients.cmake
     DESTINATION lib/cmake/logos-cpp-sdk
 )
 

@@ -1,0 +1,52 @@
+; The client-mode fixture: every shape --typed-collections types, the shapes
+; the record path already types, and the ones that stay as they were ([tstr],
+; [any]). client_tests compiles the wrapper generated from it, with and without
+; the flag, and round-trips values through it.
+module typed_probe {
+  version "1.0.0"
+  description "Typed client probe."
+
+  type Point {
+    x: float64
+    y: float64
+  }
+
+  ; A record of records, with a typed collection of each kind in its fields.
+  type Route {
+    name: tstr
+    start: Point
+    stops: [Point]
+    named: {tstr: Point}
+    legs: [[Point]]
+    distances: [uint]
+    tags: [int]
+    blobs: [bstr]
+    ? via: [tstr]
+    maybe_end: ?Point
+    ? limits: {tstr: uint}
+  }
+
+  method echoRoute(r: Route) -> Route
+  method echoUint(v: uint) -> uint
+  method echoBytes(b: bstr) -> bstr
+  method echoInts(values: [int]) -> [int]
+  method echoUints(values: [uint]) -> [uint]
+  method echoBlobs(values: [bstr]) -> [bstr]
+  method echoIndex(points: {tstr: Point}) -> {tstr: Point}
+  method echoCounts(counts: {tstr: uint}) -> {tstr: uint}
+  method echoGrid(grid: [[Point]]) -> [[Point]]
+  method greet(name: ?tstr) -> ?tstr
+  method echoMaybePoint(p: ?Point) -> ?Point
+  method echoNames(names: [tstr]) -> [tstr]
+  method echoAny(values: [any]) -> [any]
+  ; The remaining leaves and two-level nestings, so each is compiled once.
+  method echoFlags(values: [bool]) -> [bool]
+  method echoReals(values: [float64]) -> [float64]
+  method echoBuckets(buckets: {tstr: [uint]}) -> {tstr: [uint]}
+  method echoHoles(values: [?int]) -> [?int]
+  method echoChunks(chunks: {tstr: bstr}) -> {tstr: bstr}
+  method echoMaybeNames(names: ?[tstr]) -> ?[tstr]
+
+  event ticked(values: [uint], label: ?tstr)
+  event routed(r: Route)
+}

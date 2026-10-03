@@ -60,6 +60,12 @@
 // UI plugins. The C API that is left is the configuration before start, start
 // and cleanup, the binding itself, and processModule.
 //
+// A module's generated Qt-free client (`logos-cpp-generator --lidl X.lidl
+// --api-style lp`) calls as the shell too: client<T>() builds it with
+// shellName() as its origin. Its lp_client uses the shell credential start()
+// adopted into the plain protocol image, so the host must link that image from
+// liblogos' own lib output rather than a copy of its own.
+//
 // ── Where the runtime runs ──────────────────────────────────────────────────
 // By default (Config::separateProcess) start() spawns the runtime as liblogos'
 // bin/logos_runtime: the token authority and every module's credential stay in
@@ -110,6 +116,7 @@ int    logos_core_set_peering_config(const char* config_json);
 // The shell binding: the host's own identity, admitted by capability_module.
 typedef struct logos_consumer logos_consumer;
 typedef struct logos_consumer_subscription logos_consumer_subscription;
+typedef void (*logos_consumer_result_cb)(int ok, const char* json, void* user_data);
 typedef void (*logos_consumer_event_cb)(const char* event_name, const char* data_json,
                                         void* user_data);
 logos_consumer* logos_core_take_shell_binding(void);
@@ -118,6 +125,9 @@ char*  logos_consumer_credential(const logos_consumer* consumer);
 int    logos_consumer_call(logos_consumer* consumer, const char* target, const char* method,
                            const char* args_json, int timeout_ms, char** out_result_json,
                            char** out_error_json);
+int    logos_consumer_call_async(logos_consumer* consumer, const char* target,
+                                 const char* method, const char* args_json, int timeout_ms,
+                                 logos_consumer_result_cb cb, void* user_data);
 logos_consumer_subscription* logos_consumer_subscribe(logos_consumer* consumer,
                                                       const char* target,
                                                       const char* event_name,
@@ -340,6 +350,7 @@ public:
     {
         if (config.shellName.empty())
             throw std::invalid_argument("logos::host::LogosCore: a shellName is required");
+        m_shellName = config.shellName;
         if (config.separateProcess) {
             m_runtimeConfig = runtimeConfig(config);
             return;
@@ -431,6 +442,15 @@ public:
     }
 
     // ── The shell identity ──────────────────────────────────────────────────
+
+    // Config::shellName: the identity every call from this host carries.
+    const std::string& shellName() const { return m_shellName; }
+
+    // A generated Qt-free client (`--api-style lp`) calling as this shell:
+    //     auto chain = core.client<BlockchainModule>();
+    // Its calls work once start() has returned.
+    template <class T>
+    T client() const { return T(shellName()); }
 
     // Whether start() took the shell binding the calls below go through.
     bool shellBound() const { return m_binding != nullptr; }
@@ -634,6 +654,7 @@ private:
         if (core->m_onExit) core->m_onExit(reason ? reason : "");
     }
 
+    std::string m_shellName;
     nlohmann::json m_runtimeConfig; // null: the runtime runs here
     logos_runtime* m_runtime = nullptr;
     std::function<void(const std::string&)> m_onExit;
