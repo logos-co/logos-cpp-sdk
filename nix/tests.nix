@@ -20,7 +20,7 @@ pkgs.stdenv.mkDerivation {
 
     mkdir -p build-tests
     cd build-tests
-    cmake ../tests -GNinja -DLOGOS_PROTOCOL_ROOT=${logos-protocol} $cmakeFlags
+    cmake ../tests -GNinja -DLOGOS_PROTOCOL_ROOT=${logos-protocol} -DLOGOS_TEST_SDK_INCLUDE=${src}/cpp $cmakeFlags
     ninja
     cd ..
 
