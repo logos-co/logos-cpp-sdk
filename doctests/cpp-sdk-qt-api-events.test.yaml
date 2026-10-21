@@ -49,7 +49,7 @@ intro: |
      subscribes to `greeted` through the generated Qt-typed
      `m_logos->notifier_module.onGreeted(...)`.
   3. Both `.lgx` packages, built against the C++ SDK commit under test, loaded
-     together in `logoscore`, with the notifier made to fire and the watcher
+     together in `logosctl`, with the notifier made to fire and the watcher
      asked what it received.
 
   **Where the watcher subscribes is the point.** It subscribes from `onInit()`,
@@ -60,14 +60,14 @@ intro: |
   this module reachable right now?"* gets the answer *no* and gives up. A
   subscription made there and delivered later is the whole assertion.
 
-what_you_build: "Two modules — an `interface: universal` notifier and a Qt provider-style watcher — built against this SDK commit and run together in `logoscore`, with the watcher receiving an event it subscribed to before the notifier was reachable."
+what_you_build: "Two modules — an `interface: universal` notifier and a Qt provider-style watcher — built against this SDK commit and run together in `logosctl`, with the watcher receiving an event it subscribed to before the notifier was reachable."
 
 what_you_learn:
   - How `metadata.json` selects between the Qt-typed and Qt-free dependency-wrapper surfaces
   - How a Qt provider-style module is written — `LOGOS_PROVIDER`, `LOGOS_METHOD`, and a `PluginInterface` loader
   - How to reach a dependency through `LogosModules` with Qt types (`QString`, not `std::string`)
   - Why subscribing from `onInit()` is both the realistic shape and the demanding one
-  - How to load two modules in `logoscore` and prove an event crossed the process boundary
+  - How to load two modules in `logosctl` and prove an event crossed the process boundary
 
 prerequisites:
   - |
@@ -573,12 +573,12 @@ sections:
   - title: "Build the runtime and install both modules"
     step: true
     text: |
-      Build `logoscore` (against this SDK) and `lgpm`, then install both modules
-      into a `./modules` directory the daemon can scan.
+      Build `logosctl` (against this SDK), start its daemon, and install both
+      modules into the daemon's session.
     steps:
-      - title: "Build logoscore against this SDK"
+      - title: "Build logosctl against this SDK"
         run: |
-          nix build 'github:logos-co/logos-logoscore-cli{release}' \
+          nix build 'github:logos-co/logos-logoscore-cli{release}#ctl' \
             --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             --override-input logos-liblogos/logos-qt-sdk 'github:logos-co/logos-qt-sdk{release}' \
@@ -591,7 +591,7 @@ sections:
             --override-input logos-capability-module/logos-module-builder/logos-test-framework/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
             --out-link ./logos
         code_block: |
-          nix build 'github:logos-co/logos-logoscore-cli' \
+          nix build 'github:logos-co/logos-logoscore-cli#ctl' \
             --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
             --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
             --override-input logos-liblogos/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
@@ -602,56 +602,49 @@ sections:
             --override-input logos-capability-module/logos-module-builder/logos-test-framework/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
             --override-input logos-capability-module/logos-module-builder/logos-test-framework/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
             --out-link ./logos
-        check_file: "logos/bin/logoscore"
+        check_file: "logos/bin/logosctl"
 
-      - title: "Build lgpm"
-        run: "nix build 'github:logos-co/logos-package-manager#cli' -o lgpm"
-        check_file: "lgpm/bin/lgpm"
-
-      - title: "Seed the modules directory with the capability module"
+      - title: "Start the daemon"
         text: |
-          Loading a module goes through the host's capability layer, so the
-          modules directory needs the `capability_module` that ships with
-          `logoscore` (rebuilt against this SDK). Copy it across first.
-        run: |
-          mkdir -p modules
-          cp -RL ./logos/modules/. ./modules/
-        check_file: "modules/capability_module/manifest.json"
-
-      - title: "Install the notifier"
-        run: "./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file notifier-lgx/*.lgx"
+          The session directory, `./session`, holds the daemon's config, its
+          installed modules and their data. `--detach` returns once the daemon
+          accepts commands.
+        # The bundled package downloader starts a storage node in $HOME; keep it
+        # out of the real one.
+        run: "mkdir -p home && HOME=\"$PWD/home\" ./logos/bin/logosctl --config-dir ./session daemon start --detach"
+        code_block: "logosctl daemon start --detach"
         expect_contains:
-          - "Installed to:"
+          - "Daemon started"
+      - title: "Install the notifier"
+        run: "./logos/bin/logosctl --config-dir ./session install notifier-lgx/*.lgx -y"
+        code_block: "logosctl install notifier-lgx/*.lgx -y"
+        expect_contains:
+          - '"status":"ok"'
 
       - title: "Install the watcher"
-        run: "./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file qt-watcher-lgx/*.lgx"
+        run: "./logos/bin/logosctl --config-dir ./session install qt-watcher-lgx/*.lgx -y"
+        code_block: "logosctl install qt-watcher-lgx/*.lgx -y"
         expect_contains:
-          - "Installed to:"
+          - '"status":"ok"'
 
       - title: "Confirm both modules are installed"
-        run: "./lgpm/bin/lgpm --modules-dir ./modules list"
+        run: "./logos/bin/logosctl --config-dir ./session package ls"
+        code_block: "logosctl package ls"
         expect_contains:
           - "notifier_module"
           - "qt_watcher_module"
-        check_file: "modules/qt_watcher_module/manifest.json"
+        check_file: "session/modules/qt_watcher_module/manifest.json"
 
   - title: "Load both modules and prove the event arrives"
     step: true
     text: |
-      Start `logoscore` in daemon mode (`-D`) so each module's process stays
-      alive between `call` commands — the subscription registered during the
-      watcher's `onInit()` has to still be there when a later call makes the
-      notifier fire.
+      The daemon keeps each module's process alive between `call` commands —
+      the subscription registered during the watcher's `onInit()` has to still
+      be there when a later call makes the notifier fire.
     steps:
-      - title: "Start the daemon"
-        run: "sh -c './logos/bin/logoscore -D -m ./modules > logs.txt 2>&1 &'"
-        code_block: "logoscore -D -m ./modules > logs.txt &"
-
-      - run: "sleep 3"
-
       - title: "Load the notifier (the dependency first)"
-        run: "./logos/bin/logoscore load-module notifier_module"
-        code_block: "logoscore load-module notifier_module"
+        run: "./logos/bin/logosctl --config-dir ./session module load notifier_module"
+        code_block: "logosctl module load notifier_module"
         expect_contains:
           - "notifier_module"
 
@@ -659,14 +652,14 @@ sections:
         text: |
           Loading it runs its `onInit()`, which is where the subscription is
           made. Nothing here waits for the notifier to be reachable.
-        run: "./logos/bin/logoscore load-module qt_watcher_module"
-        code_block: "logoscore load-module qt_watcher_module"
+        run: "./logos/bin/logosctl --config-dir ./session module load qt_watcher_module"
+        code_block: "logosctl module load qt_watcher_module"
         expect_contains:
           - "qt_watcher_module"
 
       - title: "Confirm both report loaded"
-        run: "./logos/bin/logoscore status"
-        code_block: "logoscore status"
+        run: "./logos/bin/logosctl --config-dir ./session daemon status"
+        code_block: "logosctl daemon status"
         expect_contains:
           - "notifier_module"
           - "qt_watcher_module"
@@ -678,8 +671,8 @@ sections:
           refusing it. A wrapper that probes the dependency for reachability
           before subscribing answers `false` here, permanently, because at
           `onInit()` time the honest answer to that probe is *no*.
-        run: "./logos/bin/logoscore call qt_watcher_module subscriptionAccepted"
-        code_block: "logoscore call qt_watcher_module subscriptionAccepted"
+        run: "./logos/bin/logosctl --config-dir ./session call qt_watcher_module subscriptionAccepted"
+        code_block: "logosctl call qt_watcher_module subscriptionAccepted"
         expect_contains:
           - '"result":true'
 
@@ -689,22 +682,22 @@ sections:
           `m_logos->notifier_module`, with `QString` on both ends. It confirms
           the wrapper is wired up at all, so a silent event later cannot be
           mistaken for a dead dependency.
-        run: "./logos/bin/logoscore call qt_watcher_module greetThrough Sync"
-        code_block: "logoscore call qt_watcher_module greetThrough Sync"
+        run: "./logos/bin/logosctl --config-dir ./session call qt_watcher_module greetThrough Sync"
+        code_block: "logosctl call qt_watcher_module greetThrough Sync"
         expect_contains:
           - '"result":"Hello, Sync!"'
 
       - title: "Nothing has been received yet"
         text: "The notifier has not fired, so the watcher's state is still empty. This is the control: it makes the next step's result mean something."
-        run: "./logos/bin/logoscore call qt_watcher_module greetedCount"
-        code_block: "logoscore call qt_watcher_module greetedCount"
+        run: "./logos/bin/logosctl --config-dir ./session call qt_watcher_module greetedCount"
+        code_block: "logosctl call qt_watcher_module greetedCount"
         expect_contains:
           - '"result":0'
 
       - title: "Make the notifier fire"
         text: "Called directly on the notifier — the watcher is not involved in triggering its own event."
-        run: "./logos/bin/logoscore call notifier_module greetNotify Qt"
-        code_block: "logoscore call notifier_module greetNotify Qt"
+        run: "./logos/bin/logosctl --config-dir ./session call notifier_module greetNotify Qt"
+        code_block: "logosctl call notifier_module greetNotify Qt"
 
       - run: "sleep 1"
 
@@ -713,27 +706,27 @@ sections:
           This is the assertion the whole spec exists for: a subscription made
           before the dependency was reachable, through the Qt-typed generated
           accessor, delivering a decoded `QString` to the callback.
-        run: "./logos/bin/logoscore call qt_watcher_module lastGreeted"
-        code_block: "logoscore call qt_watcher_module lastGreeted"
+        run: "./logos/bin/logosctl --config-dir ./session call qt_watcher_module lastGreeted"
+        code_block: "logosctl call qt_watcher_module lastGreeted"
         expect_contains:
           - '"result":"Hello, Qt!"'
 
       - title: "Exactly once"
         text: "One emit, one delivery — a re-arming subscription that fired twice would be as wrong as one that never fired."
-        run: "./logos/bin/logoscore call qt_watcher_module greetedCount"
-        code_block: "logoscore call qt_watcher_module greetedCount"
+        run: "./logos/bin/logosctl --config-dir ./session call qt_watcher_module greetedCount"
+        code_block: "logosctl call qt_watcher_module greetedCount"
         expect_contains:
           - '"result":1'
 
       - title: "Stop the daemon"
-        run: "./logos/bin/logoscore stop"
-        code_block: "logoscore stop"
+        run: "./logos/bin/logosctl --config-dir ./session daemon stop"
+        code_block: "logosctl daemon stop"
 
       - run: "sleep 2"
 
       - title: "Confirm the daemon has stopped"
-        run: "./logos/bin/logoscore status || true"
-        code_block: "logoscore status"
+        run: "./logos/bin/logosctl --config-dir ./session daemon status || true"
+        code_block: "logosctl daemon status"
         expect_contains:
           - '"status":"not_running"'
 

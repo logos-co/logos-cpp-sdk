@@ -19,8 +19,8 @@ It is fully self-contained — no pre-existing module, no `requires:` chain:
 3. Build **both** modules' `.lgx` packages **against the C++ SDK commit under
    test**, so the generated wrappers, the plugin glue, and the IPC layer all
    come from this SDK.
-4. Build `logoscore` (also against this SDK), install both modules, load them
-   together, and call the orchestrator's methods — each of which calls into
+4. Build `logosctl` (also against this SDK), install both modules into its
+   session, load them together, and call the orchestrator's methods — each of which calls into
    the greeter across the process boundary.
 
 Because the caller, the callee, the generated cross-module wrappers, and the
@@ -28,14 +28,14 @@ runtime are all built from the SDK commit under test, a green run is real
 evidence that this change keeps inter-module composition — the SDK's core
 promise — working.
 
-**What you'll build:** Two modules — a `greeter_module` callee and an `orchestrator_module` caller — built against this SDK commit and run together in `logoscore`, with the caller driving the callee over IPC.
+**What you'll build:** Two modules — a `greeter_module` callee and an `orchestrator_module` caller — built against this SDK commit and run together in `logosctl`, with the caller driving the callee over IPC.
 
 **What you'll learn:**
 
 - How one module declares another as a dependency (`metadata.json` + `flake.nix` input)
 - How the SDK generates a typed `modules().<dep>` wrapper with sync, async, and event APIs
 - How to build a module — and its module dependency — against a specific `logos-cpp-sdk` commit
-- How to load two modules in `logoscore` and chain calls so the caller drives the callee
+- How to load two modules in `logosctl` and chain calls so the caller drives the callee
 - How async replies and event subscriptions survive between `call` commands under the daemon
 - How a **binary** (`bstr`) event payload crosses the boundary intact, encoded and decoded by generated code on both sides
 
@@ -591,14 +591,13 @@ ls orchestrator-lgx/*.lgx
 
 ## Step 4: Build the runtime and install both modules
 
-Build `logoscore` (against this SDK, the same way as the runtime doc-test)
-and `lgpm`, then install both modules into a `./modules` directory the
-daemon can scan.
+Build `logosctl` (against this SDK, the same way as the runtime doc-test),
+start its daemon, and install both modules into the daemon's session.
 
-### 4.1 Build logoscore against this SDK
+### 4.1 Build logosctl against this SDK
 
 ```bash
-nix build 'github:logos-co/logos-logoscore-cli' \
+nix build 'github:logos-co/logos-logoscore-cli#ctl' \
   --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-liblogos/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
@@ -611,92 +610,74 @@ nix build 'github:logos-co/logos-logoscore-cli' \
   --out-link ./logos
 ```
 
-### 4.2 Build lgpm
+### 4.2 Start the daemon
+
+The session directory, `./session`, holds the daemon's config, its
+installed modules and their data. `--detach` returns once the daemon
+accepts commands.
 
 ```bash
-nix build 'github:logos-co/logos-package-manager#cli' -o lgpm
+logosctl daemon start --detach
 ```
 
-### 4.3 Seed the modules directory with the capability module
-
-Loading a module goes through the host's capability layer, so the
-modules directory needs the `capability_module` that ships with
-`logoscore` (rebuilt against this SDK). Copy it across first.
+### 4.3 Install the greeter
 
 ```bash
-mkdir -p modules
-cp -RL ./logos/modules/. ./modules/
-
+logosctl install greeter-lgx/*.lgx -y
 ```
 
-### 4.4 Install the greeter
+### 4.4 Install the orchestrator
 
 ```bash
-./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file greeter-lgx/*.lgx
+logosctl install orchestrator-lgx/*.lgx -y
 ```
 
-### 4.5 Install the orchestrator
+### 4.5 Confirm both modules are installed
 
 ```bash
-./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file orchestrator-lgx/*.lgx
-```
-
-### 4.6 Confirm both modules are installed
-
-```bash
-./lgpm/bin/lgpm --modules-dir ./modules list
+logosctl package ls
 ```
 
 ---
 
 ## Step 5: Load both modules and drive the caller
 
-Start `logoscore` in daemon mode (`-D`) — it keeps each module's process
+The daemon keeps each module's process
 alive between `call` commands, so an event subscription registered by one
 call is still active when a later call triggers it, and an async reply
 lands before the call that reads it. Load **both** modules, then call the
 orchestrator's methods — each one reaches across the process boundary into
 the greeter.
 
-### 5.1 Start the daemon
+### 5.1 Load the greeter (the dependency first)
 
 ```bash
-logoscore -D -m ./modules > logs.txt &
+logosctl module load greeter_module
 ```
+
+### 5.2 Load the orchestrator
 
 ```bash
-sleep 3
+logosctl module load orchestrator_module
 ```
 
-### 5.2 Load the greeter (the dependency first)
+### 5.3 Confirm both report loaded
 
 ```bash
-logoscore load-module greeter_module
+logosctl daemon status
 ```
 
-### 5.3 Load the orchestrator
-
-```bash
-logoscore load-module orchestrator_module
-```
-
-### 5.4 Confirm both report loaded
-
-```bash
-logoscore status
-```
-
-### 5.5 Synchronous cross-module call
+### 5.4 Synchronous cross-module call
 
 `greetThrough(name)` forwards straight to `greeter_module.greet(name)`
 and returns the result — one typed sync call across the process
 boundary:
 
 ```bash
-logoscore call orchestrator_module greetThrough World
+logosctl call orchestrator_module greetThrough World
 ```
 
-### 5.6 Compose several calls into one result
+### 5.5 Compose several calls into one result
 
 `greetReport(name, a, b)` fans out to three greeter calls — `greet`,
 `addInts`, and `greetCount` — and returns them as one map. The greeter
@@ -704,30 +685,30 @@ has now been greeted twice (once above, once here), so `greetCount` is
 `2`:
 
 ```bash
-logoscore call orchestrator_module greetReport Logos 3 5
+logosctl call orchestrator_module greetReport Logos 3 5
 ```
 
-### 5.7 Asynchronous cross-module call
+### 5.6 Asynchronous cross-module call
 
 `startAsyncGreet(name)` fires `greeter_module.greetAsync(name)` and
 returns `"queued"` immediately. The reply arrives on the daemon's event
 loop; the next call, `asyncGreeting()`, reads what the callback stashed:
 
 ```bash
-logoscore call orchestrator_module startAsyncGreet Async
+logosctl call orchestrator_module startAsyncGreet Async
 ```
 
 ```bash
 sleep 1
 ```
 
-### 5.8 Read the async reply
+### 5.7 Read the async reply
 
 ```bash
-logoscore call orchestrator_module asyncGreeting
+logosctl call orchestrator_module asyncGreeting
 ```
 
-### 5.9 Subscribe to the greeter's event
+### 5.8 Subscribe to the greeter's event
 
 `subscribeGreeted()` registers a typed callback on `greeter_module`'s
 `greeted` event. Then `greeter_module.greetNotify(...)` makes the
@@ -736,26 +717,26 @@ captured. Because the daemon keeps both modules loaded, the event fires
 between the calls:
 
 ```bash
-logoscore call orchestrator_module subscribeGreeted
+logosctl call orchestrator_module subscribeGreeted
 ```
 
-### 5.10 Trigger the event from the greeter
+### 5.9 Trigger the event from the greeter
 
 ```bash
-logoscore call greeter_module greetNotify Events
+logosctl call greeter_module greetNotify Events
 ```
 
 ```bash
 sleep 1
 ```
 
-### 5.11 Read the captured event payload
+### 5.10 Read the captured event payload
 
 ```bash
-logoscore call orchestrator_module lastGreetedEvent
+logosctl call orchestrator_module lastGreetedEvent
 ```
 
-### 5.12 Subscribe to the greeter's binary event
+### 5.11 Subscribe to the greeter's binary event
 
 The same flow, but the event carries a **byte string** (`bstr`) rather
 than text. Binary payloads cannot ride in a JSON string — a NUL would
@@ -765,22 +746,22 @@ that are generated: the greeter's event body encodes, this subscriber
 decodes, and neither author writes a line of base64.
 
 ```bash
-logoscore call orchestrator_module subscribeBlob
+logosctl call orchestrator_module subscribeBlob
 ```
 
-### 5.13 Emit 4096 bytes from the greeter
+### 5.12 Emit 4096 bytes from the greeter
 
 The greeter reports how many bytes it put on the wire.
 
 ```bash
-logoscore call greeter_module emitBlob 4096
+logosctl call greeter_module emitBlob 4096
 ```
 
 ```bash
 sleep 1
 ```
 
-### 5.14 The subscriber received every byte
+### 5.13 The subscriber received every byte
 
 `lastBlobSize` is the length the subscription actually saw. This is the
 assertion that pins [#99](https://github.com/logos-co/logos-cpp-sdk/issues/99),
@@ -788,10 +769,10 @@ where the generator dropped `bstr` event arguments: the greeter emitted
 a full payload and the subscriber received `0` bytes.
 
 ```bash
-logoscore call orchestrator_module lastBlobSize
+logosctl call orchestrator_module lastBlobSize
 ```
 
-### 5.15 ...and the bytes are the right bytes
+### 5.14 ...and the bytes are the right bytes
 
 Length alone would not catch a corrupted payload — a wrong base64
 alphabet or a botched tail group round-trips to the same size. The
@@ -799,30 +780,30 @@ checksum is computed over the received bytes and must match the blob the
 greeter built.
 
 ```bash
-logoscore call orchestrator_module lastBlobChecksum
+logosctl call orchestrator_module lastBlobChecksum
 ```
 
-### 5.16 Stop the daemon
+### 5.15 Stop the daemon
 
 ```bash
-logoscore stop
+logosctl daemon stop
 ```
 
 ```bash
 sleep 2
 ```
 
-### 5.17 Confirm the daemon has stopped
+### 5.16 Confirm the daemon has stopped
 
 ```bash
-logoscore status
+logosctl daemon status
 ```
 
 ---
 
 ## Recap
 
-| Composition path | In the orchestrator | Driven via `logoscore` |
+| Composition path | In the orchestrator | Driven via `logosctl` |
 | ---------------- | ------------------- | ---------------------- |
 | Typed **sync** call | `greetThrough()` → `greeter.greet(...)` | `"Hello, World!"` |
 | Composed sync calls | `greetReport()` → `greet` + `addInts` + `greetCount` | one map of three results |

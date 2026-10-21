@@ -4,7 +4,7 @@
 #
 # Specs run here:
 #   - cpp-sdk-module-runtime.test.yaml      a real module (accounts) built and
-#                                           run through logoscore against this SDK
+#                                           run through logosctl against this SDK
 #   - cpp-sdk-module-composition.test.yaml  two modules built against this SDK,
 #                                           one calling the other over IPC
 #   - cpp-sdk-qt-api-events.test.yaml       a Qt-typed consumer subscribing to a
