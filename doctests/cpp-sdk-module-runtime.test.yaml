@@ -9,38 +9,36 @@ intro: |
   — `LogosAPI`, `LogosResult`, the IPC layer, and the code generator. A change
   here ripples through the entire stack, so the way to know it is safe is to run
   a real module on top of it. This doc-test does exactly that, end-to-end through
-  the headless `logoscore` runtime:
+  the headless `logosctl` runtime:
 
-  1. Build the `logoscore` CLI, **overriding `logos-cpp-sdk` with the commit
+  1. Build the `logosctl` CLI, **overriding `logos-cpp-sdk` with the commit
      under test** — and overriding it in the same way for every consumer in
-     `logoscore`'s closure (`logos-liblogos` and the `capability_module`'s
+     the runtime (`logos-liblogos` and the `capability_module`'s
      `logos-module-builder`). Because the published flakes pin the SDK
      independently (there is no single `follows` unifying them), all of these
      must point at the same commit so the whole runtime is built and linked
      against one consistent SDK ABI. Each `logos-qt-sdk` dragged onto the new
      SDK also gets its sibling `logos-lidl` moved with it — see the note in
      the first section.
-  2. Build the `lgpm` local package manager.
-  3. Build the real [`accounts_module`](https://github.com/logos-co/logos-accounts-module)
+  2. Build the real [`accounts_module`](https://github.com/logos-co/logos-accounts-module)
      as an `.lgx` package straight from its own flake — **also built against the
-     SDK commit under test** — and install it into a `./modules` directory with
-     `lgpm`.
-  4. Start `logoscore` in daemon mode (`-D`), load `accounts_module`, introspect
-     it, and call its methods — verifying a module compiled against this SDK
+     SDK commit under test**.
+  3. Start a `logosctl` daemon and install the `.lgx` into its session.
+  4. Load `accounts_module`, introspect it, and call its methods — verifying a module compiled against this SDK
      actually loads and round-trips real values over the SDK's IPC.
 
   Because every layer (host, module loader, IPC, and the module itself) is built
   against the SDK commit under test, a green run is real evidence that this
   change keeps the module runtime working from the bottom of the stack up.
 
-what_you_build: "The real `accounts_module`, installed with `lgpm` and called through a `logoscore` daemon — every layer compiled against this C++ SDK commit."
+what_you_build: "The real `accounts_module`, installed into a `logosctl` session and called through its daemon — every layer compiled against this C++ SDK commit."
 
 what_you_learn:
-  - How to build `logoscore` against a specific `logos-cpp-sdk` commit by overriding it across every consumer in the closure
+  - How to build `logosctl` against a specific `logos-cpp-sdk` commit by overriding it across every consumer in the runtime
   - Why a foundational input pinned independently by several flakes needs the override applied at each consumer, not just once
   - How to build a real module's `.lgx` against the same SDK commit
-  - How to install an `.lgx` into a modules directory with `lgpm`
-  - How to start the `logoscore` daemon, load a module, and call its methods
+  - How to install an `.lgx` into a `logosctl` session
+  - How to start the `logosctl` daemon, load a module, and call its methods
 
 prerequisites:
   - |
@@ -56,13 +54,13 @@ prerequisites:
   - "A Linux or macOS machine."
 
 sections:
-  - title: "Build logoscore against this C++ SDK"
+  - title: "Build logosctl against this C++ SDK"
     step: true
     text: |
-      Build the `logoscore` CLI from its published flake, but **override
+      Build the `logosctl` CLI from its published flake, but **override
       `logos-cpp-sdk` to the commit under test** — and apply the same override to
-      every consumer that pins the SDK in `logoscore`'s closure. The result is
-      symlinked to `./logos/`.
+      every consumer in the runtime that pins the SDK. The result is symlinked to
+      `./logos/`.
 
       > Unlike a leaf input, the SDK is pinned independently by `logos-liblogos`
       > and the `capability_module`'s `logos-module-builder` — there is no single
@@ -74,6 +72,10 @@ sections:
       > this checkout's `HEAD` (see `run.sh`); in CI it is the commit being
       > tested. With no pin it falls back to latest `master`.
 
+      > `logosctl` also bundles the package manager, downloader and storage
+      > modules. Those keep their own SDK pins: like any installed module, each
+      > runs in its own process and talks to the runtime over IPC.
+
       > **Why the `logos-qt-sdk` and `logos-qt-sdk/logos-lidl` overrides.** This SDK installs
       > `share/lidl-frontend/lidl_compat.h`, and `logos-qt-sdk`'s
       > `logos-qt-generator` *compiles* that header against **its own**
@@ -83,9 +85,9 @@ sections:
       > and older lidl. Each `logos-qt-sdk` node therefore needs to move to the
       > compatible generator revision, with its `logos-lidl` moved alongside it.
     steps:
-      - title: "Build the CLI with the SDK override"
+      - title: "Build logosctl with the SDK override"
         run: |
-          nix build 'github:logos-co/logos-logoscore-cli{release}' \
+          nix build 'github:logos-co/logos-logoscore-cli{release}#ctl' \
             --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             --override-input logos-liblogos/logos-qt-sdk 'github:logos-co/logos-qt-sdk{release}' \
@@ -98,7 +100,7 @@ sections:
             --override-input logos-capability-module/logos-module-builder/logos-test-framework/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
             --out-link ./logos
         code_block: |
-          nix build 'github:logos-co/logos-logoscore-cli' \
+          nix build 'github:logos-co/logos-logoscore-cli#ctl' \
             --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
             --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
             --override-input logos-liblogos/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
@@ -109,35 +111,22 @@ sections:
             --override-input logos-capability-module/logos-module-builder/logos-test-framework/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
             --override-input logos-capability-module/logos-module-builder/logos-test-framework/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
             --out-link ./logos
-        check_file: "logos/bin/logoscore"
+        check_file: "logos/bin/logosctl"
         post_text: |
-          The build produces `logos/bin/logoscore` plus bundled runtime libraries
+          The build produces `logos/bin/logosctl` plus bundled runtime libraries
           and a `logos/modules/` directory containing the built-in
           `capability_module` (required for the auth handshake when loading
           modules). Every overridden input resolves to the same SDK commit, so
           `logos_host`, `liblogos_core`, the module client, and the capability
           module are all rebuilt and linked against this SDK.
 
-  - title: "Build the lgpm package manager"
-    step: true
-    text: |
-      `lgpm` installs `.lgx` packages into a modules directory and scans what is
-      installed. Build it from the `logos-package-manager` flake and link it as
-      `./lgpm`. (`lgpm` is plain C++ with no SDK dependency, so it needs no
-      override.)
-    steps:
-      - title: "Build lgpm"
-        run: "nix build 'github:logos-co/logos-package-manager#cli' -o lgpm"
-        check_file: "lgpm/bin/lgpm"
-        post_text: "The executable is at `./lgpm/bin/lgpm`."
-
   - title: "Build and install the accounts module against this SDK"
     step: true
     text: |
       Clone [`logos-accounts-module`](https://github.com/logos-co/logos-accounts-module),
       build its `.lgx` straight from its flake's `#lgx` output **against the SDK
-      commit under test**, and install it into a local `./modules` directory with
-      `lgpm`. Building the module against the same SDK as the runtime keeps the
+      commit under test**, start a daemon, and install the package into its
+      session. Building the module against the same SDK as the runtime keeps the
       plugin ABI-compatible with the host that will load it. Every module built
       with [`logos-module-builder`](https://github.com/logos-co/logos-module-builder)
       exposes a ready-to-install `#lgx`, and the builder owns the module's SDK
@@ -176,92 +165,82 @@ sections:
         extra_run:
           run: "ls accounts-lgx/*.lgx"
 
-      - title: "Seed the modules directory with the bundled capability module"
-        text: |
-          `accounts_module` is loaded through the host's capability layer, so the
-          modules directory also needs the `capability_module` that ships with
-          `logoscore` (and that we just rebuilt against this SDK). Copy it across
-          first.
-        run: |
-          mkdir -p modules
-          cp -RL ./logos/modules/. ./modules/
-        check_file: "modules/capability_module/manifest.json"
-
-      - title: "Install the .lgx with lgpm"
-        text: |
-          Install the freshly-built package into `./modules`. `accounts_module` is
-          a `core` module, so it goes to `--modules-dir`. The package is unsigned
-          (a local dev build), so we pass `--allow-unsigned`.
-        run: "./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file accounts-lgx/*.lgx"
-        expect_contains:
-          - "Installed to:"
-
-      - title: "Confirm the install"
-        text: "Scan the directory and confirm the module landed:"
-        run: "./lgpm/bin/lgpm --modules-dir ./modules list"
-        expect_contains:
-          - "accounts_module"
-        check_file: "modules/accounts_module/manifest.json"
-
-  - title: "Run the daemon and call the module"
-    step: true
-    text: |
-      Start `logoscore` in daemon mode pointed at `./modules`, then use the client
-      subcommands to load `accounts_module`, introspect it, and call its methods.
-      Daemon output is captured in `logs.txt`.
-    steps:
       - title: "Start the daemon"
         text: |
-          Start logoscore in daemon mode in the background, capturing output to
-          `logs.txt`:
-        run: "sh -c './logos/bin/logoscore -D -m ./modules > logs.txt 2>&1 &'"
-        code_block: "logoscore -D -m ./modules > logs.txt &"
-        post_text: |
-          The `-D` flag starts the daemon. The client subcommands below connect to
-          this running process via the config written under `~/.logoscore/`.
+          Start a `logosctl` daemon. Its session directory, `./session`, holds the
+          daemon's config, its installed modules and their data. `--detach`
+          returns once the daemon accepts commands.
+        # The bundled package downloader starts a storage node in $HOME; keep it
+        # out of the real one.
+        run: "mkdir -p home && HOME=\"$PWD/home\" ./logos/bin/logosctl --config-dir ./session daemon start --detach"
+        code_block: "logosctl daemon start --detach"
+        expect_contains:
+          - "Daemon started"
 
-      - run: "sleep 3"
+      - title: "Install the .lgx"
+        text: |
+          A path ending in `.lgx` installs from disk, with no catalog involved. A
+          local build is unsigned, which the session's default policy accepts with
+          a warning. `-y` confirms, since there is no terminal to ask on.
+        run: "./logos/bin/logosctl --config-dir ./session install accounts-lgx/*.lgx -y"
+        code_block: "logosctl install accounts-lgx/*.lgx -y"
+        expect_contains:
+          - '"installed":["accounts_module"]'
 
+      - title: "Confirm the install"
+        text: "List the session's packages and confirm the module landed:"
+        run: "./logos/bin/logosctl --config-dir ./session package ls"
+        code_block: "logosctl package ls"
+        expect_contains:
+          - "accounts_module"
+        check_file: "session/modules/accounts_module/manifest.json"
+
+  - title: "Call the module"
+    step: true
+    text: |
+      Load `accounts_module`, introspect it, and call its methods with the client
+      subcommands. The daemon logs to `session/logs/daemon.log`.
+    steps:
       - title: "Inspect the startup log"
         text: "Review the daemon's startup output:"
-        run: "cat logs.txt"
+        run: "cat session/logs/daemon.log"
 
       - title: "Check daemon status"
         text: "Verify the daemon is running:"
-        run: "./logos/bin/logoscore status"
-        code_block: "logoscore status"
+        run: "./logos/bin/logosctl --config-dir ./session daemon status"
+        code_block: "logosctl daemon status"
 
       - title: "List discovered modules"
         text: "`accounts_module` should be visible in the scan directory:"
-        run: "./logos/bin/logoscore list-modules"
-        code_block: "logoscore list-modules"
+        run: "./logos/bin/logosctl --config-dir ./session module ls"
+        code_block: "logosctl module ls"
         expect_contains:
           - "accounts_module"
 
       - title: "Load the module"
         text: "Load `accounts_module` into the running daemon:"
-        run: "./logos/bin/logoscore load-module accounts_module"
-        code_block: "logoscore load-module accounts_module"
+        run: "./logos/bin/logosctl --config-dir ./session module load accounts_module"
+        code_block: "logosctl module load accounts_module"
         expect_contains:
           - "accounts_module"
 
       - title: "Confirm the module is loaded"
         text: |
-          Re-run `status`; the module that was `not_loaded` before now reports
+          Re-run `daemon status`; the module that was `not_loaded` before now reports
           `loaded`:
-        run: "./logos/bin/logoscore status"
-        code_block: "logoscore status"
+        run: "./logos/bin/logosctl --config-dir ./session daemon status"
+        code_block: "logosctl daemon status"
         expect_contains:
           - "accounts_module"
           - '"status":"loaded"'
 
-      - title: "Introspect the module with module-info"
+      - title: "Introspect the module with module show"
         text: |
-          `module-info` lists the `Q_INVOKABLE` methods the module exposes — the
+          `module show` lists the `Q_INVOKABLE` methods the module exposes — the
           same methods you can `call`. Each one is dispatched over the SDK's IPC
           layer:
-        run: "./logos/bin/logoscore module-info accounts_module"
-        code_block: "logoscore module-info accounts_module"
+        run: "./logos/bin/logosctl --config-dir ./session module show accounts_module"
+        code_block: "logosctl module show accounts_module"
         expect_contains:
           - "accounts_module"
           - "createRandomMnemonic"
@@ -271,8 +250,8 @@ sections:
           Generate a fresh 12-word BIP-39 mnemonic. `createRandomMnemonic` takes
           the word count and returns the phrase — a real round-trip dispatched
           over the SDK's IPC layer into the module compiled against this SDK:
-        run: "./logos/bin/logoscore call accounts_module createRandomMnemonic 12"
-        code_block: "logoscore call accounts_module createRandomMnemonic 12"
+        run: "./logos/bin/logosctl --config-dir ./session call accounts_module createRandomMnemonic 12"
+        code_block: "logosctl call accounts_module createRandomMnemonic 12"
         expect_contains:
           - '"result"'
 
@@ -281,25 +260,23 @@ sections:
           `lengthToEntropyStrength` maps a mnemonic word count to its entropy
           strength in bits — 12 words is 128 bits. This exercises an `int`
           round-trip through `LogosResult` over the SDK's IPC:
-        run: "./logos/bin/logoscore call accounts_module lengthToEntropyStrength 12"
-        code_block: "logoscore call accounts_module lengthToEntropyStrength 12"
+        run: "./logos/bin/logosctl --config-dir ./session call accounts_module lengthToEntropyStrength 12"
+        code_block: "logosctl call accounts_module lengthToEntropyStrength 12"
         expect_contains:
           - '"result":128'
 
       - title: "Stop the daemon"
         text: "Shut the daemon down cleanly:"
-        run: "./logos/bin/logoscore stop"
-        code_block: "logoscore stop"
+        run: "./logos/bin/logosctl --config-dir ./session daemon stop"
+        code_block: "logosctl daemon stop"
         post_text: |
           The daemon removes its state file and exits.
-
-      - run: "sleep 2"
 
       - title: "Confirm the daemon has stopped"
         text: |
           With no daemon running, the client reports `not_running` and exits
           non-zero, so we add `|| true` to let the doc-test assert on the output:
-        run: "./logos/bin/logoscore status || true"
-        code_block: "logoscore status"
+        run: "./logos/bin/logosctl --config-dir ./session daemon status || true"
+        code_block: "logosctl daemon status"
         expect_contains:
           - '"status":"not_running"'

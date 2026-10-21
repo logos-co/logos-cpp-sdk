@@ -29,14 +29,14 @@ intro: |
      every HTTP request calls `sensor_module.readTemperature()` **from the server
      thread** through the generated `modules().sensor_module` wrapper.
   3. Build **both** against the C++ SDK commit under test, run them in
-     `logoscore`, start the server, and `curl` it.
+     `logosctl`, start the server, and `curl` it.
 
   A green run means the `curl` got the sensor's reading back — i.e. the
   worker-thread inter-module call completed instead of hanging. Without the SDK's
   thread marshaling it would deadlock on the server thread and the `curl` would
   time out.
 
-what_you_build: "Two modules — a `sensor_module` callee and an `http_module` caller that embeds an HTTP server — built against this SDK commit and run in `logoscore`, where an HTTP request drives a cross-module call from the server's worker thread."
+what_you_build: "Two modules — a `sensor_module` callee and an `http_module` caller that embeds an HTTP server — built against this SDK commit and run in `logosctl`, where an HTTP request drives a cross-module call from the server's worker thread."
 
 what_you_learn:
   - Why inter-module calls must run on the module's owner thread (Qt Remote Objects replica affinity)
@@ -459,12 +459,12 @@ sections:
   - title: "Build the runtime and install both modules"
     step: true
     text: |
-      Build `logoscore` and `lgpm` (against this SDK), seed the modules directory
-      with the capability module, and install both modules.
+      Build `logosctl` (against this SDK), start its daemon, and install both
+      modules into the daemon's session.
     steps:
-      - title: "Build logoscore against this SDK"
+      - title: "Build logosctl against this SDK"
         run: |
-          nix build 'github:logos-co/logos-logoscore-cli{release}' \
+          nix build 'github:logos-co/logos-logoscore-cli{release}#ctl' \
             --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk{release}' \
             --override-input logos-liblogos/logos-qt-sdk 'github:logos-co/logos-qt-sdk{release}' \
@@ -477,7 +477,7 @@ sections:
             --override-input logos-capability-module/logos-module-builder/logos-test-framework/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
             --out-link ./logos
         code_block: |
-          nix build 'github:logos-co/logos-logoscore-cli' \
+          nix build 'github:logos-co/logos-logoscore-cli#ctl' \
             --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
             --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
             --override-input logos-liblogos/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
@@ -488,73 +488,71 @@ sections:
             --override-input logos-capability-module/logos-module-builder/logos-test-framework/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
             --override-input logos-capability-module/logos-module-builder/logos-test-framework/logos-qt-sdk/logos-lidl 'github:logos-co/logos-lidl' \
             --out-link ./logos
-        check_file: "logos/bin/logoscore"
+        check_file: "logos/bin/logosctl"
 
-      - title: "Build lgpm"
-        run: "nix build 'github:logos-co/logos-package-manager#cli' -o lgpm"
-        check_file: "lgpm/bin/lgpm"
-
-      - title: "Seed the modules directory with the capability module"
-        run: |
-          mkdir -p modules
-          cp -RL ./logos/modules/. ./modules/
-        check_file: "modules/capability_module/manifest.json"
-
-      - title: "Install the sensor"
-        run: "./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file sensor-lgx/*.lgx"
+      - title: "Start the daemon"
+        text: |
+          The session directory, `./session`, holds the daemon's config, its
+          installed modules and their data. `--detach` returns once the daemon
+          accepts commands.
+        # The bundled package downloader starts a storage node in $HOME; keep it
+        # out of the real one.
+        run: "mkdir -p home && HOME=\"$PWD/home\" ./logos/bin/logosctl --config-dir ./session daemon start --detach"
+        code_block: "logosctl daemon start --detach"
         expect_contains:
-          - "Installed to:"
+          - "Daemon started"
+      - title: "Install the sensor"
+        run: "./logos/bin/logosctl --config-dir ./session install sensor-lgx/*.lgx -y"
+        code_block: "logosctl install sensor-lgx/*.lgx -y"
+        expect_contains:
+          - '"status":"ok"'
 
       - title: "Install the http module"
-        run: "./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file http-lgx/*.lgx"
+        run: "./logos/bin/logosctl --config-dir ./session install http-lgx/*.lgx -y"
+        code_block: "logosctl install http-lgx/*.lgx -y"
         expect_contains:
-          - "Installed to:"
+          - '"status":"ok"'
 
       - title: "Confirm both modules are installed"
-        run: "./lgpm/bin/lgpm --modules-dir ./modules list"
+        run: "./logos/bin/logosctl --config-dir ./session package ls"
+        code_block: "logosctl package ls"
         expect_contains:
           - "sensor_module"
           - "http_module"
-        check_file: "modules/http_module/manifest.json"
+        check_file: "session/modules/http_module/manifest.json"
 
   - title: "Serve over HTTP and scrape from the worker thread"
     step: true
     text: |
-      Start the daemon, load both modules, then start the HTTP server and `curl`
+      Load both modules, then start the HTTP server and `curl`
       it. The `curl` triggers a request whose handler — on the server's worker
       thread — calls `sensor_module.readTemperature()`. Getting `temperature 42`
       back is the proof that the worker-thread cross-module call completed.
     steps:
-      - title: "Start the daemon"
-        run: "sh -c './logos/bin/logoscore -D -m ./modules > logs.txt 2>&1 &'"
-        code_block: "logoscore -D -m ./modules > logs.txt &"
-
-      - run: "sleep 3"
-
       - title: "Load the sensor (the dependency first)"
-        run: "./logos/bin/logoscore load-module sensor_module"
-        code_block: "logoscore load-module sensor_module"
+        run: "./logos/bin/logosctl --config-dir ./session module load sensor_module"
+        code_block: "logosctl module load sensor_module"
         expect_contains:
           - "sensor_module"
 
       - title: "Load the http module"
-        run: "./logos/bin/logoscore load-module http_module"
-        code_block: "logoscore load-module http_module"
+        run: "./logos/bin/logosctl --config-dir ./session module load http_module"
+        code_block: "logosctl module load http_module"
         expect_contains:
           - "http_module"
 
       - title: "Read the sensor directly (main thread)"
         text: |
-          Called via `logoscore`, `readSensor()` runs on the module's own event-loop
+          Called via `logosctl`, `readSensor()` runs on the module's own event-loop
           thread — the easy case. It returns the sensor's reading:
-        run: "./logos/bin/logoscore call http_module readSensor"
-        code_block: "logoscore call http_module readSensor"
+        run: "./logos/bin/logosctl --config-dir ./session call http_module readSensor"
+        code_block: "logosctl call http_module readSensor"
         expect_contains:
           - '"result":42'
 
       - title: "Start the HTTP server"
-        run: "./logos/bin/logoscore call http_module start 8080"
-        code_block: "logoscore call http_module start 8080"
+        run: "./logos/bin/logosctl --config-dir ./session call http_module start 8080"
+        code_block: "logosctl call http_module start 8080"
         expect_contains:
           - '"result":1'
 
@@ -572,20 +570,20 @@ sections:
           - "temperature 42"
 
       - title: "Stop the HTTP server"
-        run: "./logos/bin/logoscore call http_module stop"
-        code_block: "logoscore call http_module stop"
+        run: "./logos/bin/logosctl --config-dir ./session call http_module stop"
+        code_block: "logosctl call http_module stop"
         expect_contains:
           - '"result":1'
 
       - title: "Stop the daemon"
-        run: "./logos/bin/logoscore stop"
-        code_block: "logoscore stop"
+        run: "./logos/bin/logosctl --config-dir ./session daemon stop"
+        code_block: "logosctl daemon stop"
 
       - run: "sleep 2"
 
       - title: "Confirm the daemon has stopped"
-        run: "./logos/bin/logoscore status || true"
-        code_block: "logoscore status"
+        run: "./logos/bin/logosctl --config-dir ./session daemon status || true"
+        code_block: "logosctl daemon status"
         expect_contains:
           - '"status":"not_running"'
 
@@ -593,7 +591,7 @@ sections:
     text: |
       | Call site | Thread | Result |
       | --------- | ------ | ------ |
-      | `logoscore call http_module readSensor` | module event-loop thread | `42` |
+      | `logosctl call http_module readSensor` | module event-loop thread | `42` |
       | `curl http://127.0.0.1:8080/` → HTTP handler → `readSensor()` | libmicrohttpd worker thread | `temperature 42` |
 
       Both reach `sensor_module.readTemperature()` through the generated

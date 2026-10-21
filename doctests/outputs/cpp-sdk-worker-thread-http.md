@@ -26,14 +26,14 @@ It is fully self-contained:
    every HTTP request calls `sensor_module.readTemperature()` **from the server
    thread** through the generated `modules().sensor_module` wrapper.
 3. Build **both** against the C++ SDK commit under test, run them in
-   `logoscore`, start the server, and `curl` it.
+   `logosctl`, start the server, and `curl` it.
 
 A green run means the `curl` got the sensor's reading back — i.e. the
 worker-thread inter-module call completed instead of hanging. Without the SDK's
 thread marshaling it would deadlock on the server thread and the `curl` would
 time out.
 
-**What you'll build:** Two modules — a `sensor_module` callee and an `http_module` caller that embeds an HTTP server — built against this SDK commit and run in `logoscore`, where an HTTP request drives a cross-module call from the server's worker thread.
+**What you'll build:** Two modules — a `sensor_module` callee and an `http_module` caller that embeds an HTTP server — built against this SDK commit and run in `logosctl`, where an HTTP request drives a cross-module call from the server's worker thread.
 
 **What you'll learn:**
 
@@ -447,13 +447,13 @@ ls http-lgx/*.lgx
 
 ## Step 4: Build the runtime and install both modules
 
-Build `logoscore` and `lgpm` (against this SDK), seed the modules directory
-with the capability module, and install both modules.
+Build `logosctl` (against this SDK), start its daemon, and install both
+modules into the daemon's session.
 
-### 4.1 Build logoscore against this SDK
+### 4.1 Build logosctl against this SDK
 
 ```bash
-nix build 'github:logos-co/logos-logoscore-cli' \
+nix build 'github:logos-co/logos-logoscore-cli#ctl' \
   --override-input logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-liblogos/logos-cpp-sdk 'github:logos-co/logos-cpp-sdk' \
   --override-input logos-liblogos/logos-qt-sdk 'github:logos-co/logos-qt-sdk' \
@@ -466,89 +466,75 @@ nix build 'github:logos-co/logos-logoscore-cli' \
   --out-link ./logos
 ```
 
-### 4.2 Build lgpm
+### 4.2 Start the daemon
+
+The session directory, `./session`, holds the daemon's config, its
+installed modules and their data. `--detach` returns once the daemon
+accepts commands.
 
 ```bash
-nix build 'github:logos-co/logos-package-manager#cli' -o lgpm
+logosctl daemon start --detach
 ```
 
-### 4.3 Seed the modules directory with the capability module
+### 4.3 Install the sensor
 
 ```bash
-mkdir -p modules
-cp -RL ./logos/modules/. ./modules/
-
+logosctl install sensor-lgx/*.lgx -y
 ```
 
-### 4.4 Install the sensor
+### 4.4 Install the http module
 
 ```bash
-./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file sensor-lgx/*.lgx
+logosctl install http-lgx/*.lgx -y
 ```
 
-### 4.5 Install the http module
+### 4.5 Confirm both modules are installed
 
 ```bash
-./lgpm/bin/lgpm --modules-dir ./modules --allow-unsigned install --file http-lgx/*.lgx
-```
-
-### 4.6 Confirm both modules are installed
-
-```bash
-./lgpm/bin/lgpm --modules-dir ./modules list
+logosctl package ls
 ```
 
 ---
 
 ## Step 5: Serve over HTTP and scrape from the worker thread
 
-Start the daemon, load both modules, then start the HTTP server and `curl`
+Load both modules, then start the HTTP server and `curl`
 it. The `curl` triggers a request whose handler — on the server's worker
 thread — calls `sensor_module.readTemperature()`. Getting `temperature 42`
 back is the proof that the worker-thread cross-module call completed.
 
-### 5.1 Start the daemon
+### 5.1 Load the sensor (the dependency first)
 
 ```bash
-logoscore -D -m ./modules > logs.txt &
+logosctl module load sensor_module
 ```
+
+### 5.2 Load the http module
 
 ```bash
-sleep 3
+logosctl module load http_module
 ```
 
-### 5.2 Load the sensor (the dependency first)
+### 5.3 Read the sensor directly (main thread)
 
-```bash
-logoscore load-module sensor_module
-```
-
-### 5.3 Load the http module
-
-```bash
-logoscore load-module http_module
-```
-
-### 5.4 Read the sensor directly (main thread)
-
-Called via `logoscore`, `readSensor()` runs on the module's own event-loop
+Called via `logosctl`, `readSensor()` runs on the module's own event-loop
 thread — the easy case. It returns the sensor's reading:
 
 ```bash
-logoscore call http_module readSensor
+logosctl call http_module readSensor
 ```
 
-### 5.5 Start the HTTP server
+### 5.4 Start the HTTP server
 
 ```bash
-logoscore call http_module start 8080
+logosctl call http_module start 8080
 ```
 
 ```bash
 sleep 1
 ```
 
-### 5.6 Scrape it — the cross-module call now happens on the server thread
+### 5.5 Scrape it — the cross-module call now happens on the server thread
 
 The HTTP handler runs on a libmicrohttpd worker thread and calls
 `sensor_module.readTemperature()` from there. The SDK marshals that call
@@ -559,26 +545,26 @@ the sensor's reading. Without the marshaling this request would hang.
 curl http://127.0.0.1:8080/
 ```
 
-### 5.7 Stop the HTTP server
+### 5.6 Stop the HTTP server
 
 ```bash
-logoscore call http_module stop
+logosctl call http_module stop
 ```
 
-### 5.8 Stop the daemon
+### 5.7 Stop the daemon
 
 ```bash
-logoscore stop
+logosctl daemon stop
 ```
 
 ```bash
 sleep 2
 ```
 
-### 5.9 Confirm the daemon has stopped
+### 5.8 Confirm the daemon has stopped
 
 ```bash
-logoscore status
+logosctl daemon status
 ```
 
 ---
@@ -587,7 +573,7 @@ logoscore status
 
 | Call site | Thread | Result |
 | --------- | ------ | ------ |
-| `logoscore call http_module readSensor` | module event-loop thread | `42` |
+| `logosctl call http_module readSensor` | module event-loop thread | `42` |
 | `curl http://127.0.0.1:8080/` → HTTP handler → `readSensor()` | libmicrohttpd worker thread | `temperature 42` |
 
 Both reach `sensor_module.readTemperature()` through the generated
