@@ -29,7 +29,6 @@ struct CoreStub {
     int  startCalls = 0;
     int  cleanupCalls = 0;
     std::vector<std::string> modulesDirs;
-    std::vector<std::string> verifiedModulesDirs;
     std::string persistenceBasePath;
     std::string accessPolicy;
     bool accessPolicySet = false;
@@ -52,9 +51,6 @@ struct CoreStub {
     // REQUIRED_DEPS from REQUIRED_AND_OPTIONAL.
     int  lastLoadDeps = -1;
     std::string optionalReport = "[]";
-    std::string lastLoadError;   // empty ⇒ the C API returns NULL
-    std::string verifyProblem;   // empty ⇒ the C API returns NULL (intact)
-    std::string lastVerifiedDir;
     int  lastUnloadWithDependents = -1;
     bool loadSucceeds = true;
 };
@@ -90,7 +86,6 @@ void logos_core_init(int, char**)                 { ++g->initCalls;    g->callOr
 void logos_core_start()                           { ++g->startCalls;   g->callOrder.push_back("start"); }
 void logos_core_cleanup()                         { ++g->cleanupCalls; g->callOrder.push_back("cleanup"); }
 void logos_core_add_modules_dir(const char* d)    { g->modulesDirs.emplace_back(d); g->callOrder.push_back("add_dir"); }
-void logos_core_add_verified_modules_dir(const char* d) { g->verifiedModulesDirs.emplace_back(d); g->callOrder.push_back("add_verified_dir"); }
 void logos_core_set_persistence_base_path(const char* p) { g->persistenceBasePath = p; g->callOrder.push_back("persistence"); }
 void logos_core_set_access_policy(const char* p)  { g->accessPolicySet = true; g->accessPolicy = p ? p : ""; g->callOrder.push_back("policy"); }
 void logos_core_set_module_transports(const char* m, const char* j) { g->transports.emplace_back(m, j); g->callOrder.push_back("transports"); }
@@ -104,8 +99,6 @@ char** logos_core_get_module_optional_dependencies(const char*) { return dupCArr
 
 int logos_core_load_module(const char*, LogosLoadDeps deps) { g->lastLoadDeps = static_cast<int>(deps); return g->loadSucceeds ? 1 : 0; }
 char* logos_core_optional_load_report(const char*)          { return dupC(g->optionalReport); }
-char* logos_core_get_last_load_error(const char*)           { return g->lastLoadError.empty() ? nullptr : dupC(g->lastLoadError); }
-char* logos_core_verify_installed_module(const char* d)     { g->lastVerifiedDir = d; return g->verifyProblem.empty() ? nullptr : dupC(g->verifyProblem); }
 int logos_core_unload_module(const char*, bool withDepdts) { g->lastUnloadWithDependents = withDepdts ? 1 : 0; return 1; }
 
 char* logos_core_get_modules_info()               { return dupC("[]"); }
@@ -136,7 +129,6 @@ TEST_F(HostCoreTest, EveryPreStartSettingIsAppliedBeforeStart)
 {
     LogosCore::Config cfg;
     cfg.modulesDirs = {"/one", "/two"};
-    cfg.verifiedModulesDirs = {"/two"};
     cfg.persistenceBasePath = "/persist";
     cfg.accessPolicyJson = std::string(R"({"mode":"enforce"})");
     cfg.moduleTransports = {{"mod_a", "[]"}};
@@ -145,7 +137,6 @@ TEST_F(HostCoreTest, EveryPreStartSettingIsAppliedBeforeStart)
     core.start();
 
     EXPECT_EQ(stub.modulesDirs, (std::vector<std::string>{"/one", "/two"}));
-    EXPECT_EQ(stub.verifiedModulesDirs, (std::vector<std::string>{"/two"}));
     EXPECT_EQ(stub.persistenceBasePath, "/persist");
     EXPECT_TRUE(stub.accessPolicySet);
     ASSERT_EQ(stub.transports.size(), 1u);
@@ -282,27 +273,6 @@ TEST_F(HostCoreTest, NonArrayStatsIsRejected)
     stub.statsJson = R"({"name":"alpha"})";   // object, not array
     LogosCore core(0, nullptr, emptyConfig());
     EXPECT_TRUE(core.allStats().empty());
-}
-
-TEST_F(HostCoreTest, VerifyInstalledModuleReachesTheCApiAndIntactIsNullopt)
-{
-    LogosCore core(0, nullptr, emptyConfig());
-    EXPECT_EQ(core.verifyInstalledModule("/plugins/app"), std::nullopt);
-    EXPECT_EQ(stub.lastVerifiedDir, "/plugins/app");
-
-    stub.verifyProblem = "installed module has been modified or damaged since install";
-    EXPECT_EQ(core.verifyInstalledModule("/plugins/app"),
-              std::optional<std::string>(stub.verifyProblem));
-}
-
-TEST_F(HostCoreTest, LastLoadErrorIsPassedThroughAndNullIsNullopt)
-{
-    LogosCore core(0, nullptr, emptyConfig());
-    EXPECT_EQ(core.lastLoadError("app"), std::nullopt);
-
-    stub.lastLoadError = "installed module has been modified or damaged since install";
-    EXPECT_EQ(core.lastLoadError("app"),
-              std::optional<std::string>("installed module has been modified or damaged since install"));
 }
 
 } // namespace
