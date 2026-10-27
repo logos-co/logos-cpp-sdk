@@ -72,6 +72,8 @@
 extern "C" {
 void   logos_core_init(int argc, char* argv[]);
 void   logos_core_add_modules_dir(const char* modules_dir);
+void   logos_core_add_verified_modules_dir(const char* modules_dir);
+char*  logos_core_verify_installed_module(const char* install_dir);
 void   logos_core_start();
 void   logos_core_cleanup();
 char** logos_core_get_loaded_modules();
@@ -91,6 +93,7 @@ char** logos_core_get_module_dependencies(const char* module_name, bool recursiv
 char** logos_core_get_module_dependents(const char* module_name, bool recursive);
 char** logos_core_get_module_optional_dependencies(const char* module_name);
 char*  logos_core_optional_load_report(const char* module_name);
+char*  logos_core_get_last_load_error(const char* module_name);
 char*  logos_core_get_modules_info();
 char*  logos_core_process_module(const char* module_path);
 char*  logos_core_get_token(const char* key);
@@ -181,6 +184,12 @@ public:
         // Applied in order, via logos_core_add_modules_dir.
         std::vector<std::string> modulesDirs;
 
+        // The directories the package manager installs into, via
+        // logos_core_add_verified_modules_dir: every module installed under one
+        // is integrity-checked before each load. Each must also be in
+        // modulesDirs. Leave bundled and developer-supplied directories out.
+        std::vector<std::string> verifiedModulesDirs;
+
         // Empty ⇒ not set. Each module gets {path}/{module_name}/{instance_id}/.
         std::string persistenceBasePath;
 
@@ -202,6 +211,8 @@ public:
         // transports, then policy — all strictly before start().
         for (const std::string& dir : config.modulesDirs)
             logos_core_add_modules_dir(dir.c_str());
+        for (const std::string& dir : config.verifiedModulesDirs)
+            logos_core_add_verified_modules_dir(dir.c_str());
         if (!config.persistenceBasePath.empty())
             logos_core_set_persistence_base_path(config.persistenceBasePath.c_str());
         for (const auto& entry : config.moduleTransports)
@@ -248,6 +259,22 @@ public:
     std::optional<std::string> optionalLoadReportJson(const std::string& name) const
     {
         return detail::drainCString(logos_core_optional_load_report(name.c_str()));
+    }
+
+    // Why the most recent loadModule(name) failed -- e.g. the module was
+    // modified after install, or a dependency it requires failed. nullopt when
+    // its last load succeeded or was never attempted.
+    std::optional<std::string> lastLoadError(const std::string& name) const
+    {
+        return detail::drainCString(logos_core_get_last_load_error(name.c_str()));
+    }
+
+    // The integrity check verifiedModulesDirs applies at load, on demand, for
+    // one package directory the package manager installed: nullopt when
+    // intact, else why not. For modules a host loads itself (UI plugins).
+    std::optional<std::string> verifyInstalledModule(const std::string& installDir) const
+    {
+        return detail::drainCString(logos_core_verify_installed_module(installDir.c_str()));
     }
 
     // Returns true on success. `withDependents` cascades to modules that depend
