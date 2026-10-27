@@ -58,6 +58,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -97,6 +98,8 @@ char*  logos_core_get_last_load_error(const char* module_name);
 char*  logos_core_get_modules_info();
 char*  logos_core_process_module(const char* module_path);
 char*  logos_core_get_token(const char* key);
+typedef void (*LogosCoreTokenListener)(const char* key, const char* token, void* user_data);
+void   logos_core_set_token_listener(LogosCoreTokenListener listener, void* user_data);
 char*  logos_core_get_module_stats();
 void   logos_core_set_persistence_base_path(const char* path);
 void   logos_core_set_module_transports(const char* module_name,
@@ -202,6 +205,11 @@ public:
         // start(), which is what capability_module requires; user modules only
         // need it before their own load, but doing it here covers both.
         std::map<std::string, std::string> moduleTransports;
+
+        // Every token core saves, one per loaded module. An embedder that calls
+        // modules through its own token store mirrors them here. Calls are
+        // serialized and must not call back into core.
+        std::function<void(const std::string& key, const std::string& token)> tokenListener;
     };
 
     LogosCore(int argc, char* argv[], Config config)
@@ -219,9 +227,18 @@ public:
             logos_core_set_module_transports(entry.first.c_str(), entry.second.c_str());
         if (config.accessPolicyJson.has_value())
             logos_core_set_access_policy(config.accessPolicyJson->c_str());
+        if (config.tokenListener) {
+            m_tokenListener = std::move(config.tokenListener);
+            logos_core_set_token_listener(&LogosCore::forwardToken, this);
+        }
     }
 
-    ~LogosCore() { logos_core_cleanup(); }
+    ~LogosCore()
+    {
+        // Removal waits out a running call, so the listener can go after it.
+        if (m_tokenListener) logos_core_set_token_listener(nullptr, nullptr);
+        logos_core_cleanup();
+    }
 
     LogosCore(const LogosCore&) = delete;
     LogosCore& operator=(const LogosCore&) = delete;
@@ -391,6 +408,16 @@ public:
     }
 
 private:
+    static void forwardToken(const char* key, const char* token, void* self)
+    {
+        try {
+            static_cast<LogosCore*>(self)->m_tokenListener(key, token);
+        } catch (...) {
+            // Must not unwind into liblogos.
+        }
+    }
+
+    std::function<void(const std::string&, const std::string&)> m_tokenListener;
     bool m_started = false;
 };
 
